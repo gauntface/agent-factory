@@ -34,20 +34,19 @@ func (s *Sidebar) String() string {
 	totalLines := 0
 	for i, item := range s.visibleItems {
 		isSelected := i == s.selectedIdx
-		if item.IsHeader {
+		switch {
+		case item.IsHeader:
 			rows[i] = s.renderHeader(item.Kind, isSelected)
-		} else {
-			switch item.Kind {
-			case SectionInstances:
-				if item.IsTab {
-					rows[i] = s.renderTabRow(item, isSelected)
-				} else {
-					rows[i] = s.renderInstance(item.ItemIndex, isSelected)
-				}
-			case SectionArchived:
-				// Archived rows are flat instance rows (#1028) — no tab children.
-				rows[i] = s.renderInstance(item.ItemIndex, isSelected)
-			}
+		case item.IsRootSep:
+			// The display-only demarcation rule under the pinned root agent (#2513),
+			// its own item so heights/zones account for it (registerZones skips it).
+			rows[i] = s.renderRootSeparator()
+		case item.Kind == SectionInstances && item.IsTab:
+			rows[i] = s.renderTabRow(item, isSelected)
+		default:
+			// An instance row — live (SectionInstances) or archived (SectionArchived,
+			// flat #1028). Both index GetInstances() by ItemIndex.
+			rows[i] = s.renderInstance(item.ItemIndex, isSelected)
 		}
 		heights[i] = lipgloss.Height(rows[i])
 		totalLines += heights[i]
@@ -59,6 +58,14 @@ func (s *Sidebar) String() string {
 	if s.height > 0 && totalLines > avail {
 		s.scrollToSelection(heights, avail)
 		start = s.scrollOffset
+		// The root demarcation rule has no row above it to set off once root scrolls
+		// out of the window, so skip it when it would be the first rendered row —
+		// otherwise a scrolled window opens with a dangling hairline directly under
+		// the "▲ N more" indicator (#2513, P3-1). The selection sits below the rule,
+		// so advancing past it never scrolls the selection out of view.
+		if start < len(s.visibleItems) && s.visibleItems[start].IsRootSep {
+			start++
+		}
 		end, _, _ = fitWindow(heights, start, avail)
 		hiddenAbove = start
 		hiddenBelow = len(rows) - end
@@ -313,6 +320,19 @@ func (s *Sidebar) renderHeader(kind SidebarSectionKind, selected bool) string {
 	}
 	return style.Padding(0, narrowAwarePad(w)).Render(
 		lipgloss.Place(w, 1, lipgloss.Left, lipgloss.Center, text))
+}
+
+// renderRootSeparator is the subtle hairline demarcating the pinned root agent
+// from the rest of the sessions (#2513). It reuses the menu's dim sepStyle and the
+// box-drawing rule glyph so it reads as a hairline consistent with the rest of the
+// chrome — never a heavy divider — and carries no text. String() draws it only as
+// a leading line on the first non-root instance row, so it never dangles.
+func (s *Sidebar) renderRootSeparator() string {
+	w := s.contentWidth()
+	if w < 1 {
+		return ""
+	}
+	return sepStyle.Render(strings.Repeat("─", w))
 }
 
 func (s *Sidebar) renderInstance(idx int, selected bool) string {
