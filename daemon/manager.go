@@ -208,6 +208,10 @@ type Manager struct {
 	// have no Instance and so appear in no roster; this is the only thing that
 	// knows they exist, which is why its Stop() is wired into daemon teardown.
 	configAgents *configAgentSupervisor
+	// configAssistants owns the single web config-assistant stream (#2467): the
+	// spawn-or-reuse singleton, its bare-session broker, and the last-detach grace
+	// reaper. Its stop() is wired into daemon teardown alongside configAgents.Stop().
+	configAssistants *configAssistantHub
 }
 
 // NewManager constructs a manager and synchronously restores all persisted
@@ -268,7 +272,7 @@ func newManagerShellForDaemon(cfg *config.Config, transactionID string) (*Manage
 		}
 		return cfg.VSCodeServerBinary
 	}
-	return &Manager{
+	m := &Manager{
 		cfg:                 cfg,
 		previewToken:        previewToken,
 		limitDetector:       task.NewLimitDetector(cfg.LimitPatterns),
@@ -299,7 +303,9 @@ func newManagerShellForDaemon(cfg *config.Config, transactionID string) (*Manage
 		events:              newEventsHub(),
 		vscode:              vscode,
 		configAgents:        configAgents,
-	}, nil
+	}
+	m.configAssistants = newConfigAssistantHub(m)
+	return m, nil
 }
 
 // RestoreInstances loads every repo's persisted instances into the manager
