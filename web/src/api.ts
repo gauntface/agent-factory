@@ -478,6 +478,44 @@ export async function deleteProject(root: string, token: string): Promise<Delete
   return af("DeleteProject", { repo_path: root, repo_id: "" }, token);
 }
 
+/** A durable project identity the daemon registered (the #2355 registry record). */
+export interface RegisteredProject {
+  id: string;
+  checkout_id: string;
+  root: string;
+  relative_root: string;
+  path_exists: boolean;
+}
+
+/** Registers a git checkout as a durable, sessionless project (mirrors
+ *  `af projects add`). `path` is a path ON THE DAEMON HOST — absolute or
+ *  ~-prefixed — which the daemon resolves on its own filesystem (expand ~, walk
+ *  to the git checkout's main-repo root, validate). It is sent VERBATIM: unlike
+ *  the CLI, a browser has no shared working directory to resolve a relative path
+ *  against, so the user supplies an absolute path and the daemon owns resolution.
+ *
+ *  Idempotent for a known checkout. On success the daemon emits projects.changed;
+ *  the client refetches listProjects() and unions the registry into the derived
+ *  project list, so the registered repo appears in the switcher and is selectable
+ *  in the New session picker immediately — no session required (#2456 union). A
+ *  non-git or unreadable path throws an ApiError carrying the daemon's actionable
+ *  message, for inline display next to the input. */
+export async function registerProject(path: string, token: string): Promise<RegisteredProject> {
+  const resp = await af<{ ok: boolean; project: RegisteredProject }>("RegisterProject", { path }, token);
+  return resp.project;
+}
+
+/** Lists the daemon's registered projects (the #2355 registry) — the read half of
+ *  the #2456 union. The client ∪s these roots with the projects it derives from live
+ *  sessions and tasks, so a registered-but-sessionless project still shows in the
+ *  switcher and is creatable-into (projectSummaries / pickerProjects). The web is the
+ *  only client that reads the registry over HTTP; the TUI and CLI read
+ *  config.ListProjects() in-process, so this has no Go apiclient twin. */
+export async function listProjects(token: string): Promise<RegisteredProject[]> {
+  const resp = await af<{ projects: RegisteredProject[] | null }>("ListProjects", {}, token);
+  return resp.projects ?? [];
+}
+
 // --- tab mutations (#1592 Phase 5 PR7) -------------------------------------
 //
 // The web tab bar's write verbs, mirroring the TUI's `t`/`w` keys: `t` creates a

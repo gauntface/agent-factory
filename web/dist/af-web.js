@@ -6298,6 +6298,14 @@ async function handoffSession(id, title, to, token2) {
 async function deleteProject(root2, token2) {
   return af("DeleteProject", { repo_path: root2, repo_id: "" }, token2);
 }
+async function registerProject(path, token2) {
+  const resp = await af("RegisterProject", { path }, token2);
+  return resp.project;
+}
+async function listProjects(token2) {
+  const resp = await af("ListProjects", {}, token2);
+  return resp.projects ?? [];
+}
 function requireSessionID(id, action) {
   if (id === "") {
     throw new ApiError(0, `cannot ${action}: this session has no stable id to target safely`);
@@ -6548,7 +6556,7 @@ function newSessionModal(projects, defaultProject2, callbacks) {
   const projectSelect = h("select", { class: "af-input" });
   projectSelect.setAttribute("aria-label", "Project");
   if (projects.length === 0) {
-    const opt = h("option", { value: "" }, "No projects yet \u2014 create a session in the TUI first");
+    const opt = h("option", { value: "" }, "No projects yet \u2014 add one from the project switcher first");
     opt.disabled = true;
     opt.selected = true;
     projectSelect.append(opt);
@@ -6759,18 +6767,49 @@ function confirmDeleteProjectModal(opts) {
     confirmClass: "af-danger",
     onCancel: opts.onCancel
   });
-  body.append(
-    h(
-      "p",
-      { class: "af-modal-text" },
-      `Archive ${opts.sessionCount} ${word} and remove this project. Archived sessions stay restorable and your real git repo is untouched \u2014 restore any of them to bring the project back.`
-    )
-  );
+  const message = opts.sessionCount === 0 ? "Remove this project from the list. It has no sessions to archive, and your real git repo is untouched \u2014 you can add it again anytime." : `Archive ${opts.sessionCount} ${word} and remove this project. Archived sessions stay restorable and your real git repo is untouched \u2014 restore any of them to bring the project back.`;
+  body.append(h("p", { class: "af-modal-text" }, message));
   const card = handle.el.firstElementChild;
   asForm(card, () => {
     handle.setError(null);
     opts.onConfirm();
   });
+  return handle;
+}
+function addProjectModal(callbacks) {
+  const { handle, body } = modalChrome({
+    title: "Add project",
+    confirmLabel: "Add project",
+    confirmClass: "af-primary",
+    onCancel: callbacks.onCancel
+  });
+  const pathInput = h("input", {
+    type: "text",
+    class: "af-input",
+    placeholder: "/path/to/repo  or  ~/repo",
+    autocomplete: "off"
+  });
+  pathInput.setAttribute("aria-label", "Repository path");
+  body.append(
+    field("Repository path", pathInput),
+    h(
+      "p",
+      { class: "af-modal-hint" },
+      "An absolute path to a git checkout on the daemon host (~ is expanded there). It becomes an empty project you can create sessions into."
+    )
+  );
+  pathInput.addEventListener("input", () => handle.setError(null));
+  const card = handle.el.firstElementChild;
+  asForm(card, () => {
+    const path = pathInput.value.trim();
+    if (path === "") {
+      handle.setError("Enter a repository path.");
+      return;
+    }
+    handle.setError(null);
+    callbacks.onSubmit(path);
+  });
+  queueMicrotask(() => pathInput.focus());
   return handle;
 }
 function field(label, control) {
@@ -7730,7 +7769,7 @@ function projectName(root2) {
   const parts = root2.replace(/\/+$/, "").split("/");
   return parts[parts.length - 1] || root2;
 }
-function projectSummaries(sessions, tasks) {
+function projectSummaries(sessions, tasks, registeredRoots = []) {
   const byRoot = /* @__PURE__ */ new Map();
   for (const s of sessions) {
     const root2 = s.worktree?.repo_path;
@@ -7758,6 +7797,11 @@ function projectSummaries(sessions, tasks) {
   for (const root2 of taskCounts.keys()) {
     roots.add(root2);
   }
+  for (const root2 of registeredRoots) {
+    if (root2) {
+      roots.add(root2);
+    }
+  }
   return [...roots].sort().map((root2) => {
     const rows = byRoot.get(root2) ?? [];
     const live = rows.filter((s) => !isArchived(s));
@@ -7780,7 +7824,7 @@ function projectMeta(p) {
   const base = `${p.liveCount} session${p.liveCount === 1 ? "" : "s"}`;
   return p.workingCount > 0 ? `${base} \xB7 ${p.workingCount} working` : base;
 }
-function pickerProjects(sessions, tasks) {
+function pickerProjects(sessions, tasks, registeredRoots = []) {
   const roots = /* @__PURE__ */ new Set();
   for (const s of sessions) {
     const root2 = s.worktree?.repo_path;
@@ -7793,6 +7837,11 @@ function pickerProjects(sessions, tasks) {
       roots.add(t.project_path);
     }
   }
+  for (const root2 of registeredRoots) {
+    if (root2) {
+      roots.add(root2);
+    }
+  }
   return [...roots].sort();
 }
 function scopeToProject(sessions, root2) {
@@ -7801,11 +7850,11 @@ function scopeToProject(sessions, root2) {
   }
   return sessions.filter((s) => s.worktree?.repo_path === root2);
 }
-function validRoots(sessions, tasks) {
-  return new Set(projectSummaries(sessions, tasks).map((p) => p.root));
+function validRoots(sessions, tasks, registeredRoots = []) {
+  return new Set(projectSummaries(sessions, tasks, registeredRoots).map((p) => p.root));
 }
-function defaultProject(sessions, tasks) {
-  const summaries = projectSummaries(sessions, tasks);
+function defaultProject(sessions, tasks, registeredRoots = []) {
+  const summaries = projectSummaries(sessions, tasks, registeredRoots);
   if (summaries.length === 0) {
     return null;
   }
@@ -7834,15 +7883,15 @@ function defaultProject(sessions, tasks) {
   }
   return bestTask?.project_path ?? summaries[0]?.root ?? null;
 }
-function reconcileProject(sessions, tasks, persisted, current) {
-  const valid = validRoots(sessions, tasks);
+function reconcileProject(sessions, tasks, persisted, current, registeredRoots = []) {
+  const valid = validRoots(sessions, tasks, registeredRoots);
   if (current && valid.has(current)) {
     return current;
   }
   if (persisted && valid.has(persisted)) {
     return persisted;
   }
-  return defaultProject(sessions, tasks);
+  return defaultProject(sessions, tasks, registeredRoots);
 }
 function loadProjectChoice() {
   try {
@@ -10628,7 +10677,7 @@ function taskFormModal(opts) {
   const projectSelect = h("select", { class: "af-input" });
   projectSelect.setAttribute("aria-label", "Project");
   if (opts.projects.length === 0) {
-    const opt = h("option", { value: "" }, "No projects yet \u2014 create a session first");
+    const opt = h("option", { value: "" }, "No projects yet \u2014 add one from the project switcher first");
     opt.disabled = true;
     opt.selected = true;
     projectSelect.append(opt);
@@ -11218,6 +11267,7 @@ var AppShell = class {
   // highlight; the task set can add/drop a task-only project).
   lastProjectSessions = null;
   lastProjectTasks = null;
+  lastRegisteredProjects = null;
   lastSelectedProject = null;
   // The rail's status filter control (feat: hide archived by default): a rail-head
   // button + a checkbox menu, one row per session state. Same imperative treatment as
@@ -11400,9 +11450,10 @@ var AppShell = class {
     if (selectionChanged && state.selectedId) {
       this.setNav(false);
     }
-    if (this.lastProjectSessions !== state.sessions || this.lastProjectTasks !== state.tasks || projectChanged) {
+    if (this.lastProjectSessions !== state.sessions || this.lastProjectTasks !== state.tasks || this.lastRegisteredProjects !== state.registeredProjects || projectChanged) {
       this.lastProjectSessions = state.sessions;
       this.lastProjectTasks = state.tasks;
+      this.lastRegisteredProjects = state.registeredProjects;
       this.lastSelectedProject = state.selectedProject;
       this.renderProjectSwitch(state);
     }
@@ -11473,13 +11524,7 @@ var AppShell = class {
     const list = this.railList;
     if (!state.selectedProject) {
       list.replaceChildren(
-        h2(
-          "li",
-          { class: "af-rail-empty" },
-          "No sessions yet \u2014 create one in the TUI or with ",
-          h2("code", {}, "af sessions create"),
-          "."
-        )
+        h2("li", { class: "af-rail-empty" }, "No projects yet \u2014 add one from the project switcher to get started.")
       );
       return;
     }
@@ -11661,36 +11706,50 @@ var AppShell = class {
    *  menu's open/closed state (`hidden`) is preserved across rebuilds so a rebuild
    *  triggered by a live event doesn't snap an open menu shut. */
   renderProjectSwitch(state) {
-    const summaries = projectSummaries(state.sessions, state.tasks);
+    const summaries = projectSummaries(state.sessions, state.tasks, state.registeredProjects);
     const current = state.selectedProject;
     this.projectSwitchName.textContent = current ? projectName(current) : "No project";
-    this.projectSwitchBtn.disabled = summaries.length === 0;
+    this.projectSwitchBtn.disabled = false;
     const children = [h2("div", { class: "af-project-menu-label" }, "Switch project")];
     if (summaries.length === 0) {
-      children.push(h2("div", { class: "af-project-menu-empty" }, "No projects yet."));
+      children.push(h2("div", { class: "af-project-menu-empty" }, "No projects yet \u2014 add one below."));
     }
     for (const p of summaries) {
       children.push(this.projectItem(p, p.root === current));
     }
+    const footChildren = [];
+    const add = h2("button", { type: "button", class: "af-ghost af-project-add" }, "+ Add project");
+    add.setAttribute("title", "Register a git checkout by path as a project");
+    add.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.closeProjectMenu();
+      this.actions.addProject();
+    });
+    footChildren.push(add);
     const currentSummary = summaries.find((p) => p.root === current);
     if (currentSummary) {
       const del = h2("button", { type: "button", class: "af-ghost af-project-delete" }, "Delete project");
-      if (currentSummary.liveCount === 0) {
+      const isRegistered = state.registeredProjects.includes(currentSummary.root);
+      if (currentSummary.liveCount === 0 && !isRegistered) {
         del.disabled = true;
         del.setAttribute(
           "title",
           `No live sessions in ${currentSummary.name} to archive \u2014 remove its tasks from the Tasks view to clear it`
         );
       } else {
-        del.setAttribute("title", `Delete project ${currentSummary.name} (archives its sessions, restorable)`);
+        del.setAttribute(
+          "title",
+          currentSummary.liveCount > 0 ? `Delete project ${currentSummary.name} (archives its sessions, restorable)` : `Delete project ${currentSummary.name} (removes the empty project)`
+        );
         del.addEventListener("click", (e) => {
           e.stopPropagation();
           this.closeProjectMenu();
           this.actions.deleteProject(currentSummary.root, currentSummary.name, currentSummary.liveCount);
         });
       }
-      children.push(h2("div", { class: "af-project-menu-foot" }, del));
+      footChildren.push(del);
     }
+    children.push(h2("div", { class: "af-project-menu-foot" }, ...footChildren));
     this.projectMenu.replaceChildren(...children);
   }
   /** One project row in the switcher menu: a check on the current project, the name +
@@ -12329,6 +12388,7 @@ var store = new Store({
   shownTabs: [0],
   tabError: null,
   tasks: [],
+  registeredProjects: [],
   themeChoice: initialThemeChoice,
   // Resume the persisted filter (feat: hide archived by default) before first paint,
   // for the same reason the theme is boot-stamped: rendering the default set first
@@ -12343,6 +12403,7 @@ var resyncTimer = null;
 var sessionEventGeneration = 0;
 var resyncRequestGeneration = 0;
 var taskResyncTimer = null;
+var projectsResyncTimer = null;
 var tabErrorTimer = null;
 var TAB_ERROR_MS = 6e3;
 var shell = null;
@@ -12436,7 +12497,8 @@ async function connect(candidate) {
   } catch {
     tasks = [];
   }
-  const selectedProject = reconcileProject(sessions, tasks, loadProjectChoice(), null);
+  const registeredProjects = await fetchRegisteredProjects(candidate);
+  const selectedProject = reconcileProject(sessions, tasks, loadProjectChoice(), null, registeredProjects);
   store.set({
     phase: "app",
     view: "sessions",
@@ -12450,9 +12512,17 @@ async function connect(candidate) {
     activeTab: 0,
     shownTabs: [0],
     tabError: null,
-    tasks
+    tasks,
+    registeredProjects
   });
   startStream(candidate);
+}
+async function fetchRegisteredProjects(tok) {
+  try {
+    return (await listProjects(tok)).map((p) => p.root);
+  } catch {
+    return [];
+  }
 }
 function disconnect() {
   stopStream();
@@ -12472,7 +12542,8 @@ function disconnect() {
     activeTab: 0,
     shownTabs: [0],
     tabError: null,
-    tasks: []
+    tasks: [],
+    registeredProjects: []
   });
 }
 function tabIdsOf(list, id) {
@@ -12571,7 +12642,7 @@ function openModal(m) {
   modalHost.replaceChildren(m.el);
 }
 function newSession() {
-  const projects = pickerProjects(store.get().sessions, store.get().tasks);
+  const projects = pickerProjects(store.get().sessions, store.get().tasks, store.get().registeredProjects);
   openModal(
     newSessionModal(projects, store.get().selectedProject, {
       // The backend catalog is per-repo and read at choose time (#1933), so the
@@ -12620,7 +12691,7 @@ function openConfirm(action, session) {
         const run = action === "kill" ? killSession(target.id, target.title, tok) : action === "archive" ? archiveSession(target.id, target.title, tok) : restoreSession(target.id, target.title, tok);
         void run.then(closeModal).catch((e) => {
           m.setBusy(false);
-          m.setError(describeError(e));
+          m.setError(errorText(e));
         });
       },
       onCancel: closeModal
@@ -12641,7 +12712,26 @@ function openDeleteProject(root2, label, sessionCount) {
         m.setBusy(true);
         void deleteProject(root2, tok).then(closeModal).catch((e) => {
           m.setBusy(false);
-          m.setError(describeError(e));
+          m.setError(errorText(e));
+        });
+      },
+      onCancel: closeModal
+    })
+  );
+}
+function openAddProject() {
+  openModal(
+    addProjectModal({
+      onSubmit: (path) => {
+        const tok = token;
+        if (tok === null || !modal) {
+          return;
+        }
+        const m = modal;
+        m.setBusy(true);
+        void registerProject(path, tok).then(closeModal).catch((e) => {
+          m.setBusy(false);
+          m.setError(errorText(e));
         });
       },
       onCancel: closeModal
@@ -12831,7 +12921,13 @@ function refreshTasks() {
     return;
   }
   void listTasks(tok).then((tasks) => {
-    const selectedProject = reconcileProject(store.get().sessions, tasks, loadProjectChoice(), store.get().selectedProject);
+    const selectedProject = reconcileProject(
+      store.get().sessions,
+      tasks,
+      loadProjectChoice(),
+      store.get().selectedProject,
+      store.get().registeredProjects
+    );
     store.set({ tasks, selectedProject });
   }).catch(() => {
   });
@@ -12845,8 +12941,35 @@ function requestTaskResync() {
     refreshTasks();
   }, 150);
 }
+function refreshRegisteredProjects() {
+  const tok = token;
+  if (tok === null) {
+    return;
+  }
+  void listProjects(tok).then((projects) => {
+    const registeredProjects = projects.map((p) => p.root);
+    const selectedProject = reconcileProject(
+      store.get().sessions,
+      store.get().tasks,
+      loadProjectChoice(),
+      store.get().selectedProject,
+      registeredProjects
+    );
+    store.set({ registeredProjects, selectedProject });
+  }).catch(() => {
+  });
+}
+function requestProjectsResync() {
+  if (projectsResyncTimer !== null) {
+    return;
+  }
+  projectsResyncTimer = window.setTimeout(() => {
+    projectsResyncTimer = null;
+    refreshRegisteredProjects();
+  }, 150);
+}
 function openAddTask() {
-  const projects = pickerProjects(store.get().sessions, store.get().tasks);
+  const projects = pickerProjects(store.get().sessions, store.get().tasks, store.get().registeredProjects);
   openModal(
     addTaskModal(projects, store.get().selectedProject, {
       loadPrograms,
@@ -12862,7 +12985,7 @@ function openAddTask() {
           refreshTasks();
         }).catch((e) => {
           m.setBusy(false);
-          m.setError(describeError(e));
+          m.setError(errorText(e));
         });
       },
       onCancel: closeModal
@@ -12870,7 +12993,7 @@ function openAddTask() {
   );
 }
 function openEditTask(task) {
-  const projects = pickerProjects(store.get().sessions, store.get().tasks);
+  const projects = pickerProjects(store.get().sessions, store.get().tasks, store.get().registeredProjects);
   openModal(
     editTaskModal(projects, task, {
       loadPrograms,
@@ -12904,7 +13027,7 @@ function openEditTask(task) {
             return;
           }
           m.setBusy(false);
-          m.setError(describeError(e));
+          m.setError(errorText(e));
         });
       },
       onCancel: closeModal
@@ -12957,7 +13080,7 @@ function doHandoff() {
         m.setBusy(true);
         void handoffSession(target.id, target.title, to, tok).then(closeModal).catch((e) => {
           m.setBusy(false);
-          m.setError(describeError(e));
+          m.setError(errorText(e));
         });
       },
       onCancel: closeModal
@@ -13026,6 +13149,7 @@ var actions = {
   triggerTask: doTriggerTask,
   removeTask: doRemoveTask,
   deleteProject: openDeleteProject,
+  addProject: openAddProject,
   setTheme
 };
 function syncSplit(state) {
@@ -13076,6 +13200,10 @@ function stopStream() {
     window.clearTimeout(taskResyncTimer);
     taskResyncTimer = null;
   }
+  if (projectsResyncTimer !== null) {
+    window.clearTimeout(projectsResyncTimer);
+    projectsResyncTimer = null;
+  }
   if (stream) {
     stream.stop();
     stream = null;
@@ -13086,6 +13214,9 @@ function onEvent(ev) {
     requestTaskResync();
     return;
   }
+  if (ev.type === "projects.changed") {
+    requestProjectsResync();
+  }
   sessionEventGeneration += 1;
   const { sessions, needsResync } = applyEvent(store.get().sessions, ev);
   applySessions(sessions);
@@ -13095,7 +13226,13 @@ function onEvent(ev) {
 }
 function applySessions(sessions) {
   const prevSel = store.get().selectedId;
-  const selectedProject = reconcileProject(sessions, store.get().tasks, loadProjectChoice(), store.get().selectedProject);
+  const selectedProject = reconcileProject(
+    sessions,
+    store.get().tasks,
+    loadProjectChoice(),
+    store.get().selectedProject,
+    store.get().registeredProjects
+  );
   let selectedId = pickSelection(sessions, prevSel);
   if (selectedId) {
     const sel = sessions.find((s) => s.id === selectedId);

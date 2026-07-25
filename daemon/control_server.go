@@ -636,7 +636,7 @@ func (s *controlServer) DeleteProject(req DeleteProjectRequest, resp *DeleteProj
 	for _, k := range result.Killed {
 		s.manager.publishEvent(agentproto.EventSessionKilled, session.InstanceData{ID: k.ID, Title: k.Title})
 	}
-	if len(result.Archived) > 0 || len(result.Killed) > 0 {
+	if len(result.Archived) > 0 || len(result.Killed) > 0 || result.Deregistered {
 		s.manager.publishEvent(agentproto.EventProjectsChanged, nil)
 	}
 	if err != nil {
@@ -676,6 +676,22 @@ func (s *controlServer) RegisterProject(req RegisterProjectRequest, resp *Regist
 	s.manager.publishEvent(agentproto.EventProjectsChanged, nil)
 	resp.OK = true
 	resp.Project = project
+	return nil
+}
+
+// ListProjects returns every durable project in this daemon's #2355 registry
+// (#2456). It is a pure config read: config.ListProjects walks the registry
+// directory with no lock and no manager, so — like ListBackends — this handler
+// takes no admission gate and answers even while the daemon is still restoring
+// sessions (a client building its project list must not have to wait on the
+// session restore for the registry, which is independent of it). The read is the
+// half of #2491 the LOCAL union needs; see ListProjectsRequest.
+func (s *controlServer) ListProjects(_ ListProjectsRequest, resp *ListProjectsResponse) error {
+	projects, err := config.ListProjects()
+	if err != nil {
+		return err
+	}
+	resp.Projects = projects
 	return nil
 }
 
