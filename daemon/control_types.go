@@ -764,9 +764,30 @@ type SetConfigValueResponse struct {
 	// RequiresRestart — so the web UI echoes what was actually written rather
 	// than what it believes it sent.
 	Result *config.SetResult `json:"result"`
-	// RestartNotice is the sentence to show when Result.RequiresRestart is set.
-	// It rides on the response rather than being duplicated in the web bundle so
-	// the TUI, the web UI, and the CLI cannot drift into three different
-	// accounts of when an edit takes effect.
+	// RestartNotice is the per-key effect notice (config.EffectNotice, #2480): the
+	// one sentence a save surface shows the user, stating whether this key is live
+	// now, waits for the next daemon start, or is a client-side key af picks up on
+	// its next launch. The web form renders it verbatim. Named RestartNotice for
+	// wire/back-compat; it is no longer a single canned "restart to apply" string.
 	RestartNotice string `json:"restart_notice"`
+	// Applied and Pending report the ApplyConfig outcome (#2480): the daemon
+	// applies the write to itself in place, so a save surface can say what took
+	// effect rather than telling the user to restart. Applied keys are live now;
+	// Pending keys (the network listener keys until PR2, root_agents until #2216)
+	// take effect on the next daemon start.
+	Applied []string `json:"applied"`
+	Pending []string `json:"pending"`
+}
+
+// ApplyConfigRequest asks the running daemon to apply the on-disk global config
+// to itself in place (#2480). The config was already written (by `af config set`,
+// the web form's SetConfigValue, or a hand-edit); this only makes the running
+// daemon reflect it without a restart or session loss.
+type ApplyConfigRequest struct{}
+
+// ApplyConfigResponse reports which changed keys took effect live versus which
+// are still pending a restart.
+type ApplyConfigResponse struct {
+	Applied []string `json:"applied"`
+	Pending []string `json:"pending"`
 }

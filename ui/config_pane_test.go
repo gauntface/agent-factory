@@ -160,17 +160,21 @@ func TestConfigPaneEditWritesThroughTheRealPathAndEchoes(t *testing.T) {
 // TestConfigPaneSurfacesRestartNoticeAtTheMomentOfTheEdit is requirement 3 for
 // the TUI.
 //
-// The daemon reads config.toml at STARTUP. An editor that changes a value the
-// running daemon then ignores, and says nothing, is a lie by omission — the same
-// class as a doctor that passes because it cannot see. So the notice appears on
-// the successful write, next to the echo, and it names the command to run.
+// Since #2480 a TUI edit is applied to the running daemon in place, so the pane
+// must CONFIRM the save at the moment of the edit and state what is deferred —
+// and it must NOT drop the user to a shell to run a command (#2479). Saying
+// nothing, or telling the user to run `af daemon restart`, is the failure this
+// requirement guards against.
 func TestConfigPaneSurfacesRestartNoticeAtTheMomentOfTheEdit(t *testing.T) {
 	c := newTestConfigPane(t)
 	selectKey(t, c, "default_program")
 
 	// Stub the writer: this test is about what the pane SAYS, not about the file.
-	c.save = func(key, value string) (*config.SetResult, error) {
-		return &config.SetResult{Key: key, Value: value, Path: "/tmp/config.toml", RequiresRestart: true}, nil
+	// It returns the per-key effect notice the real write path (applyingConfigSet)
+	// hands back, so this pins that the pane renders THAT, not a hardcoded string.
+	c.save = func(key, value string) (*config.SetResult, string, error) {
+		return &config.SetResult{Key: key, Value: value, Path: "/tmp/config.toml", RequiresRestart: true},
+			config.EffectNotice(key, true), nil
 	}
 
 	c.HandleKeyPress(tea.KeyMsg{Type: tea.KeyEnter})
@@ -178,11 +182,13 @@ func TestConfigPaneSurfacesRestartNoticeAtTheMomentOfTheEdit(t *testing.T) {
 	c.HandleKeyPress(tea.KeyMsg{Type: tea.KeyEnter})
 
 	view := c.String()
-	if !strings.Contains(view, "af daemon restart") {
-		t.Errorf("the restart notice must name the command to run — telling a user to 'restart' without saying what leaves them guessing.\n--- view ---\n%s", view)
+	if strings.Contains(view, "daemon restart") {
+		t.Errorf("the notice must NOT tell the user to run a command — since #2480 the daemon applies the write in place (#2479).\n--- view ---\n%s", view)
 	}
-	if !strings.Contains(view, "read config.toml at startup") {
-		t.Errorf("the notice must say WHY the edit is not live yet.\n--- view ---\n%s", view)
+	// default_program is applied live, so the notice confirms it is live NOW rather
+	// than showing one canned "restart to apply" sentence.
+	if !strings.Contains(view, "using the new value now") {
+		t.Errorf("the pane must surface the per-key effect notice it was handed.\n--- view ---\n%s", view)
 	}
 }
 
@@ -463,8 +469,9 @@ func TestConfigPaneWindowSaysWhatIsHidden(t *testing.T) {
 func TestConfigPaneClosingClearsTheLastWritesStatus(t *testing.T) {
 	c := newTestConfigPane(t)
 	selectKey(t, c, "default_program")
-	c.save = func(k, v string) (*config.SetResult, error) {
-		return &config.SetResult{Key: k, Value: v, Path: "/tmp/config.toml", RequiresRestart: true}, nil
+	c.save = func(k, v string) (*config.SetResult, string, error) {
+		return &config.SetResult{Key: k, Value: v, Path: "/tmp/config.toml", RequiresRestart: true},
+			config.EffectNotice(k, true), nil
 	}
 
 	c.HandleKeyPress(tea.KeyMsg{Type: tea.KeyEnter})
@@ -488,8 +495,8 @@ func TestConfigPaneClosingClearsTheLastWritesStatus(t *testing.T) {
 	if strings.Contains(view, "set default_program = codex") {
 		t.Errorf("a reopened editor showed the PREVIOUS session's echo.\n--- view ---\n%s", view)
 	}
-	if strings.Contains(view, "daemon restart") {
-		t.Errorf("a reopened editor showed a stale restart notice for an edit the user cannot see.\n--- view ---\n%s", view)
+	if strings.Contains(view, "using the new value now") {
+		t.Errorf("a reopened editor showed a stale apply notice for an edit the user cannot see.\n--- view ---\n%s", view)
 	}
 }
 
@@ -498,8 +505,8 @@ func TestConfigPaneClosingClearsTheLastWritesStatus(t *testing.T) {
 func TestConfigPaneClosingClearsAStaleError(t *testing.T) {
 	c := newTestConfigPane(t)
 	selectKey(t, c, "update_channel")
-	c.save = func(k, v string) (*config.SetResult, error) {
-		return nil, errStubRejected
+	c.save = func(k, v string) (*config.SetResult, string, error) {
+		return nil, "", errStubRejected
 	}
 
 	c.HandleKeyPress(tea.KeyMsg{Type: tea.KeyEnter})
@@ -668,9 +675,10 @@ func TestSavingAnUntouchedFieldWritesNothing(t *testing.T) {
 	c := openPaneOn(t, path, "vscode_server_binary")
 
 	var writes int
-	c.save = func(k, v string) (*config.SetResult, error) {
+	c.save = func(k, v string) (*config.SetResult, string, error) {
 		writes++
-		return &config.SetResult{Key: k, Value: v, Path: path, RequiresRestart: true}, nil
+		return &config.SetResult{Key: k, Value: v, Path: path, RequiresRestart: true},
+			config.EffectNotice(k, true), nil
 	}
 
 	c.HandleKeyPress(tea.KeyMsg{Type: tea.KeyEnter})

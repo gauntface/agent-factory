@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sachiniyer/agent-factory/config"
@@ -13,7 +14,24 @@ import (
 
 // Manager owns the daemon's authoritative session mutations.
 type Manager struct {
+	// cfg is the FROZEN startup config. It is read only by the keys that
+	// deliberately do NOT hot-reload: root_agents (its next-daemon-start contract,
+	// manager.go's deletedRootRepos, carved out of #2480 pending #2216) and the
+	// network listener keys (listen_addr/require_token/… — PR2's in-process
+	// listener reload). Everything hot-reloadable reads live via Config() instead.
 	cfg *config.Config
+	// live is the hot-reloadable global config (#2480). ApplyConfig swaps it in
+	// place so a running daemon applies saved config without a restart or session
+	// loss. Read via Config(); each operation snapshots it EXACTLY ONCE at entry
+	// and threads that snapshot down — a per-use read inside one op could observe
+	// two config generations and produce an inconsistent result (e.g. a branch
+	// derived from one generation and a worktree path from the next).
+	live atomic.Pointer[config.Config]
+	// pollReloadCh signals the poll goroutine to reset its ticker after ApplyConfig
+	// changed daemon_poll_interval (#2480). Buffered size 1 with a non-blocking
+	// send, so a burst of applies collapses to one reset and ApplyConfig never
+	// blocks on the poll loop.
+	pollReloadCh chan struct{}
 
 	// previewSecret is the HMAC key from which the web-tab PREVIEW listener derives
 	// a PER-TAB credential (#1856 step 3): the token for (sessionID, tabID) is
@@ -30,10 +48,13 @@ type Manager struct {
 	// Immutable after construction, read lock-free.
 	previewSecret string
 
-	// limitDetector is the resolved usage-limit matcher set (#1146), built once
-	// from cfg.LimitPatterns at construction (it compiles the override regexes)
-	// and reused across poll ticks. Immutable; read lock-free by the poll loop.
-	limitDetector task.LimitDetector
+	// limitDetector is the resolved usage-limit matcher set (#1146), built from
+	// cfg.LimitPatterns (it compiles the override regexes) and reused across poll
+	// ticks. Held behind an atomic pointer so ApplyConfig can rebuild it in place
+	// when limit_patterns changes (#2480) — it snapshots at construction, so a
+	// config swap alone would not reach it. Read lock-free by the poll loop via
+	// Load().
+	limitDetector atomic.Pointer[task.LimitDetector]
 
 	// ready is closed once the initial instance restore has completed. Until
 	// then the daemon is "warming up": the control socket is already bound
@@ -290,19 +311,11 @@ func newManagerShellForDaemon(cfg *config.Config, transactionID string) (*Manage
 	}
 	vscode := newVSCodeSupervisor()
 	configAgents := newConfigAgentSupervisor()
-	// Read the editor override off the manager's own config rather than
-	// re-reading config from disk on every spawn.
-	vscode.configuredBinary = func() string {
-		if cfg == nil {
-			return ""
-		}
-		return cfg.VSCodeServerBinary
-	}
 	raGlobal, raPersonal, raProjectRoots, raLegacyIDs := buildRootAgentSnapshot(cfg)
-	m := &Manager{
+	mgr := &Manager{
 		cfg:                    cfg,
 		previewSecret:          previewSecret,
-		limitDetector:          task.NewLimitDetector(cfg.LimitPatterns),
+		pollReloadCh:           make(chan struct{}, 1),
 		ready:                  make(chan struct{}),
 		lifecycle:              lifecycle,
 		storage:                storage,
@@ -335,8 +348,24 @@ func newManagerShellForDaemon(cfg *config.Config, transactionID string) (*Manage
 		vscode:                 vscode,
 		configAgents:           configAgents,
 	}
-	m.configAssistants = newConfigAssistantHub(m)
-	return m, nil
+	// Seed the hot-reloadable live config with the startup config (#2480). Config()
+	// reads it; ApplyConfig swaps it in place.
+	mgr.live.Store(cfg)
+	// Build the usage-limit detector from the startup config; ApplyConfig rebuilds
+	// it in place when limit_patterns changes.
+	initialDetector := task.NewLimitDetector(cfg.LimitPatterns)
+	mgr.limitDetector.Store(&initialDetector)
+	// Read the editor override off the LIVE config, not a captured one: an
+	// ApplyConfig swap of vscode_server_binary then reaches new spawns in place
+	// (#2480), and the closure still never re-reads disk per spawn.
+	vscode.configuredBinary = func() string {
+		if c := mgr.Config(); c != nil {
+			return c.VSCodeServerBinary
+		}
+		return ""
+	}
+	mgr.configAssistants = newConfigAssistantHub(mgr)
+	return mgr, nil
 }
 
 // RestoreInstances loads every repo's persisted instances into the manager

@@ -140,19 +140,16 @@ type ConfigEntry struct {
 	Enum []string `json:"enum,omitempty"`
 	// Value is the user's live value in editor form (see CurrentValue).
 	Value string `json:"value"`
-	// RequiresRestart reports that a change to this key reaches af and the
-	// daemon only when they next start.
+	// RequiresRestart is true for EVERY key, and it now means only "a write to this
+	// key raises a follow-up notice" — it is the flag a save surface gates the
+	// notice on, so keeping it uniformly true is what makes every edit surface one.
 	//
-	// It is true for EVERY key, which is not laziness: config.toml is read at
-	// startup, so this mirrors SetResult.RequiresRestart and the note
-	// `af config set` already prints. It is carried per-entry rather than as one
-	// banner because the honest per-key answer is not uniform — some keys are
-	// re-read per use (worktree_root, via LoadConfig on each worktree create),
-	// while the daemon's own listener keys are captured once into manager.cfg at
-	// startup and cannot change without a restart. Claiming the former apply
-	// "live" would be the lie this field exists to avoid, and nothing pins such
-	// a claim today, so every key reports the conservative truth. Over-warning
-	// costs a needless restart; under-warning silently ignores the user's edit.
+	// It no longer answers WHEN the change takes effect: #2480 made that per-key and
+	// honest (config.EffectClass / EffectNotice in effect.go), because the answer is
+	// not uniform — a running daemon applies most keys in place, the listener keys
+	// and root_agents wait for the next daemon start, and the client-side keys
+	// (update_channel, theme, …) are picked up by af's own next launch. The old
+	// per-key boolean could not express those three outcomes; the notice does.
 	RequiresRestart bool `json:"requires_restart"`
 }
 
@@ -229,14 +226,13 @@ func editability(e ManifestEntry) (editable bool, hint string) {
 	return true, ""
 }
 
-// RestartNotice is the one sentence every surface uses to tell a user their edit
-// is not live yet, and what to do about it.
-//
-// It names `af daemon restart` because "restart them to apply" (what the CLI
-// prints) leaves a user to guess the command — and a UI that changes a value the
-// running daemon then ignores, without saying so, is the failure this feature is
-// specifically not allowed to ship.
-const RestartNotice = "af and the daemon read config.toml at startup · run `af daemon restart` and restart af to apply"
+// The one sentence a save surface shows after a write is no longer a single
+// constant: #2480 made it PER-KEY (config.EffectNotice / KeyEffectClass in
+// effect.go), because the honest answer differs by key — a running daemon applies
+// some in place, the network listener keys and root_agents wait for the next
+// daemon start, and the client-side keys (update_channel, theme, …) are picked up
+// by af's own next launch and never touch the daemon at all. It deliberately never
+// tells the user to run a command (#2479).
 
 // editorValue renders one config field in the editor form. It deliberately does
 // NOT share renderConfigValue's briefing decorations (`""`, "none") — see the
