@@ -26,9 +26,14 @@
 //
 // # Scope
 //
-// This is for commands we PRINT. Strings af itself feeds to a shell (ssh scripts,
-// tmux program strings) are a different job with different helpers; consolidating
-// those is #1529.
+// This is for commands we PRINT. Strings af itself feeds to a shell (ssh
+// scripts, tmux program strings) are a different job: internal/shellquote is the
+// shared quoter for the executed side. The two stay separate because Arg's zsh
+// start-of-word guards only earn their keep when the command lands in a human's
+// interactive shell, and they change the rendered string. The always-quote
+// helpers still in the tree (session.shellQuote, config.ShellQuotePath) render
+// differently again, so folding them in is a behavior-visible change tracked on
+// the structural audit (#1195), not a mechanical move.
 package shellsuggest
 
 import "strings"
@@ -52,9 +57,15 @@ const shellSafeChars = "_@%+=:,./-"
 // Values that need no quoting pass through, so the common suggestion stays clean
 // and readable (`af sessions restore captain`, not `af sessions restore 'captain'`)
 // — readability matters for a string whose whole purpose is to be read and pasted.
-// Anything else is single-quoted, with embedded single quotes escaped by the
-// standard POSIX idiom ('\”), which makes every other metacharacter — space, ",
-// $, backtick, ;, newline — literal in all three shells.
+// Anything else is single-quoted, with each embedded single quote escaped by
+// the standard POSIX idiom:
+//
+//	'   ->   '\''
+//
+// which makes every other metacharacter — space, ", $, backtick, ;, newline —
+// literal in all three shells. (The idiom is an indented code block because
+// gofmt rewrites a doubled quote in doc prose into a typographic ” character;
+// this comment used to read '\” for exactly that reason.)
 //
 // Prefer Command: a bare Arg still leaves a caller assembling a command by hand.
 // Arg is exported for the rare site that must interleave quoted values with
