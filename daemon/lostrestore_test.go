@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -753,13 +754,10 @@ func TestRestoreLostSessions_AliveRemoteSandboxIsNotReprovisioned(t *testing.T) 
 	}
 }
 
-// TestRestoreLostSessions_UnreachableRemoteSandboxIsReprovisioned is the
-// companion that keeps the #1794 recheck from becoming a blanket "never restore
-// remote sessions". A genuinely gone sandbox (nothing listening, so the probe is
-// refused outright) must still be re-provisioned — that recovery IS the feature
-// (#1108/#1782), and the recheck only exists to veto it when the sandbox proves
-// it is still there.
-func TestRestoreLostSessions_UnreachableRemoteSandboxIsReprovisioned(t *testing.T) {
+// TestRestoreLostSessions_UnreachableRemoteSandboxIsNotReprovisioned is the
+// #2589 last gate: an unreachable sandbox has not answered whether it is alive or
+// dead, so automatic recovery must preserve it and retry observation later.
+func TestRestoreLostSessions_UnreachableRemoteSandboxIsNotReprovisioned(t *testing.T) {
 	withRemoteLossThresholds(t, 3, time.Minute, time.Second)
 	zeroRestoreBackoff(t)
 
@@ -768,7 +766,77 @@ func TestRestoreLostSessions_UnreachableRemoteSandboxIsReprovisioned(t *testing.
 
 	manager.RestoreLostSessions()
 
+	if got := backend.recoverCalls(); got != 0 {
+		t.Fatalf("Recover calls = %d, want 0 — unreachable is not dead, so automatic restore must not discard the existing sandbox's unpushed work", got)
+	}
+}
+
+func registerKnownUnprovisionedRemote(t *testing.T, manager *Manager, repoID, repoPath, title string) (*session.Instance, *remoteWorkspaceBackend) {
+	t.Helper()
+	inst, err := session.NewInstance(session.InstanceOptions{Title: title, Path: repoPath, Program: "claude"})
+	if err != nil {
+		t.Fatalf("NewInstance: %v", err)
+	}
+	backend := &remoteWorkspaceBackend{FakeBackend: session.NewFakeBackend()}
+	inst.SetBackend(backend)
+	inst.SetStartedForTest(true)
+	inst.SetStatusForTest(session.Lost)
+	seedDiskInstance(t, repoID, title, repoPath)
+	manager.mu.Lock()
+	manager.instances[daemonInstanceKey(repoID, title)] = inst
+	manager.mu.Unlock()
+	return inst, backend
+}
+
+func TestRestoreLostSessions_KnownUnprovisionedRemoteIsReprovisioned(t *testing.T) {
+	manager, repoID, repoPath := newStatusTestManager(t)
+	_, backend := registerKnownUnprovisionedRemote(t, manager, repoID, repoPath, "inert-auto")
+
+	manager.RestoreLostSessions()
+
 	if got := backend.recoverCalls(); got != 1 {
-		t.Fatalf("Recover calls = %d, want 1 — an unreachable sandbox must still be recovered; the recheck is a veto on live sandboxes, not a block on remote restore", got)
+		t.Fatalf("Recover calls = %d, want 1 for a remote runtime explicitly known to be unprovisioned", got)
+	}
+}
+
+func TestRestoreSession_KnownUnprovisionedRemoteIsReprovisioned(t *testing.T) {
+	manager, repoID, repoPath := newStatusTestManager(t)
+	_, backend := registerKnownUnprovisionedRemote(t, manager, repoID, repoPath, "inert-manual")
+
+	if _, _, err := manager.RestoreSession(RestoreSessionRequest{Title: "inert-manual", RepoID: repoID}); err != nil {
+		t.Fatalf("RestoreSession: %v", err)
+	}
+	if got := backend.recoverCalls(); got != 1 {
+		t.Fatalf("Recover calls = %d, want 1 for a remote runtime explicitly known to be unprovisioned", got)
+	}
+}
+
+func TestRestoreLostSessions_UnreachableRemoteProbeBacksOff(t *testing.T) {
+	prevBase, prevMax := lostRestoreBackoffBase, lostRestoreBackoffMax
+	lostRestoreBackoffBase, lostRestoreBackoffMax = time.Hour, time.Hour
+	t.Cleanup(func() { lostRestoreBackoffBase, lostRestoreBackoffMax = prevBase, prevMax })
+
+	var aliveCalls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/agent/alive" {
+			aliveCalls.Add(1)
+			http.Error(w, "temporarily unreachable", http.StatusServiceUnavailable)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	manager, repoID, repoPath := newStatusTestManager(t)
+	_, backend := registerStartedRemote(t, manager, repoID, repoPath, "remote-blackhole", srv.URL, session.Lost)
+
+	manager.RestoreLostSessions()
+	manager.RestoreLostSessions()
+
+	if got := aliveCalls.Load(); got != 1 {
+		t.Fatalf("Alive calls = %d, want 1 while the unknown observation is in backoff", got)
+	}
+	if got := backend.recoverCalls(); got != 0 {
+		t.Fatalf("Recover calls = %d, want 0 because the sandbox never answered", got)
 	}
 }
