@@ -74,17 +74,26 @@ func (c *Client) DialStream(ctx context.Context, title, repoID, tabID string, ta
 	if enc := q.Encode(); enc != "" {
 		u += "?" + enc
 	}
-	// A REMOTE target bounds the UPGRADE handshake so a peer that accepts the TCP
-	// connection but never answers the 101 can't hang the attach path (which dials
-	// with context.Background()) — plain HTTP has no TLS handshake timeout to lean
-	// on. The deadline governs ONLY the handshake: coder/websocket's Dial does not
-	// use the context for the established stream, so cancelling it after Dial
-	// returns never severs the live subscription. The local unix socket keeps
-	// context.Background() (the socket is local — there or not, bounded by dial).
+	// A REMOTE target bounds the UPGRADE response separately from the TCP connect.
+	// ResponseHeaderTimeout starts only after the request has been written, so a
+	// slow-but-valid connect cannot consume the 101 exchange's budget (#2670). The
+	// clone is WS-only: putting this bound on the shared REST transport would sever
+	// a slow synchronous CreateSession before provisioning finishes. The local Unix
+	// socket keeps its existing transport unchanged.
 	dialCtx := ctx
-	if c.requestTimeout > 0 {
+	if c.remoteTransport != nil {
+		wsTransport := c.remoteTransport.Clone()
+		wsTransport.ResponseHeaderTimeout = remoteWSHandshakeTimeout
+		defer wsTransport.CloseIdleConnections()
+		wsClient := *c.httpClient
+		wsClient.Transport = wsTransport
+		opts.HTTPClient = &wsClient
+		// ResponseHeaderTimeout starts only after net/http finishes writing the
+		// upgrade request. Keep a larger overall backstop for a peer that connects
+		// but stops reading: dial + upgrade may each consume their full independent
+		// budgets, while request writing can never hang forever.
 		var cancel context.CancelFunc
-		dialCtx, cancel = context.WithTimeout(ctx, remoteWSHandshakeTimeout)
+		dialCtx, cancel = context.WithTimeout(ctx, remoteDialTimeout+remoteWSHandshakeTimeout)
 		defer cancel()
 	}
 	conn, resp, err := websocket.Dial(dialCtx, u, &opts)

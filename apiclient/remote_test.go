@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -293,6 +294,133 @@ func TestDialStream_StalledHandshakeTimesOut(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("HANG: DialStream did not return on a stalled handshake (#1730 regression)")
+	}
+}
+
+// TestDialStream_StalledRequestWriteTimesOut covers the pre-header half of the
+// handshake. ResponseHeaderTimeout has not started while net/http is still
+// writing the upgrade request, so the dial also needs an overall backstop.
+func TestDialStream_StalledRequestWriteTimesOut(t *testing.T) {
+	origDial, origHandshake := remoteDialTimeout, remoteWSHandshakeTimeout
+	remoteDialTimeout = 250 * time.Millisecond
+	remoteWSHandshakeTimeout = 250 * time.Millisecond
+	t.Cleanup(func() {
+		remoteDialTimeout, remoteWSHandshakeTimeout = origDial, origHandshake
+	})
+
+	c, err := NewRemote("http://pipe.invalid", "tok")
+	if err != nil {
+		t.Fatalf("NewRemote: %v", err)
+	}
+	client, peer := net.Pipe()
+	t.Cleanup(func() {
+		_ = client.Close()
+		_ = peer.Close()
+	})
+	c.remoteTransport.DialContext = func(context.Context, string, string) (net.Conn, error) {
+		return client, nil
+	}
+
+	errc := make(chan error, 1)
+	go func() {
+		_, err := c.DialStream(context.Background(), "alpha", "", "", 0, 0)
+		errc <- err
+	}()
+	select {
+	case err := <-errc:
+		if err == nil {
+			t.Fatal("stalled WebSocket request write unexpectedly succeeded")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("HANG: DialStream did not return while the peer stopped reading the upgrade request")
+	}
+}
+
+// TestDialStream_SlowTCPDialKeepsFullHandshakeBudget is the #2670 regression:
+// the remote TCP connect and WebSocket upgrade have independent budgets. A TCP
+// connect that consumes more than the upgrade budget but less than the dial
+// budget must not make an otherwise immediate upgrade time out.
+func TestDialStream_SlowTCPDialKeepsFullHandshakeBudget(t *testing.T) {
+	origHandshake := remoteWSHandshakeTimeout
+	remoteWSHandshakeTimeout = 250 * time.Millisecond
+	t.Cleanup(func() { remoteWSHandshakeTimeout = origHandshake })
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/sessions/{id}/stream", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			return
+		}
+		_ = conn.Close(websocket.StatusNormalClosure, "")
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	c, err := NewRemote(srv.URL, "tok")
+	if err != nil {
+		t.Fatalf("NewRemote: %v", err)
+	}
+	transport := c.httpClient.Transport.(*http.Transport)
+	dial := transport.DialContext
+	dialDelay := 2 * remoteWSHandshakeTimeout
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		timer := time.NewTimer(dialDelay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			return dial(ctx, network, address)
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	sc, err := c.DialStream(context.Background(), "alpha", "", "", 0, 0)
+	if err != nil {
+		t.Fatalf("TCP dial used the WebSocket handshake budget: %v", err)
+	}
+	_ = sc.Conn.Close(websocket.StatusNormalClosure, "")
+}
+
+type closeNotifyConn struct {
+	net.Conn
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (c *closeNotifyConn) Close() error {
+	c.once.Do(func() { close(c.closed) })
+	return c.Conn.Close()
+}
+
+func TestDialStream_RejectedUpgradeClosesPerDialTransport(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/sessions/{id}/stream", func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "upgrade rejected", http.StatusServiceUnavailable)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	c, err := NewRemote(srv.URL, "tok")
+	if err != nil {
+		t.Fatalf("NewRemote: %v", err)
+	}
+	closed := make(chan struct{})
+	dial := c.remoteTransport.DialContext
+	c.remoteTransport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		conn, err := dial(ctx, network, address)
+		if err != nil {
+			return nil, err
+		}
+		return &closeNotifyConn{Conn: conn, closed: closed}, nil
+	}
+
+	if _, err := c.DialStream(context.Background(), "alpha", "", "", 0, 0); err == nil {
+		t.Fatal("rejected WebSocket upgrade unexpectedly succeeded")
+	}
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("rejected WebSocket upgrade left the per-dial transport connection idle")
 	}
 }
 

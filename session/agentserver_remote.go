@@ -501,10 +501,10 @@ const remoteWSWriteTimeout = 10 * time.Second
 
 // remoteAgentDialTimeout bounds the TCP connect to the sandbox (a real network
 // hop), and remoteAgentCallTimeout bounds a whole control REST round-trip.
-const (
-	remoteAgentDialTimeout = 10 * time.Second
-	remoteAgentCallTimeout = 30 * time.Second
-)
+const remoteAgentCallTimeout = 30 * time.Second
+
+// var, not const, so transport phase-bound tests can shrink the dial budget.
+var remoteAgentDialTimeout = 10 * time.Second
 
 // remoteAgentWSHandshakeTimeout bounds the WS UPGRADE handshake on the internal
 // daemon→agent-server stream dial — the 101 exchange after the TCP connect. Plain
@@ -523,6 +523,7 @@ var remoteAgentWSHandshakeTimeout = 10 * time.Second
 // pieces that define the contract through the agentproto/apiproto leaves.
 type remoteAgentClient struct {
 	httpClient *http.Client
+	transport  *http.Transport
 	httpBase   string // http://host:port
 	wsBase     string // ws://host:port
 	token      string
@@ -542,16 +543,16 @@ func newRemoteAgentClient(ep AgentServerEndpoint, title string) (*remoteAgentCli
 		return nil, err
 	}
 	dialer := &net.Dialer{Timeout: remoteAgentDialTimeout}
+	transport := &http.Transport{DialContext: dialer.DialContext}
 	return &remoteAgentClient{
 		httpClient: &http.Client{
-			Transport: &http.Transport{
-				DialContext: dialer.DialContext,
-			},
+			Transport: transport,
 		},
-		httpBase: httpBase,
-		wsBase:   wsBase,
-		token:    ep.Token,
-		title:    title,
+		transport: transport,
+		httpBase:  httpBase,
+		wsBase:    wsBase,
+		token:     ep.Token,
+		title:     title,
 	}, nil
 }
 
@@ -636,11 +637,19 @@ func (c *remoteAgentClient) dialStream(ctx context.Context, tab int) (*websocket
 		HTTPClient: c.httpClient,
 		HTTPHeader: http.Header{agentproto.AuthHeader: []string{agentproto.BearerScheme + c.token}},
 	}
-	// Bound the UPGRADE handshake so a wedged agent-server (TCP accepted, 101 never
-	// sent) can't hang this dial forever. coder/websocket's Dial context bounds only
-	// the handshake — the established stream reads use the parent ctx (passed into
-	// readLoop), so cancelling this after Dial returns never severs the live stream.
-	dialCtx, cancel := context.WithTimeout(ctx, remoteAgentWSHandshakeTimeout)
+	// Bound the UPGRADE response independently of the TCP connect (#2670). The
+	// WebSocket-only clone starts ResponseHeaderTimeout after the request is
+	// written; the shared REST transport remains free of a response-header bound.
+	wsTransport := c.transport.Clone()
+	wsTransport.ResponseHeaderTimeout = remoteAgentWSHandshakeTimeout
+	defer wsTransport.CloseIdleConnections()
+	wsClient := *c.httpClient
+	wsClient.Transport = wsTransport
+	opts.HTTPClient = &wsClient
+	// ResponseHeaderTimeout does not cover a blocked request write. The larger
+	// overall backstop lets TCP connect and the 101 response each use their full
+	// independent budget while still bounding a peer that stops reading.
+	dialCtx, cancel := context.WithTimeout(ctx, remoteAgentDialTimeout+remoteAgentWSHandshakeTimeout)
 	defer cancel()
 	conn, _, err := websocket.Dial(dialCtx, u, opts)
 	if err != nil {
