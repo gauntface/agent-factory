@@ -241,14 +241,24 @@ func (dockerRuntime) Provision(spec ProvisionSpec) (ProvisionResult, error) {
 	}
 	res, err := p.provision()
 	if err != nil {
-		// Reap anything the failed provision left running so a container never
-		// leaks on a partial failure.
-		if p.containerID != "" {
-			p.reap()
-		}
-		return ProvisionResult{}, err
+		return ProvisionResult{}, p.reapProvisionFailure(err)
 	}
 	return res, nil
+}
+
+// reapProvisionFailure cleans up a container created by a failed provision. No
+// Instance record exists to carry a future retry, so a reap that does not succeed
+// must remain visible to the caller with both causes and the orphan risk (#2590).
+func (p *dockerProvisioner) reapProvisionFailure(provisionErr error) error {
+	if p.containerID == "" {
+		return provisionErr
+	}
+	reapErr := p.reap()
+	if reapErr == nil {
+		return provisionErr
+	}
+	return fmt.Errorf("backend=docker: provisioning failed and cleanup of container %s for session %q did not complete; a container may still be running; inspect it before retrying: %w",
+		p.shortID(), p.spec.Title, errors.Join(provisionErr, reapErr))
 }
 
 // dockerProvisioner holds the state of one container provisioning so its steps
@@ -622,8 +632,10 @@ func (p *dockerProvisioner) reap() error {
 	// success (err == nil) never reaches here.
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		// Unknown-state, and NOT latched: RETAIN the row now and re-run on the next
-		// reap. (#2049 classification + #2063-review retry.)
-		reapErr = fmt.Errorf("%w: %w", ErrWorkspaceStateUnknown, reapErr)
+		// reap. exec.CommandContext reports the killed process, not the context
+		// sentinel, so join ctx.Err explicitly and keep the deadline classifiable by
+		// callers (#2049 classification + #2063 review + #2590 review).
+		reapErr = fmt.Errorf("%w: %w", ErrWorkspaceStateUnknown, errors.Join(reapErr, ctx.Err()))
 		log.WarningLog.Printf("%v", reapErr)
 		return reapErr
 	}

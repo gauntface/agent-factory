@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -32,15 +34,68 @@ func withShortDockerReapTimeout(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { dockerReapTimeout = prev })
 }
 
+// TestDockerProvisionFailureSurfacesUnknownReap covers the no-record failure
+// path: if provisioning fails after creating a container and its immediate reap
+// times out, both causes and the orphan risk must reach the session creator.
+func TestDockerProvisionFailureSurfacesUnknownReap(t *testing.T) {
+	t.Setenv("AGENT_FACTORY_HOME", t.TempDir())
+	repoRoot := initTempGitRepo(t)
+	writeInRepoConfig(t, repoRoot, map[string]any{
+		"backend": "docker",
+		"docker":  map[string]any{"image": "img:latest"},
+	})
+	defer SetLookPathForTest(func(string) (string, error) { return "/usr/bin/docker", nil })()
+	defer SetDockerSelfBinaryForTest(filepath.Join(t.TempDir(), "af"))()
+	withShortDockerReapTimeout(t, 50*time.Millisecond)
+
+	provisionErr := errors.New("permission denied")
+	var reapCalls atomic.Int32
+	defer SetDockerExecForTest(func(ctx context.Context, _ []string, args ...string) ([]byte, error) {
+		switch args[0] {
+		case "info":
+			return []byte(dockerReapTestEngineID + "\n"), nil
+		case "run":
+			return []byte(dockerCreatedID + "\n"), nil
+		case "exec":
+			return nil, provisionErr
+		case "rm":
+			reapCalls.Add(1)
+			<-ctx.Done()
+			// exec.CommandContext reports the killed process (for example,
+			// "signal: killed"), not ctx.Err(); reap must add the deadline.
+			return nil, errors.New("signal: killed")
+		default:
+			return nil, fmt.Errorf("unexpected docker command: %v", args)
+		}
+	})()
+
+	_, err := dockerRuntime{}.Provision(ProvisionSpec{
+		RepoRoot: repoRoot,
+		Title:    "partial-container",
+		CloneURL: "file:///repo",
+	})
+	if !errors.Is(err, provisionErr) || !errors.Is(err, ErrWorkspaceStateUnknown) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("provision and unknown cleanup causes must all survive, got %v", err)
+	}
+	if reapCalls.Load() != 1 {
+		t.Fatalf("failed provision attempted container cleanup %d times, want 1", reapCalls.Load())
+	}
+	for _, detail := range []string{shortContainerID(dockerCreatedID), "partial-container", "may still be running", "inspect it before retrying"} {
+		if !strings.Contains(err.Error(), detail) {
+			t.Fatalf("provision cleanup error omitted %q: %v", detail, err)
+		}
+	}
+}
+
 // TestDockerReapTimeoutIsWorkspaceStateUnknown is the #2049 regression: a reap
 // whose `docker rm -f` is killed on its deadline (the container's state is
 // therefore unknown — it may still be running) must wrap ErrWorkspaceStateUnknown,
 // so TeardownStateUnknown returns true and the daemon RETAINS the row.
 //
 // The injected dockerExec faithfully models a deadline kill: it blocks until the
-// caller's context is cancelled and returns ctx.Err() (context.DeadlineExceeded),
-// exactly as exec.CommandContext's kill surfaces to reap via ctx.Err(). Before the
-// fix reap returned a plain error and TeardownStateUnknown was false.
+// caller's context is cancelled, then returns the killed process error rather
+// than ctx.Err(), exactly as exec.CommandContext does. reap must add the context
+// deadline itself. Before the fix it returned only a plain process error.
 func TestDockerReapTimeoutIsWorkspaceStateUnknown(t *testing.T) {
 	withShortDockerReapTimeout(t, 150*time.Millisecond)
 	restore := SetDockerExecForTest(func(ctx context.Context, _ []string, args ...string) ([]byte, error) {
@@ -48,7 +103,7 @@ func TestDockerReapTimeoutIsWorkspaceStateUnknown(t *testing.T) {
 			return []byte(dockerReapTestEngineID + "\n"), nil
 		}
 		<-ctx.Done()
-		return nil, ctx.Err()
+		return nil, errors.New("signal: killed")
 	})
 	defer restore()
 
@@ -69,6 +124,9 @@ func TestDockerReapTimeoutIsWorkspaceStateUnknown(t *testing.T) {
 	}
 	if !errors.Is(err, ErrWorkspaceStateUnknown) {
 		t.Fatalf("a wedged/timed-out reap must wrap ErrWorkspaceStateUnknown so the row is retained (#2049); got a plain error: %v", err)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a timed-out reap must preserve the actual context deadline, got %v", err)
 	}
 	if !TeardownStateUnknown(err) {
 		t.Fatalf("TeardownStateUnknown must be true for a timed-out reap so KillSession/deleteSessionRecord RETAIN the row instead of orphaning the leaked container; got false for: %v", err)
@@ -153,7 +211,7 @@ func TestDockerReapTimeoutIsReRunnable(t *testing.T) {
 		}
 		atomic.AddInt32(&calls, 1)
 		<-ctx.Done()
-		return nil, ctx.Err()
+		return nil, errors.New("signal: killed")
 	})
 	defer restore()
 
@@ -202,7 +260,7 @@ func TestDockerReapTimeoutThenSuccessClears(t *testing.T) {
 		atomic.AddInt32(&calls, 1)
 		if wedged.Load() {
 			<-ctx.Done()
-			return nil, ctx.Err()
+			return nil, errors.New("signal: killed")
 		}
 		return []byte("deadbeefcafe0000\n"), nil
 	})
