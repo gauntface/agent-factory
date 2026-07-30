@@ -366,6 +366,70 @@ func TestValidateTitleAvailableLockedRejectsWhitespace(t *testing.T) {
 	}
 }
 
+// TestValidateTitleAvailableLockedRejectsControlCharacters keeps the daemon's
+// title admission authoritative for every client. The TUI strips controls from
+// pasted titles, but CLI/API callers must not be able to create the same
+// multi-line sidebar corruption by sending them directly (#2640).
+func TestValidateTitleAvailableLockedRejectsControlCharacters(t *testing.T) {
+	t.Setenv("AGENT_FACTORY_HOME", testguard.SocketTempDir(t))
+	manager, err := newManagerShell(config.DefaultConfig())
+	if err != nil {
+		t.Fatalf("newManagerShell: %v", err)
+	}
+
+	for _, title := range []string{"alpha\nbeta", "alpha\rbeta", "alpha\tbeta", "alpha\x1bbeta"} {
+		manager.mu.Lock()
+		err := manager.validateTitleAvailableLocked("repo-id", "/tmp/repo", title, "claude", runtimeNamespaceLocalTmux, false, nil)
+		manager.mu.Unlock()
+		if err == nil {
+			t.Fatalf("expected title containing controls %q to be rejected", title)
+		}
+		if !strings.Contains(err.Error(), "single line") || !strings.Contains(err.Error(), "control") {
+			t.Fatalf("title %q: expected a single-line control-character error, got: %v", title, err)
+		}
+	}
+}
+
+// TestNextAvailableTitleRejectsMalformedBaseBeforeSuffixing covers the derived
+// title path used by web and task creates. A malformed base is not a collision:
+// suffixing cannot remove its controls, and whitespace must not turn into a
+// punctuation-only candidate. Reject the base once with the canonical shape
+// error instead of walking 10,000 candidates and reporting exhaustion.
+func TestNextAvailableTitleRejectsMalformedBaseBeforeSuffixing(t *testing.T) {
+	t.Setenv("AGENT_FACTORY_HOME", testguard.SocketTempDir(t))
+	manager, err := newManagerShell(config.DefaultConfig())
+	if err != nil {
+		t.Fatalf("newManagerShell: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		base    string
+		wantErr string
+	}{
+		{name: "control", base: "alpha\nbeta", wantErr: "single line"},
+		{name: "whitespace", base: "   ", wantErr: "session title is required"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manager.mu.Lock()
+			got, err := manager.nextAvailableTitleLocked(
+				"repo-id", "/tmp/repo", tc.base, "claude", runtimeNamespaceLocalTmux, nil,
+			)
+			manager.mu.Unlock()
+
+			if err == nil {
+				t.Fatalf("malformed title base %q resolved to %q", tc.base, got)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("malformed title base %q: expected %q, got: %v", tc.base, tc.wantErr, err)
+			}
+			if strings.Contains(err.Error(), "could not find an available title") {
+				t.Fatalf("malformed title base %q was misreported as collision exhaustion: %v", tc.base, err)
+			}
+		})
+	}
+}
+
 // TestManagerCreateSessionRejectsCaseVariantTitleFromDisk covers the disk-side
 // branch of the #605 fix: a case-variant title persisted to disk from a prior
 // daemon run must still be rejected when the manager loads fresh and a new
