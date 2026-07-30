@@ -23,17 +23,9 @@ import (
 // restoreManagerForStartup is the warm-up restore entry point RunDaemon uses.
 // Package-level so tests can inject a slow or gated restore and prove the
 // control socket binds and serves before the restore completes (#829).
-var restoreManagerForStartup = func(m *Manager) error { return m.RestoreInstances() }
-
-// sweepOrphanContainers reaps docker session containers this daemon leaked, at
-// startup (#2194 slice 4). Package-level so a test can assert startup passes the
-// live-plus-pending protected slugs and can stub out the docker work.
-var sweepOrphanContainers = session.SweepOrphanContainers
-
-// configDirForReap resolves the AF home the orphan sweep scopes its container
-// query to (it must match the af.home label runContainer stamps). A seam, mirroring
-// the above, so a test can supply a deterministic home.
-var configDirForReap = config.GetConfigDir
+// RunDaemon opens the manager's readiness barrier itself, after the startup
+// orphan sweep, so a concurrent create cannot manufacture a sweep candidate.
+var restoreManagerForStartup = func(m *Manager) error { return m.restoreInstances() }
 
 // RunDaemon runs the daemon process: it serves the local control plane,
 // evaluates task cron schedules in-process, supervises watch-task scripts,
@@ -263,6 +255,12 @@ func runDaemon(cfg *config.Config, upgradeTransactionID string) error {
 		log.InfoLog.Printf("received shutdown request via control socket during instance restore; exiting")
 		return nil
 	}
+	// Upgrade candidates deliberately park before the orphan sweep. Preserve the
+	// pre-existing probation contract: restored state is readable while every
+	// mutation remains blocked by the lifecycle gate.
+	if manager.lifecycle.snapshot().transactionID != "" {
+		manager.finishInstanceRestore()
+	}
 	if manager.lifecycle.isUpgradeProbation() {
 		log.InfoLog.Printf("instance restore complete; daemon is in upgrade probation")
 		select {
@@ -279,17 +277,8 @@ func runDaemon(cfg *config.Config, upgradeTransactionID string) error {
 	// in-process scheduler below replaces them.
 	sweepLegacyTaskUnits()
 
-	// Reap docker session containers this daemon leaked — a container that outlived
-	// its session because a previous daemon died without reaping, its record is
-	// gone, or a reap raced a create. Runs after the restore above so the live
-	// roster (and its pending-create window) is authoritative. Best-effort and
-	// non-fatal like sweepLegacyTaskUnits: a sweep problem must never block
-	// startup, and it no-ops when docker is not installed (#2194 slice 4).
-	if homeID, err := configDirForReap(); err != nil {
-		log.WarningLog.Printf("orphan sweep: cannot resolve the AF home; skipping: %v", err)
-	} else {
-		sweepOrphanContainers(homeID, manager.dockerReapProtectedSlugs())
-	}
+	sweepStartupOrphanContainers(manager)
+	manager.finishInstanceRestore()
 
 	// Start schedule evaluation only after the control server is up and the
 	// restore has finished: a task firing immediately goes through the
