@@ -28,11 +28,11 @@ import (
 // that gate and prove nothing about the path that actually types into the pane
 // (#1952).
 
-// Real aider doc-trust dialog: the prose line co-occurs with the dialog-only
-// "(D)on't ask again" affordance.
-const aiderDocTrustDialog = `Add https://aider.chat/docs/faq.html to the chat?
-Open documentation url for more info
-(Y)es/(N)o/(D)on't ask again [Yes]:`
+// Real aider doc-trust dialog: offer_url renders its URL subject in reverse
+// video before the caller-controlled question and confirmation suffix.
+const aiderDocTrustDialog = "\x1b[7mhttps://aider.chat/docs/faq.html\n" +
+	"\x1b[0m\x1b[38;5;21mOpen documentation url for more info? " +
+	"(Y)es/(N)o/(D)on't ask again [Yes]:  \x1b[39m\n\x1b[38;5;21m   \x1b[39m"
 
 // The SAME prose line as ordinary agent output — no dialog, nothing to dismiss.
 // This is the #1952 repro: an agent that merely mentions the phrase must not be
@@ -564,6 +564,31 @@ func TestCheckAndHandleTrustPrompt_RealDocDialogIsDismissed(t *testing.T) {
 	}
 }
 
+func TestCheckAndHandleTrustPrompt_OverriddenDocMessageIsDismissed(t *testing.T) {
+	content := "\x1b[7mhttps://aider.chat/docs/faq.html\x1b[0m\n" +
+		"Review these docs before continuing? (Y)es/(N)o/(D)on't ask again [Yes]:"
+	for _, program := range []string{ProgramAider, ProgramGemini} {
+		t.Run(program, func(t *testing.T) {
+			handled, cmds := runTrustPromptCheck(t, program, content)
+			require.True(t, handled, "the renderer invariant must identify the active URL prompt")
+			require.Contains(t, sentKeystrokes(cmds), "tmux send-keys -t =af_trust: D Enter")
+		})
+	}
+}
+
+func TestCheckAndHandleTrustPrompt_PrintedURLThenUnrelatedConfirmInjectsNothing(t *testing.T) {
+	content := `See https://aider.chat/docs/faq.html for the details.
+Add src/main.go to the chat? (Y)es/(N)o/(D)on't ask again [Yes]:`
+	for _, program := range []string{ProgramAider, ProgramGemini} {
+		t.Run(program, func(t *testing.T) {
+			handled, cmds := runTrustPromptCheck(t, program, content)
+			require.False(t, handled,
+				"a recently printed URL does not turn the next generic confirmation into a URL-offer prompt")
+			require.Empty(t, sentKeystrokes(cmds), "got %v", cmds)
+		})
+	}
+}
+
 // The dialog marker alone is not the doc-trust dialog: aider renders
 // "(D)on't ask again" on every confirmation prompt it asks. Dismissing an
 // arbitrary confirmation with 'D' ("don't ask again") is exactly the unbidden
@@ -605,6 +630,29 @@ Add src/main.go to the chat?
 					"renders is not evidence the doc dialog is up — tapping 'D' here answers an "+
 					"unrelated question; got %v", cmds)
 			require.False(t, handled)
+		})
+	}
+}
+
+func TestCheckAndHandleTrustPrompt_DocMatcherSourceCommentInjectsNothing(t *testing.T) {
+	content := `// DocTrustPromptPresent reports whether content shows the documentation-link
+// trust dialog shared by aider/gemini:
+//
+//	Open documentation url for more info? (Y)es/(N)o/(D)on't ask again [Yes]:
+//
+// ACTION HERE REQUIRES POSITIVE EVIDENCE.
+func DocTrustPromptPresent(content string) bool {
+	return strings.Contains(content, "Open documentation url for more info") &&
+		strings.Contains(content, "(D)on't ask again")
+}`
+
+	for _, program := range []string{ProgramAider, ProgramGemini} {
+		t.Run(program, func(t *testing.T) {
+			handled, cmds := runTrustPromptCheck(t, program, content)
+			require.False(t, handled,
+				"source text describing the prompt is not evidence that the prompt is active")
+			require.Empty(t, sentKeystrokes(cmds),
+				"repo-controlled source visible in the pane must not trigger daemon input; got %v", cmds)
 		})
 	}
 }
