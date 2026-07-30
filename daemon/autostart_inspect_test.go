@@ -623,6 +623,20 @@ func TestAutostartProbe_WaitDelayStragglerIsStillAnAnswer(t *testing.T) {
 	require.Contains(t, out, "active", "and its answer must survive")
 }
 
+func TestAutostartProbe_DeadlineDuringWaitDelayIsStillAnAnswer(t *testing.T) {
+	// Leave ample time for the shell's successful exit to be observed before
+	// the context fires. The child explicitly retains both capture pipes, so the
+	// deadline still lands during WaitDelay cleanup on both Linux and macOS.
+	withProbeTimeout(t, time.Second)
+
+	res := runAutostartProbeCommand("sh", "-c", "echo active; sleep 30 >&1 2>&1 &")
+
+	require.NoError(t, res.Cause(), "the probe answered before the deadline; only pipe cleanup crossed it")
+	out, ok := res.Output()
+	require.True(t, ok, "an answered probe must expose its output")
+	require.Contains(t, out, "active")
+}
+
 // The same shape, all the way through the classifier: a straggler must not turn
 // "active" into "inactive".
 func TestAutostartSupervision_WaitDelayStragglerDoesNotInvertTheAnswer(t *testing.T) {
