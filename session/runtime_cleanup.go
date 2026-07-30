@@ -34,9 +34,10 @@ type DockerRuntimeCleanupData struct {
 }
 
 type SSHRuntimeCleanupData struct {
-	Config     config.SSHConfig `json:"config"`
-	SessionDir string           `json:"session_dir"`
-	RemotePID  string           `json:"remote_pid,omitempty"`
+	Config              config.SSHConfig `json:"config"`
+	SessionDir          string           `json:"session_dir"`
+	RemotePID           string           `json:"remote_pid,omitempty"`
+	HostKeyVerification string           `json:"host_key_verification,omitempty"`
 }
 
 type HookRuntimeCleanupData struct {
@@ -166,10 +167,11 @@ func restoreRuntimeCleanup(title, backendType string, data *RuntimeCleanupData) 
 		}
 		cleanup := *data.SSH
 		p := &sshProvisioner{
-			spec:       ProvisionSpec{Title: title},
-			cfg:        data.SSH.Config,
-			sessionDir: data.SSH.SessionDir,
-			remotePID:  data.SSH.RemotePID,
+			spec:                ProvisionSpec{Title: title},
+			cfg:                 data.SSH.Config,
+			hostKeyVerification: data.SSH.HostKeyVerification,
+			sessionDir:          data.SSH.SessionDir,
+			remotePID:           data.SSH.RemotePID,
 		}
 		teardown := p.reap
 		return &sshBackend{
