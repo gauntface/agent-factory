@@ -135,6 +135,7 @@ func (m *Manager) CreateSession(ctx context.Context, req CreateSessionRequest) (
 		InPlace:                        req.InPlace,
 		ForceRemote:                    req.ForceRemote,
 		Backend:                        session.BackendKind(req.Backend),
+		ResumeConversation:             req.resumeConversation,
 		ProvisionSessionEnvPassthrough: append([]string(nil), cfg.SessionEnvPassthrough...),
 	})
 	if err != nil {
@@ -197,6 +198,7 @@ func (m *Manager) CreateSession(ctx context.Context, req CreateSessionRequest) (
 		return session.InstanceData{}, fmt.Errorf("failed to start instance: %w", serr)
 	}
 	data := instance.ToInstanceData()
+	conversationToken := instance.AgentRuntimeToken()
 
 	// Register the in-memory instance and persist it to disk inside the
 	// same critical section. The daemon refresh loop rebuilds
@@ -213,6 +215,11 @@ func (m *Manager) CreateSession(ctx context.Context, req CreateSessionRequest) (
 			delete(m.instances, key)
 			return err
 		}
+		// Register the provider discovery in the same manager-lock critical
+		// section that makes the instance visible. A concurrent status poll can
+		// therefore never observe a newly created root without also seeing that
+		// its initial conversation capture is still pending.
+		m.startConversationCaptureLocked(repo.ID, key, instance, conversationCapture, conversationToken)
 		return nil
 	}()
 	if persistErr != nil {
@@ -225,7 +232,6 @@ func (m *Manager) CreateSession(ctx context.Context, req CreateSessionRequest) (
 		}
 		return session.InstanceData{}, persistErr
 	}
-	m.captureAgentConversationAsync(repo.ID, key, instance, conversationCapture)
 	creatingProjectionSettled = true
 	// Publish from the Manager, not only the control-server wrapper: task delivery
 	// and root-agent ensure call Manager.CreateSession directly. They announced the

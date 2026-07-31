@@ -322,6 +322,16 @@ func (m *Manager) ensureResolvedRoot(stateKey string, st *rootEnsureState, repo 
 		log.InfoLog.Printf("root agent for %s: kill grace window elapsed; re-creating (always-on self-heal, #1223)", repo.Root)
 	}
 
+	// The conversation the vanished root was in, snapshotted before the reap
+	// deletes the record that holds it (#2616). reapedRoot distinguishes "the
+	// reaped root had no conversation" from "there was no prior root at all" —
+	// only the first is worth reporting, and they are different answers to the
+	// question an operator asks after an outage.
+	var (
+		carried    session.AgentConversationData
+		reapedRoot bool
+	)
+
 	if inst != nil {
 		if status := inst.GetStatus(); status != session.Dead && status != session.Lost && status != session.Archived {
 			// Adopt, never clobber: a live root — whatever program it runs
@@ -342,30 +352,89 @@ func (m *Manager) ensureResolvedRoot(stateKey string, st *rootEnsureState, repo 
 		// for the general Lost-restore loop. Kill is best-effort teardown of
 		// already-dead tmux, and an in-place worktree's Cleanup never touches
 		// the user's tree (#1107), so this can only remove daemon-owned state.
+		//
+		// Carrying agent_conversation across that reap is what keeps the two
+		// halves of the heal from disagreeing (#2616): the record about to be
+		// deleted holds the only pointer to the conversation the root was in, and
+		// CreateSession would otherwise mint a fresh id — leaving the one session
+		// every watch/monitor delivery targets healthy, Ready, and amnesiac.
 		log.WarningLog.Printf("root agent for %s is gone (tmux vanished); attempting to reap and re-create it in place", repo.Root)
-		reaped, err := m.reapDeadRoot(repo.ID, inst)
+		var err error
+		carried, reapedRoot, err = m.reapDeadRoot(repo.ID, inst)
 		if err != nil {
 			m.rootEnsureFailed(stateKey, st, fmt.Errorf("failed to remove dead root record: %w", err))
 			return
 		}
-		if !reaped {
+		if !reapedRoot {
 			return
 		}
 	}
 
 	program := rootAgentProgramForProfile(repo.Root, resolution.RootAgent)
-	if _, err := m.CreateSession(context.Background(), CreateSessionRequest{
+	req := CreateSessionRequest{
 		Title:         session.RootSessionTitle,
 		RepoPath:      repo.Root,
 		Program:       program,
 		InPlace:       true,
 		allowReserved: true,
-	}); err != nil {
+		// Zero on every path that did not just reap a root — a first-ever create,
+		// or a kill whose grace window elapsed (KillSession already deleted that
+		// record, so there is nothing to continue).
+		resumeConversation: carried,
+	}
+	data, err := m.CreateSession(context.Background(), req)
+	if err != nil && req.resumeConversation.HasID() {
+		// The always-on guarantee outranks continuity. A conversation the provider
+		// can no longer resume (cleared history, a transcript store the agent no
+		// longer has) makes the resumed command exit at startup — and since the
+		// reaped record is already gone, retrying it here rather than next tick is
+		// what keeps an unresumable id from costing the root a backoff interval of
+		// downtime. Losing the history is the bug this carry fixes; losing the ROOT
+		// would be worse than the bug.
+		log.WarningLog.Printf("root agent for %s could not be re-created on its prior %s conversation %s (%v); retrying with a fresh agent",
+			repo.Root, carried.Agent, carried.ID, err)
+		req.resumeConversation = session.AgentConversationData{}
+		data, err = m.CreateSession(context.Background(), req)
+	}
+	if err != nil {
 		m.rootEnsureFailed(stateKey, st, fmt.Errorf("failed to create root session: %w", err))
 		return
 	}
 	log.InfoLog.Printf("ensured root agent for %s (in-place, program %q)", repo.Root, program)
+	if reapedRoot {
+		reportRootConversationCarry(repo.Root, carried, data.AgentConversation)
+	}
 	m.rootEnsureSucceeded(st)
+}
+
+// reportRootConversationCarry records what became of the reaped root's
+// conversation, as three outcomes a log reader can tell apart (#2616).
+//
+// Falling back to a fresh agent is legitimate — the root must exist — but it
+// must not READ like a carry-over. That is the whole shape of this bug: eight
+// silent re-creates over three and a half weeks, each one a session that came
+// back Ready with an identical rail row, found only because someone went
+// looking in the log. A fix that leaves "resumed" and "started over"
+// indistinguishable just relocates the invisibility.
+//
+// It reports the conversation the new record actually CARRIES rather than what
+// the create was asked to do: a create can be handed a conversation and still
+// come up on a different one (the resolved program runs another agent, or pins
+// its own resume flag), and the record is the thing that will be resumed from
+// next time.
+func reportRootConversationCarry(repoRoot string, carried session.AgentConversationData, created *session.AgentConversationData) {
+	switch {
+	case !carried.HasID():
+		log.WarningLog.Printf("re-created root agent for %s had no recorded conversation to carry; it starts with a fresh context", repoRoot)
+	case created != nil && created.Agent == carried.Agent && created.ID == carried.ID:
+		log.InfoLog.Printf("re-created root agent for %s resumed its prior %s conversation %s", repoRoot, carried.Agent, carried.ID)
+	case created == nil:
+		log.WarningLog.Printf("re-created root agent for %s did not record its prior %s conversation %s; the resolved command may select its own conversation, so context continuity is unknown",
+			repoRoot, carried.Agent, carried.ID)
+	default:
+		log.WarningLog.Printf("re-created root agent for %s did not come up on its prior %s conversation %s; it starts with a fresh context",
+			repoRoot, carried.Agent, carried.ID)
+	}
 }
 
 // deliverToReemergingRoot handles a DeliverPrompt whose absent target is this
@@ -436,28 +505,39 @@ func (m *Manager) repoRootAgentWillMaterialize(repoID string) bool {
 }
 
 // reapDeadRoot removes a Dead root instance so ensureRootAgent can re-create
-// the title. The boolean reports whether the root was actually reaped; false
-// means a concurrent operation owns or changed the title, so ensure should wait
-// for a later tick instead of falling through to CreateSession. Mirrors
-// KillSession's teardown but deliberately does NOT record rootKilledAt: this is
-// the daemon healing itself, not a user decision.
-func (m *Manager) reapDeadRoot(repoID string, inst *session.Instance) (bool, error) {
+// the title. On success it returns the conversation snapshotted under the
+// operation lock from the exact record it deleted. The boolean reports whether
+// the root was actually reaped; false means a concurrent operation owns or
+// changed the title, or provider conversation discovery is still polling, so
+// ensure should wait for a later tick instead of falling through to
+// CreateSession. Mirrors KillSession's teardown but deliberately does NOT
+// record rootKilledAt: this is the daemon healing itself, not a user decision.
+func (m *Manager) reapDeadRoot(repoID string, inst *session.Instance) (session.AgentConversationData, bool, error) {
 	key := daemonInstanceKey(repoID, session.RootSessionTitle)
 	opLock := m.opLockFor(key)
 	if !opLock.TryLock() {
 		// A user kill (or its finish pass) owns this title right now. Let that
 		// operation decide whether the root is removed or left for the next tick.
-		return false, nil
+		return session.AgentConversationData{}, false, nil
 	}
 	defer opLock.Unlock()
 
 	m.mu.Lock()
 	current := m.instances[key]
 	_, killing := m.killsInFlight[key]
+	capturePending := m.pendingConversationCaptures[inst] > 0
 	m.mu.Unlock()
-	if killing || current != inst {
-		return false, nil
+	if killing || current != inst || capturePending {
+		return session.AgentConversationData{}, false, nil
 	}
+
+	// Snapshot only after taking the same operation lock used by async
+	// conversation capture and re-confirming that this is still the tracked
+	// instance. Reading before the lock leaves a narrow loss window: capture can
+	// commit a newly discovered ID after the read but before the reap acquires
+	// the lock, and the reap would then delete the updated record while carrying
+	// the stale snapshot.
+	carried := inst.AgentConversation()
 
 	// A reaped root's tabs are not carried into the replacement instance, so its
 	// per-session editor becomes unreachable even though both roots use the same
@@ -466,7 +546,7 @@ func (m *Manager) reapDeadRoot(repoID string, inst *session.Instance) (bool, err
 	// proxy spawn that resolved the dead root immediately before this pass took
 	// ownership. Either unknown result retains the record for the next ensure pass.
 	if err := m.stopVSCodeForInstance(key, inst.ID); err != nil {
-		return false, fmt.Errorf("reaping dead root for repo %s: VS Code editor teardown is not confirmed, retaining its record for a retry: %w", repoID, err)
+		return session.AgentConversationData{}, false, fmt.Errorf("reaping dead root for repo %s: VS Code editor teardown is not confirmed, retaining its record for a retry: %w", repoID, err)
 	}
 
 	// Best-effort by design (#478): tmux is already gone and an in-place
@@ -481,7 +561,7 @@ func (m *Manager) reapDeadRoot(repoID string, inst *session.Instance) (bool, err
 	// the invariant, not reported).
 	teardownErr := inst.Kill()
 	if err := m.stopVSCodeForInstance(key, inst.ID); err != nil {
-		return false, fmt.Errorf("reaping dead root for repo %s: VS Code editor teardown is not confirmed after runtime teardown, retaining its record for a retry: %w", repoID, err)
+		return session.AgentConversationData{}, false, fmt.Errorf("reaping dead root for repo %s: VS Code editor teardown is not confirmed after runtime teardown, retaining its record for a retry: %w", repoID, err)
 	}
 	// Through the one choke point (#1917): it refuses while the teardown's outcome
 	// is unknown. This site was still log-and-delete after two audits I called
@@ -494,18 +574,18 @@ func (m *Manager) reapDeadRoot(repoID string, inst *session.Instance) (bool, err
 		// re-runs this whole bounded teardown on EVERY tick — occupying the single
 		// status/restore poll loop and spamming warnings — instead of backing off.
 		// A failure has to look like one for the retry cadence to see it.
-		return false, fmt.Errorf("reaping dead root for repo %s: %w", repoID, err)
+		return session.AgentConversationData{}, false, fmt.Errorf("reaping dead root for repo %s: %w", repoID, err)
 	}
 	if !deleted {
 		log.InfoLog.Printf("dead root reap for repo %s skipped storage delete: current root record has a different instance identity", repoID)
-		return false, nil
+		return session.AgentConversationData{}, false, nil
 	}
 	m.mu.Lock()
 	if m.instances[key] == inst {
 		delete(m.instances, key)
 	}
 	m.mu.Unlock()
-	return true, nil
+	return carried, true, nil
 }
 
 // rootEnsureSucceeded resets a repo's retry state after a pass that left a
