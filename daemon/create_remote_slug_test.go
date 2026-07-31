@@ -77,3 +77,64 @@ func TestCreateSessionRejectsRemoteSlugCollisionWithInMemoryInstance(t *testing.
 		t.Fatalf("rejection must name the remote hook-name collision, got: %v", err)
 	}
 }
+
+// TestValidateTitleRejectsRemoteHookWithoutASCIIAlphanumeric is the daemon-side
+// #2594 regression. Hook names are global and Slugify falls back to "session"
+// when no ASCII letter or digit survives, so admitting two such titles makes
+// unrelated sandboxes claim the same external name.
+func TestValidateTitleRejectsRemoteHookWithoutASCIIAlphanumeric(t *testing.T) {
+	manager, repoID, repoPath := newStatusTestManager(t)
+
+	for _, title := range []string{
+		"日本語",
+		"مرحبا",
+		"!!!",
+		strings.Repeat("-", 200) + "a", // the only alphanumeric is truncated before fallback
+	} {
+		manager.mu.Lock()
+		err := manager.validateTitleAvailableLocked(repoID, repoPath, title, "claude", runtimeNamespaceRemoteHook, false, nil)
+		manager.mu.Unlock()
+		if err == nil {
+			t.Errorf("remote hook title %q retains no ASCII letter or digit in its bounded slug but was accepted", title)
+			continue
+		}
+		if !strings.Contains(err.Error(), "ASCII letter or digit") {
+			t.Errorf("remote hook title %q returned an unclear error: %v", title, err)
+		}
+	}
+
+	for _, title := range []string{"SESSION!", "日本語-2", strings.Repeat("-", 199) + "a"} {
+		manager.mu.Lock()
+		err := manager.validateTitleAvailableLocked(repoID, repoPath, title, "claude", runtimeNamespaceRemoteHook, false, nil)
+		manager.mu.Unlock()
+		if err != nil {
+			t.Errorf("remote hook title %q has an ASCII component and must remain valid: %v", title, err)
+		}
+	}
+
+	manager.mu.Lock()
+	err := manager.validateTitleAvailableLocked(repoID, repoPath, "日本語", "claude", runtimeNamespaceSandbox, false, nil)
+	manager.mu.Unlock()
+	if err != nil {
+		t.Fatalf("non-hook sandbox titles do not claim the global hook namespace: %v", err)
+	}
+}
+
+// TestNextAvailableTitleRejectsGenericRemoteHookSlug covers TitleBase creates,
+// which validate the unsuffixed base before walking collision suffixes. That
+// early shape check must use the caller's runtime namespace too: suffixing a
+// generic fallback would silently turn an invalid hook title into a different
+// externally visible name.
+func TestNextAvailableTitleRejectsGenericRemoteHookSlug(t *testing.T) {
+	manager, repoID, repoPath := newStatusTestManager(t)
+
+	manager.mu.Lock()
+	got, err := manager.nextAvailableTitleLocked(repoID, repoPath, "日本語", "claude", runtimeNamespaceRemoteHook, nil)
+	manager.mu.Unlock()
+	if err == nil {
+		t.Fatalf("remote hook TitleBase without a specific slug resolved to %q", got)
+	}
+	if !strings.Contains(err.Error(), "ASCII letter or digit") {
+		t.Fatalf("remote hook TitleBase returned an unclear error: %v", err)
+	}
+}
