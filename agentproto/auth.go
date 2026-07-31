@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -35,12 +36,18 @@ func RedactAccessTokenURL(raw string) string {
 		return "[url redacted]"
 	}
 	q := parsed.Query()
-	if _, ok := q[AccessTokenQueryParam]; !ok {
+	found := false
+	for key := range q {
+		if strings.EqualFold(key, AccessTokenQueryParam) {
+			q.Set(key, accessTokenRedaction)
+			found = true
+		}
+	}
+	if !found {
 		// URL.Query discards malformed query pairs. The text pass still catches
 		// an exact access_token field without trusting a partially parsed query.
 		return RedactAccessTokenText(raw)
 	}
-	q.Set(AccessTokenQueryParam, accessTokenRedaction)
 	parsed.RawQuery = q.Encode()
 	return parsed.String()
 }
@@ -58,7 +65,7 @@ func RedactAccessTokenError(err error, token string) error {
 		urlErr.URL = RedactAccessTokenURL(urlErr.URL)
 	}
 
-	message := RedactAccessTokenText(err.Error())
+	message := redactAccessTokenTextOutsideStructuredURL(err.Error(), urlErr)
 	if token != "" {
 		message = strings.ReplaceAll(message, token, accessTokenRedaction)
 	}
@@ -75,36 +82,83 @@ func RedactAccessTokenError(err error, token string) error {
 // handling a URL or request error must still use the structured helpers above.
 func RedactAccessTokenText(text string) string {
 	needle := AccessTokenQueryParam + "="
-	if !strings.Contains(text, needle) {
+	if indexFoldASCII(text, needle) < 0 {
 		return text
 	}
 
 	var redacted strings.Builder
 	rest := text
 	for {
-		i := strings.Index(rest, needle)
+		i := indexFoldASCII(rest, needle)
 		if i < 0 {
 			redacted.WriteString(rest)
 			return redacted.String()
 		}
 		valueStart := i + len(needle)
-		if i > 0 && rest[i-1] != '?' && rest[i-1] != '&' && rest[i-1] != ';' {
+		if i > 0 && !accessTokenFieldBoundary(rest[i-1]) {
 			redacted.WriteString(rest[:valueStart])
 			rest = rest[valueStart:]
 			continue
 		}
 
-		// A preceding semicolon can introduce a legacy query field, but a semicolon
-		// inside the value is ambiguous. Redact through the next unambiguous boundary
-		// rather than risk preserving credential material after it.
+		// Query separators inside the value are ambiguous. Redact through the next
+		// unambiguous text boundary rather than risk preserving credential material
+		// after one. Losing neighbouring fields is safe; retaining a token is not.
 		valueEnd := valueStart
-		for valueEnd < len(rest) && !strings.ContainsRune("& \t\r\n#\"'", rune(rest[valueEnd])) {
+		for valueEnd < len(rest) && !strings.ContainsRune(" \t\r\n#\"'", rune(rest[valueEnd])) {
 			valueEnd++
 		}
 		redacted.WriteString(rest[:valueStart])
 		redacted.WriteString(accessTokenRedaction)
 		rest = rest[valueEnd:]
 	}
+}
+
+func redactAccessTokenTextOutsideStructuredURL(text string, urlErr *url.Error) string {
+	if urlErr == nil {
+		return RedactAccessTokenText(text)
+	}
+
+	structured := urlErr.Error()
+	quotedURL := strconv.Quote(urlErr.URL)
+	structuredPrefix := urlErr.Op + " " + quotedURL + ": "
+	if !strings.HasPrefix(structured, structuredPrefix) ||
+		strings.Count(text, structured) != 1 {
+		// A custom wrapper changed the nested error's text, so there is no
+		// unique structured occurrence whose provenance is safe to exempt.
+		return RedactAccessTokenText(text)
+	}
+	structuredStart := strings.Index(text, structured)
+	urlOffset := len(urlErr.Op) + 1
+	urlStart := structuredStart + urlOffset
+	urlEnd := urlStart + len(quotedURL)
+	return RedactAccessTokenText(text[:urlStart]) +
+		text[urlStart:urlEnd] +
+		RedactAccessTokenText(text[urlEnd:])
+}
+
+func indexFoldASCII(text, lowerASCII string) int {
+	for i := 0; i+len(lowerASCII) <= len(text); i++ {
+		matches := true
+		for j := range lowerASCII {
+			got := text[i+j]
+			if got >= 'A' && got <= 'Z' {
+				got += 'a' - 'A'
+			}
+			if got != lowerASCII[j] {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			return i
+		}
+	}
+	return -1
+}
+
+func accessTokenFieldBoundary(char byte) bool {
+	return strings.ContainsRune("?&; \t\r\n", rune(char))
 }
 
 // BearerToken extracts the token from an Authorization header value, matching the
