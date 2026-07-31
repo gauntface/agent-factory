@@ -7280,6 +7280,29 @@ function terminalUserScrollPlan(source, hasScheduledVisibleFit) {
   }
 }
 
+// src/terminal-mouse.ts
+function terminalMouseOverride(platform) {
+  return ["Macintosh", "MacIntel", "MacPPC", "Mac68K"].includes(platform) ? "Option" : "Shift";
+}
+function terminalMouseOverrideHeld(event, override) {
+  return override === "Option" ? event.altKey : event.shiftKey;
+}
+function historyWheelPlan(event, rows, rowHeight, remainder) {
+  if (event.deltaY === 0) {
+    return { lines: 0, remainder };
+  }
+  let rowDelta = event.deltaY;
+  if (event.deltaMode === 0) {
+    rowDelta /= Math.max(1, rowHeight);
+  } else if (event.deltaMode === 2) {
+    rowDelta *= Math.max(1, rows);
+  }
+  const total = remainder + rowDelta;
+  const wholeRows = total < 0 ? Math.ceil(total) : Math.floor(total);
+  const lines = Object.is(wholeRows, -0) ? 0 : wholeRows;
+  return { lines, remainder: total - lines };
+}
+
 // src/theme.ts
 var THEME_CHOICES = ["auto", "light", "dark"];
 var STORAGE_KEY = "af-theme";
@@ -7409,6 +7432,7 @@ var AttachTerminal = class {
     this.token = token2;
     this.endpoint = endpoint;
     this.cb = cb;
+    this.mouseOverride = terminalMouseOverride(navigator.platform);
     this.term = new import_xterm.Terminal({
       allowProposedApi: true,
       cursorBlink: true,
@@ -7419,11 +7443,22 @@ var AttachTerminal = class {
       theme: currentXtermTheme(),
       // The stream is the source of truth; local echo/scrollback beyond the ring is
       // fine but the server never sees our convert-eol, so leave it raw.
-      scrollback: 5e3
+      scrollback: 5e3,
+      // xterm uses Shift to force selection outside macOS. Opt macOS into its
+      // matching Option escape so every platform can leave app mouse mode.
+      macOptionClickForcesSelection: true
     });
     this.fit = new import_addon_fit.FitAddon();
     this.term.loadAddon(this.fit);
     this.term.open(container);
+    this.mouseCaptureHint = document.createElement("div");
+    this.mouseCaptureHint.className = "af-mouse-capture-hint";
+    this.mouseCaptureHint.setAttribute("role", "status");
+    this.mouseCaptureHint.setAttribute("aria-live", "polite");
+    this.mouseCaptureHint.setAttribute("aria-hidden", "true");
+    this.mouseCaptureHint.textContent = `App mouse active \xB7 Hold ${this.mouseOverride} to select or scroll`;
+    this.term.element?.append(this.mouseCaptureHint);
+    this.term.attachCustomWheelEventHandler((event) => this.handleHistoryWheel(event));
     const textarea = this.term.textarea;
     if (textarea) {
       textarea.addEventListener("focus", () => {
@@ -7432,14 +7467,19 @@ var AttachTerminal = class {
         }
       });
       textarea.addEventListener("blur", () => {
+        this.mouseOverrideKeyHeld = false;
         if (!this.stopped) {
           this.cb.onFocusChange(false);
         }
       });
     }
     this.term.onData((data) => this.sendInput(data));
-    this.term.attachCustomKeyEventHandler(
-      (ev) => handleClipboardKeydown(ev, {
+    this.term.attachCustomKeyEventHandler((ev) => {
+      const overrideKey = this.mouseOverride === "Option" ? "Alt" : "Shift";
+      if (ev.key === overrideKey) {
+        this.mouseOverrideKeyHeld = ev.type !== "keyup";
+      }
+      return handleClipboardKeydown(ev, {
         composerNewline: this.endpoint.composerNewline,
         hasSelection: () => this.term.hasSelection(),
         getSelection: () => this.term.getSelection(),
@@ -7449,8 +7489,8 @@ var AttachTerminal = class {
         // Public Terminal.input(..., true) is xterm's genuine-user-input path:
         // it scrolls to bottom and clears selection, then fires onData above.
         sendUserInput: (text) => this.term.input(text, true)
-      })
-    );
+      });
+    });
     this.ro = new ResizeObserver(() => this.scheduleFit());
     this.ro.observe(container);
     this.io = new IntersectionObserver((entries) => {
@@ -7460,6 +7500,7 @@ var AttachTerminal = class {
     });
     this.io.observe(container);
     window.addEventListener("focus", this.onWindowFocus);
+    window.addEventListener("blur", this.onWindowBlur);
     document.addEventListener("visibilitychange", this.onVisibilityChange);
     container.addEventListener("pointerenter", this.onPointerEnter);
     container.addEventListener("wheel", this.onWheel, { capture: true, passive: true });
@@ -7481,6 +7522,11 @@ var AttachTerminal = class {
   resizeTimer = null;
   visibleFitFrame = null;
   viewportRestoreFrame = null;
+  mouseOverride;
+  mouseCaptureHint;
+  mouseCaptureHintTimer = null;
+  mouseOverrideKeyHeld = false;
+  historyWheelRemainder = 0;
   // Incremented only by an actual user scroll input while a peer-owned anchor is
   // pending. Output and resize reflows can move viewportY too, so position deltas
   // alone do not prove that a user intended to override the saved reading line.
@@ -7505,9 +7551,14 @@ var AttachTerminal = class {
   // becomes the local writer: refit once instead of leaving a peer-sized emulator in
   // an unchanged container until the user physically resizes the window (#2347).
   onWindowFocus = () => this.scheduleVisibleFit();
+  onWindowBlur = () => {
+    this.mouseOverrideKeyHeld = false;
+  };
   onVisibilityChange = () => {
     if (document.visibilityState === "visible") {
       this.scheduleVisibleFit();
+    } else {
+      this.mouseOverrideKeyHeld = false;
     }
   };
   // Entering a pane is the earliest reliable activation signal for side-by-side
@@ -7518,11 +7569,21 @@ var AttachTerminal = class {
   // PTY without the pointer ever leaving this pane. Capture repairs that less-common
   // path; pointer entry above handles the ordinary first gesture. The pending-peer
   // gate makes every ordinary input a no-op before even measuring layout.
-  onWheel = () => this.handleUserScroll("wheel");
+  onWheel = (event) => {
+    this.handleUserScroll("wheel");
+    if (!terminalMouseOverrideHeld(event, this.mouseOverride) && !this.mouseOverrideKeyHeld && this.applicationOwnsWheel()) {
+      this.showMouseCaptureHint();
+    }
+  };
   onTouchMove = () => this.handleUserScroll("touch");
   onPointerDown = (event) => {
-    if (event.target === this.container.querySelector(".xterm-viewport")) {
+    const viewport = this.container.querySelector(".xterm-viewport");
+    if (event.target === viewport) {
       this.handleUserScroll("scrollbar");
+      return;
+    }
+    if (!terminalMouseOverrideHeld(event, this.mouseOverride) && this.applicationOwnsMouse()) {
+      this.showMouseCaptureHint();
     }
   };
   handleUserScroll(source) {
@@ -7540,6 +7601,10 @@ var AttachTerminal = class {
    *  disconnects the observer, and disposes xterm (freeing its DOM/renderer). */
   dispose() {
     this.stopped = true;
+    if (this.mouseCaptureHintTimer !== null) {
+      window.clearTimeout(this.mouseCaptureHintTimer);
+      this.mouseCaptureHintTimer = null;
+    }
     if (this.reconnectTimer !== null) {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -7553,6 +7618,7 @@ var AttachTerminal = class {
     this.ro.disconnect();
     this.io.disconnect();
     window.removeEventListener("focus", this.onWindowFocus);
+    window.removeEventListener("blur", this.onWindowBlur);
     document.removeEventListener("visibilitychange", this.onVisibilityChange);
     this.container.removeEventListener("pointerenter", this.onPointerEnter);
     this.container.removeEventListener("wheel", this.onWheel, true);
@@ -7560,6 +7626,39 @@ var AttachTerminal = class {
     this.container.removeEventListener("pointerdown", this.onPointerDown, true);
     this.closeSocket();
     this.term.dispose();
+  }
+  applicationOwnsMouse() {
+    return this.term.modes.mouseTrackingMode !== "none";
+  }
+  applicationOwnsWheel() {
+    const mode = this.term.modes.mouseTrackingMode;
+    return mode !== "none" && mode !== "x10";
+  }
+  showMouseCaptureHint() {
+    this.mouseCaptureHint.classList.add("af-visible");
+    this.mouseCaptureHint.setAttribute("aria-hidden", "false");
+    if (this.mouseCaptureHintTimer !== null) {
+      window.clearTimeout(this.mouseCaptureHintTimer);
+    }
+    this.mouseCaptureHintTimer = window.setTimeout(() => {
+      this.mouseCaptureHint.classList.remove("af-visible");
+      this.mouseCaptureHint.setAttribute("aria-hidden", "true");
+      this.mouseCaptureHintTimer = null;
+    }, 4e3);
+  }
+  handleHistoryWheel(event) {
+    if (!this.applicationOwnsWheel() || !terminalMouseOverrideHeld(event, this.mouseOverride) && !this.mouseOverrideKeyHeld) {
+      return true;
+    }
+    const renderedRow = this.container.querySelector(".xterm-rows > div");
+    const rowHeight = renderedRow?.getBoundingClientRect().height ?? (this.term.options.fontSize ?? 13) * 1.2;
+    const plan = historyWheelPlan(event, this.term.rows, rowHeight, this.historyWheelRemainder);
+    this.historyWheelRemainder = plan.remainder;
+    if (plan.lines !== 0) {
+      this.term.scrollLines(plan.lines);
+    }
+    event.preventDefault();
+    return false;
   }
   /** Gives the terminal the keyboard (focuses xterm's helper textarea) so typed
    *  keys reach the agent — the attach half of the #1693 nav/attach model. */
