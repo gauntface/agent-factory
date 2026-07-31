@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 
 	"github.com/sachiniyer/agent-factory/keys"
@@ -36,6 +37,88 @@ func TestHelpReflectsKeymapRebinds(t *testing.T) {
 	if strings.Contains(content, "q         - Quit") || strings.Contains(content, "↑/k, ↓/j") {
 		t.Errorf("help still shows default keys after a rebind; got:\n%s", content)
 	}
+}
+
+func TestGeneralHelpReboundDismissKeyWinsOverPaging(t *testing.T) {
+	require.NoError(t, keys.ApplyOverrides(map[string][]string{
+		"help": {"space"},
+	}))
+	t.Cleanup(func() { require.NoError(t, keys.ApplyOverrides(nil)) })
+
+	h := newTestHome(t)
+	resizeHome(h, 80, 24)
+	_, _ = h.showHelpScreen(helpTypeGeneral{}, nil)
+
+	_, _ = h.handleHelpState(tea.KeyMsg{Type: tea.KeySpace})
+
+	require.Equal(t, stateDefault, h.state,
+		"a configured help key must dismiss help even when it is also a paging key")
+}
+
+func TestGeneralHelpReboundLineKeyWinsOverPagingAlias(t *testing.T) {
+	require.NoError(t, keys.ApplyOverrides(map[string][]string{
+		"up": {"pgdown"},
+	}))
+	t.Cleanup(func() { require.NoError(t, keys.ApplyOverrides(nil)) })
+
+	actual := newTestHome(t)
+	resizeHome(actual, 80, 24)
+	_, _ = actual.showHelpScreen(helpTypeGeneral{}, nil)
+	_, _ = actual.handleHelpState(tea.KeyMsg{Type: tea.KeyCtrlD})
+
+	want := newTestHome(t)
+	resizeHome(want, 80, 24)
+	_, _ = want.showHelpScreen(helpTypeGeneral{}, nil)
+	_, _ = want.handleHelpState(tea.KeyMsg{Type: tea.KeyCtrlD})
+	want.textOverlay.ScrollUp()
+
+	_, _ = actual.handleHelpState(tea.KeyMsg{Type: tea.KeyPgDown})
+
+	require.Equal(t, xansi.Strip(want.View()), xansi.Strip(actual.View()),
+		"a configured line key must win over a hardcoded paging alias")
+}
+
+func TestGeneralHelpHidesPagingAliasShadowedByRebind(t *testing.T) {
+	require.NoError(t, keys.ApplyOverrides(map[string][]string{
+		"up": {"pgdown"},
+	}))
+	t.Cleanup(func() { require.NoError(t, keys.ApplyOverrides(nil)) })
+
+	var pageLine string
+	for _, line := range strings.Split(xansi.Strip(helpTypeGeneral{}.toContent()), "\n") {
+		if strings.HasPrefix(line, "Page:") {
+			pageLine = line
+			break
+		}
+	}
+
+	require.NotEmpty(t, pageLine)
+	require.NotContains(t, pageLine, "pgdn",
+		"the page controls must not advertise an alias shadowed by a rebind")
+	require.Contains(t, xansi.Strip(helpTypeGeneral{}.toContent()), "pgdown, ↓/j",
+		"the effective line binding remains advertised on its actual action")
+}
+
+func TestGeneralHelpHidesJumpAliasShadowedByRebind(t *testing.T) {
+	require.NoError(t, keys.ApplyOverrides(map[string][]string{
+		"help": {"home"},
+	}))
+	t.Cleanup(func() { require.NoError(t, keys.ApplyOverrides(nil)) })
+
+	var lineControls string
+	content := xansi.Strip(helpTypeGeneral{}.toContent())
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "Line:") {
+			lineControls = line
+			break
+		}
+	}
+
+	require.NotEmpty(t, lineControls)
+	require.NotContains(t, lineControls, "home",
+		"the line controls must not advertise a jump alias shadowed by a rebind")
+	require.Contains(t, content, "Close: esc · home toggles help",
+		"the effective help binding remains advertised on its actual action")
 }
 
 // TestGeneralHelpNavigationMatchesBindings guards against regressing #764, where
@@ -281,4 +364,72 @@ func TestGeneralHelpOverlayShiftArrowsScrollAt80x24(t *testing.T) {
 
 	_, _ = h.handleHelpState(tea.KeyMsg{Type: tea.KeyEsc})
 	require.Equal(t, stateDefault, h.state, "Esc remains the explicit help dismiss key")
+}
+
+func TestGeneralHelpOverlayPagesAndJumpsAt80x24(t *testing.T) {
+	h := newTestHome(t)
+	resizeHome(h, 80, 24)
+	_, _ = h.showHelpScreen(helpTypeGeneral{}, nil)
+
+	initial := xansi.Strip(h.View())
+	require.Contains(t, initial, "pgup/pgdn",
+		"the initial viewport must advertise its page-sized controls")
+
+	_, _ = h.handleHelpState(tea.KeyMsg{Type: tea.KeyPgDown})
+	paged := xansi.Strip(h.View())
+	require.NotEqual(t, initial, paged, "PageDown must move the help viewport")
+	require.NotContains(t, paged, "Agent Factory v",
+		"one page step must move by a viewport, not one row")
+	require.Contains(t, paged, "↑ more")
+
+	_, _ = h.handleHelpState(tea.KeyMsg{Type: tea.KeyEnd})
+	require.Contains(t, xansi.Strip(h.View()), "Other:",
+		"End must jump to the bottom of help")
+
+	_, _ = h.handleHelpState(tea.KeyMsg{Type: tea.KeyHome})
+	require.Contains(t, xansi.Strip(h.View()), "Agent Factory v",
+		"Home must jump back to the top of help")
+
+	_, _ = h.handleHelpState(tea.KeyMsg{Type: tea.KeyCtrlD})
+	require.NotContains(t, xansi.Strip(h.View()), "Agent Factory v",
+		"the advertised Ctrl-D binding must page rather than move one row")
+
+	_, _ = h.handleHelpState(tea.KeyMsg{Type: tea.KeyPgUp})
+	require.Contains(t, xansi.Strip(h.View()), "Agent Factory v",
+		"PageUp must move a viewport back toward the top")
+
+	_, _ = h.handleHelpState(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	require.Contains(t, xansi.Strip(h.View()), "↑ more",
+		"the advertised down binding must provide line-sized navigation")
+	_, _ = h.handleHelpState(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	require.Contains(t, xansi.Strip(h.View()), "Agent Factory v",
+		"the advertised up binding must return one line toward the top")
+}
+
+func TestGeneralHelpWrappedDescriptionsStayOutOfKeyColumnAt80x24(t *testing.T) {
+	h := newTestHome(t)
+	resizeHome(h, 80, 24)
+	_, _ = h.showHelpScreen(helpTypeGeneral{}, nil)
+	h.textOverlay.SetHeight(100)
+
+	lines := strings.Split(xansi.Strip(h.textOverlay.Render()), "\n")
+	var retryLine, continuationLine string
+	for _, line := range lines {
+		if strings.Contains(line, "Retry") {
+			retryLine = line
+		}
+		if strings.Contains(line, "usage limit") {
+			continuationLine = line
+		}
+	}
+	require.NotEmpty(t, retryLine, "the narrow help viewport must contain the retry binding")
+	require.NotEmpty(t, continuationLine, "the retry description must wrap at 80 columns")
+
+	retryContent := strings.TrimSuffix(strings.TrimPrefix(retryLine, "│"), "│")
+	continuationContent := strings.TrimSuffix(strings.TrimPrefix(continuationLine, "│"), "│")
+	descriptionColumn := strings.Index(retryContent, "Retry")
+	require.GreaterOrEqual(t, descriptionColumn, 0)
+	continuationColumn := len(continuationContent) - len(strings.TrimLeft(continuationContent, " "))
+	require.Equal(t, descriptionColumn, continuationColumn,
+		"wrapped descriptions must use a hanging indent at the description column")
 }
