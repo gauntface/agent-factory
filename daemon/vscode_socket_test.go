@@ -248,11 +248,11 @@ func TestVSCodeSocket_StartOneEvictsSquatter(t *testing.T) {
 	go func() { _ = foreignSrv.Serve(foreign) }()
 	t.Cleanup(func() { _ = foreignSrv.Close() })
 
-	server, err := v.startOne(binary, flavorCodeServer, path, t.TempDir())
+	server, err := v.startOne("repo/session", "instance-id", binary, flavorCodeServer, path, t.TempDir())
 	if err != nil {
 		t.Fatalf("startOne over a squatted socket: %v", err)
 	}
-	t.Cleanup(server.stop)
+	t.Cleanup(func() { _ = server.stop() })
 
 	client := &http.Client{Transport: server.transport, Timeout: 5 * time.Second}
 	resp, err := client.Get(vscodeUpstreamURL + "/")

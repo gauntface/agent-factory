@@ -609,6 +609,7 @@ func TestVSCodeSupervisor_StillStartingIsNotAFailure(t *testing.T) {
 func TestVSCodeSupervisor_ScrubsSessionMarkers(t *testing.T) {
 	t.Setenv(tmux.EnvMarkerSession, "af_somesession")
 	t.Setenv(tmux.EnvMarkerHome, "/some/af/home")
+	t.Setenv(vscodeOwnerNonceEnv, "previous-editor-owner")
 
 	env := vscodeChildEnv()
 	for _, kv := range env {
@@ -617,6 +618,9 @@ func TestVSCodeSupervisor_ScrubsSessionMarkers(t *testing.T) {
 		}
 		if strings.HasPrefix(kv, tmux.EnvMarkerHome+"=") {
 			t.Errorf("the editor's env carries %s; doctor --fix would attribute it to this af home and kill it", kv)
+		}
+		if strings.HasPrefix(kv, vscodeOwnerNonceEnv+"=") {
+			t.Errorf("the base editor env carries %s; it would shadow the new process ownership nonce", kv)
 		}
 	}
 	// It is a scrub, not a wipe: everything else the editor needs still reaches it.
@@ -864,6 +868,48 @@ func TestVSCodeServer_ReaperKillsTheGroupBeforeClosingExited(t *testing.T) {
 	}
 	if !killedWhileExitedOpen {
 		t.Fatal("reap() closed exited BEFORE killing the group; stop() could return, and ArchiveSession move the worktree, while the editor's children still held it open")
+	}
+}
+
+func TestVSCodeServer_ReaperRetainsOwnerWhenGroupKillFails(t *testing.T) {
+	cmd := exec.Command("/bin/sh", "-c", "exit 0")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("starting the throwaway leader: %v", err)
+	}
+	ownerPath := filepath.Join(t.TempDir(), "editor.owner.json")
+	if err := os.WriteFile(ownerPath, []byte("owned\n"), 0o600); err != nil {
+		t.Fatalf("writing owner fixture: %v", err)
+	}
+
+	s := &vscodeServer{
+		worktree: "/worktree", cmd: cmd, ownerPath: ownerPath, exited: make(chan struct{}),
+		killGroup: func(int, syscall.Signal) error { return syscall.EPERM },
+	}
+	s.reap()
+
+	if _, err := os.Stat(ownerPath); err != nil {
+		t.Fatalf("reaper removed durable ownership after an unconfirmed group kill: %v", err)
+	}
+	if err := s.stop(); err == nil {
+		t.Fatal("stop reported success after the reaper could not confirm process-group cleanup")
+	}
+}
+
+func TestReconcilePersistedBeforeSpawn_HoldsReservationUntilAdmission(t *testing.T) {
+	shortAFHome(t)
+	v := newVSCodeSupervisor()
+	const key = "spawn-admission"
+	if err := v.reconcilePersistedBeforeSpawn(key, "instance-1"); err != nil {
+		t.Fatalf("reconcilePersistedBeforeSpawn: %v", err)
+	}
+	t.Cleanup(func() { v.releaseReconcile(key) })
+
+	v.mu.Lock()
+	_, reserved := v.reconciling[key]
+	v.mu.Unlock()
+	if !reserved {
+		t.Fatal("persisted reconciliation released the same-key reservation before spawn admission")
 	}
 }
 

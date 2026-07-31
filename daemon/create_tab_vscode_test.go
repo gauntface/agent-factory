@@ -3,9 +3,12 @@ package daemon
 import (
 	"os"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/sachiniyer/agent-factory/config"
+	"github.com/sachiniyer/agent-factory/internal/proctree"
 	"github.com/sachiniyer/agent-factory/internal/testguard"
 	"github.com/sachiniyer/agent-factory/session"
 )
@@ -120,7 +123,9 @@ func TestCloseTab_StopsEditorOnlyWithTheLastVSCodeTab(t *testing.T) {
 	// Stand a marker in the supervisor's map for this session. stopFor deletes the
 	// entry, so its presence/absence is a faithful probe of whether the close path
 	// decided the editor was still needed — without spawning a real one.
-	manager.vscode.servers[key] = &vscodeServer{worktree: "/nowhere", exited: make(chan struct{})}
+	manager.vscode.servers[key] = &vscodeServer{
+		worktree: "/nowhere", instanceID: inst.ID, exited: make(chan struct{}),
+	}
 
 	if _, err := manager.CloseTab(CloseTabRequest{Title: title, RepoID: repoID, TabName: "one"}); err != nil {
 		t.Fatalf("CloseTab(one): %v", err)
@@ -140,6 +145,73 @@ func TestCloseTab_StopsEditorOnlyWithTheLastVSCodeTab(t *testing.T) {
 	}
 }
 
+func TestCloseTab_LastVSCodeTabPropagatesUnconfirmedEditorStop(t *testing.T) {
+	manager, repoID, title := newVSCodeCreateFixture(t)
+	key := daemonInstanceKey(repoID, title)
+	inst := manager.instances[key]
+	if _, err := manager.CreateTab(CreateTabRequest{Title: title, RepoID: repoID, Kind: "vscode"}); err != nil {
+		t.Fatalf("CreateTab(vscode): %v", err)
+	}
+	cmd, _ := startOwnedSleep(t)
+	manager.vscode.servers[key] = &vscodeServer{
+		worktree: t.TempDir(), instanceID: inst.ID, cmd: cmd, exited: make(chan struct{}),
+		stopGrace: 10 * time.Millisecond,
+		killGroup: func(int, syscall.Signal) error { return nil },
+	}
+
+	if _, err := manager.CloseTab(CloseTabRequest{Title: title, RepoID: repoID, TabName: "vscode"}); err == nil {
+		t.Fatal("CloseTab reported success after the last VS Code tab editor could not confirm exit")
+	}
+	if !instanceHasVSCodeTab(inst) {
+		t.Fatal("CloseTab removed the last VS Code retry handle after editor teardown stayed unknown")
+	}
+}
+
+func TestCloseTab_FinalVSCodeStopFailureRestoresTab(t *testing.T) {
+	manager, repoID, title := newVSCodeCreateFixture(t)
+	key := daemonInstanceKey(repoID, title)
+	inst := manager.instances[key]
+	created, err := manager.CreateTab(CreateTabRequest{Title: title, RepoID: repoID, Kind: "vscode"})
+	if err != nil {
+		t.Fatalf("CreateTab(vscode): %v", err)
+	}
+
+	// The first sweep sees only a prior-daemon owner. While it stops that owner,
+	// model a proxy request that had already resolved the tab and registers a new,
+	// unconfirmable editor before CloseTab reaches its final sweep.
+	_, process := startOwnedSleep(t)
+	bootID, err := proctree.BootID()
+	if err != nil {
+		t.Fatalf("BootID: %v", err)
+	}
+	writeVSCodeOwnerFixture(t, key, inst.ID, bootID, process)
+	stuckCmd, _ := startOwnedSleep(t)
+	injected := false
+	manager.vscode.stopGrace = 500 * time.Millisecond
+	manager.vscode.killGroup = func(pgid int, sig syscall.Signal) error {
+		if !injected {
+			injected = true
+			manager.vscode.mu.Lock()
+			manager.vscode.servers[key] = &vscodeServer{
+				worktree: t.TempDir(), instanceID: inst.ID, cmd: stuckCmd,
+				exited: make(chan struct{}), stopGrace: 10 * time.Millisecond,
+				killGroup: func(int, syscall.Signal) error { return nil },
+			}
+			manager.vscode.mu.Unlock()
+		}
+		return syscall.Kill(-pgid, sig)
+	}
+
+	_, err = manager.CloseTab(CloseTabRequest{Title: title, RepoID: repoID, TabID: created.ID})
+	if err == nil {
+		t.Fatal("CloseTab reported success after its final editor sweep remained unknown")
+	}
+	tabs := inst.GetTabs()
+	if len(tabs) != 2 || tabs[1].ID != created.ID || tabs[1].Kind != session.TabKindVSCode {
+		t.Fatalf("final editor-sweep failure did not restore the exact VS Code retry tab: %+v", tabs)
+	}
+}
+
 // TestCloseTab_ShellTabLeavesEditorAlone: closing an unrelated tab must not touch
 // the editor.
 func TestCloseTab_ShellTabLeavesEditorAlone(t *testing.T) {
@@ -152,7 +224,9 @@ func TestCloseTab_ShellTabLeavesEditorAlone(t *testing.T) {
 	if _, err := manager.CreateTab(CreateTabRequest{Title: title, RepoID: repoID, Shell: true}); err != nil {
 		t.Fatalf("CreateTab(shell): %v", err)
 	}
-	manager.vscode.servers[key] = &vscodeServer{worktree: "/nowhere", exited: make(chan struct{})}
+	manager.vscode.servers[key] = &vscodeServer{
+		worktree: "/nowhere", instanceID: manager.instances[key].ID, exited: make(chan struct{}),
+	}
 
 	if _, err := manager.CloseTab(CloseTabRequest{Title: title, RepoID: repoID, TabName: "shell"}); err != nil {
 		t.Fatalf("CloseTab(shell): %v", err)
@@ -174,7 +248,9 @@ func TestCloseTab_StopsEditorEvenWhenPersistFails(t *testing.T) {
 	if _, err := manager.CreateTab(CreateTabRequest{Title: title, RepoID: repoID, Kind: "vscode"}); err != nil {
 		t.Fatalf("CreateTab(vscode): %v", err)
 	}
-	manager.vscode.servers[key] = &vscodeServer{worktree: "/nowhere", exited: make(chan struct{})}
+	manager.vscode.servers[key] = &vscodeServer{
+		worktree: "/nowhere", instanceID: manager.instances[key].ID, exited: make(chan struct{}),
+	}
 
 	// Force the persist to fail. Corrupting the on-disk JSON (rather than
 	// chmod-ing it read-only) is what makes this deterministic everywhere: the

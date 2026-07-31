@@ -108,6 +108,42 @@ func Snapshot() (map[int]Process, error) {
 	return snapshot()
 }
 
+// Lookup returns the current process instance for pid. Unlike Snapshot, which
+// contains only live processes, Lookup preserves ErrProcessExited so callers
+// can distinguish a confirmed startup exit from a process they could not
+// inspect. The returned StartID is the stable half of the (PID, StartID)
+// identity used before signalling across daemon restarts.
+func Lookup(pid int) (Process, error) {
+	return readProc(pid)
+}
+
+// BootID scopes persisted process identities across daemon restarts. It is the
+// kernel boot UUID on ordinary Linux procfs, the boot time on darwin, and a PID
+// namespace identity when Linux subset=pid hides the UUID. Callers using that
+// fallback for destructive work must pair it with proof from the live process;
+// see BootIDIsFallback.
+func BootID() (string, error) {
+	return bootID()
+}
+
+// PIDNamespaceID scopes numeric process and process-group IDs to the kernel PID
+// allocation domain that issued them. Linux returns the PID namespace device
+// and inode; Darwin, which has no PID namespaces, returns a boot-scoped host
+// identity. Persisted destructive handles must compare this in addition to a
+// boot identity, because containers can recreate a PID namespace within one
+// host boot and reuse the same PID/start-stamp tuple.
+func PIDNamespaceID() (string, error) {
+	return pidNamespaceID()
+}
+
+// BootIDIsFallback reports whether id is the Linux PID-namespace identity used
+// when a subset=pid procfs hides the kernel boot UUID. The fallback scopes a
+// process identity to the namespace but can be reused after a host reboot, so a
+// persisted destructive action must pair it with proof from the live process.
+func BootIDIsFallback(id string) bool {
+	return strings.HasPrefix(id, "pidns:")
+}
+
 // TreeOf returns root plus every descendant of root present in snap, in BFS
 // order (root first). Returns nil when root is not in the snapshot.
 func TreeOf(snap map[int]Process, root int) []Process {

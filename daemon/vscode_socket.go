@@ -101,8 +101,9 @@ type vscodeEndpoint struct {
 	Transport  *http.Transport
 }
 
-// releaseSocket unlinks the editor's socket and drops any pooled connections to
-// it. Called by reap, and ONLY by reap.
+// releaseSocket unlinks the editor's socket and confirmed-clean owner record,
+// then drops pooled connections. Called by reap, and ONLY by reap. When the group
+// kill is unknown, reap uses releaseSocketKeepingOwner instead.
 //
 // It belongs here for the same reason the group kill does: this is the one place
 // that observes the process actually dying, it runs exactly once per spawn, and
@@ -128,9 +129,27 @@ type vscodeEndpoint struct {
 // inert, since nothing listens on it and a dial gets ECONNREFUSED — and the
 // daemon's next start sweeps the directory anyway.
 func (s *vscodeServer) releaseSocket() {
+	s.releaseSocketState(true)
+}
+
+// releaseSocketKeepingOwner drops the dead endpoint but retains the durable
+// process-group handle after reaping could not confirm its final group kill.
+func (s *vscodeServer) releaseSocketKeepingOwner() {
+	s.releaseSocketState(false)
+}
+
+func (s *vscodeServer) releaseSocketState(removeOwner bool) {
 	if s.socketPath != "" {
 		if err := os.Remove(s.socketPath); err != nil && !os.IsNotExist(err) {
 			log.WarningLog.Printf("vscode: removing the editor socket %s failed: %v", s.socketPath, err)
+		}
+		if err := os.Remove(vscodeStartGatePath(s.socketPath)); err != nil && !os.IsNotExist(err) {
+			log.WarningLog.Printf("vscode: removing the editor start gate for %s failed: %v", s.socketPath, err)
+		}
+	}
+	if removeOwner && s.ownerPath != "" {
+		if err := os.Remove(s.ownerPath); err != nil && !os.IsNotExist(err) {
+			log.WarningLog.Printf("vscode: removing the editor owner %s failed: %v", s.ownerPath, err)
 		}
 	}
 	// The child is dead, so the kernel has closed these already; this releases the
@@ -173,6 +192,23 @@ func secureVSCodeSocket(socketPath string) error {
 // Together with the 0600 socket this gives the editor exactly the posture of the
 // daemon's own control socket: reachable by the owning user, nobody else.
 func vscodeSocketDir() (string, error) {
+	sockDir, err := vscodeSocketDirPath()
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(sockDir, 0o700); err != nil {
+		return "", fmt.Errorf("creating the VS Code socket directory failed: %w", err)
+	}
+	if err := os.Chmod(sockDir, 0o700); err != nil {
+		return "", fmt.Errorf("securing the VS Code socket directory failed: %w", err)
+	}
+	return sockDir, nil
+}
+
+// vscodeSocketDirPath resolves the socket directory without creating it. Cleanup
+// discovery uses this form so a daemon shutting down because its AF home was
+// deleted cannot resurrect that home merely by checking for persisted editors.
+func vscodeSocketDirPath() (string, error) {
 	dir, err := config.GetConfigDir()
 	if err != nil {
 		return "", err
@@ -198,14 +234,7 @@ func vscodeSocketDir() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolving the af home %q to an absolute path failed: %w", dir, err)
 	}
-	sockDir := filepath.Join(abs, vscodeSocketDirName)
-	if err := os.MkdirAll(sockDir, 0o700); err != nil {
-		return "", fmt.Errorf("creating the VS Code socket directory failed: %w", err)
-	}
-	if err := os.Chmod(sockDir, 0o700); err != nil {
-		return "", fmt.Errorf("securing the VS Code socket directory failed: %w", err)
-	}
-	return sockDir, nil
+	return filepath.Join(abs, vscodeSocketDirName), nil
 }
 
 // vscodeSocketNamePattern matches the socket names vscodeSocketPath mints, and
@@ -284,13 +313,17 @@ func vscodeSocketPath(key string) (string, error) {
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return "", fmt.Errorf("generating the VS Code socket name failed: %w", err)
 	}
-	sum := sha256.Sum256([]byte(key))
-	name := hex.EncodeToString(sum[:4]) + "-" + hex.EncodeToString(nonce[:]) + vscodeSocketExt
+	name := vscodeSocketKeyPrefix(key) + "-" + hex.EncodeToString(nonce[:]) + vscodeSocketExt
 	path := filepath.Join(dir, name)
 	if err := sockpath.Check("VS Code socket", path); err != nil {
 		return "", err
 	}
 	return path, nil
+}
+
+func vscodeSocketKeyPrefix(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:4])
 }
 
 // sweepAbandonedSockets removes every socket left behind by a PREVIOUS daemon.

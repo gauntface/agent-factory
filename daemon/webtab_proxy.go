@@ -199,6 +199,10 @@ func (m *Manager) ensureVSCodeServer(instance *session.Instance, repoID, title s
 	if m.vscode == nil {
 		return vscodeEndpoint{}, fmt.Errorf("daemon has no VS Code supervisor")
 	}
+	key := daemonInstanceKey(repoID, title)
+	if err := m.requireCurrentVSCodeInstance(instance, key, title); err != nil {
+		return vscodeEndpoint{}, err
+	}
 	// Never START an editor for a session that is archived or being torn down.
 	// This route is NOT serialized with KillSession/ArchiveSession — it must not
 	// be, since spawning blocks for seconds and would stall them — so without this
@@ -210,9 +214,9 @@ func (m *Manager) ensureVSCodeServer(instance *session.Instance, repoID, title s
 	// process right now" is exactly the question being asked here.
 	//
 	// It closes the archive window completely (BeginArchive raises the fence before
-	// teardown) and most of the kill window; the deferred sweep in KillSession /
-	// ArchiveSession catches anything that still races in, so the invariant holds
-	// on timing rather than on luck.
+	// teardown) and most of the kill window; the post-spawn check below and each
+	// destructive verb's confirmed final stop catch anything that still races in,
+	// so the invariant holds on timing rather than on luck.
 	if err := instance.TabSpawnBlocked(); err != nil {
 		return vscodeEndpoint{}, err
 	}
@@ -223,8 +227,7 @@ func (m *Manager) ensureVSCodeServer(instance *session.Instance, repoID, title s
 	if strings.TrimSpace(worktree) == "" {
 		return vscodeEndpoint{}, fmt.Errorf("session %q has no worktree to open in VS Code", title)
 	}
-	key := daemonInstanceKey(repoID, title)
-	endpoint, err := m.vscode.ensureServer(key, worktree)
+	endpoint, err := m.vscode.ensureServerForInstance(key, instance.ID, worktree)
 	// The post-spawn recheck below must run on errVSCodeStarting too, NOT just on
 	// success. ensureServer REGISTERS the server in v.servers before returning that
 	// sentinel, so a cold spawn that merely outran the start grace has left a LIVE,
@@ -277,11 +280,14 @@ func (m *Manager) ensureVSCodeServer(instance *session.Instance, repoID, title s
 //     no close/archive/kill path for a tab that no longer exists will ever stop
 //     it.
 //
-// The deferred sweeps in KillSession/ArchiveSession are the belt to this brace;
-// this keeps the "inert session ⇒ no editor" invariant from resting on which
-// goroutine reaches v.mu first.
+// The destructive paths' confirmed stop before record deletion is the belt to
+// this brace; this keeps the "inert session ⇒ no editor" invariant from resting
+// on which goroutine reaches v.mu first.
 func (m *Manager) stopVSCodeIfUnwanted(instance *session.Instance, key, title string) error {
 	err := func() error {
+		if err := m.requireCurrentVSCodeInstance(instance, key, title); err != nil {
+			return err
+		}
 		if err := instance.TabSpawnBlocked(); err != nil {
 			return err
 		}
@@ -294,7 +300,31 @@ func (m *Manager) stopVSCodeIfUnwanted(instance *session.Instance, key, title st
 		return nil
 	}()
 	if err != nil {
-		m.vscode.stopFor(key)
+		if stopErr := m.stopVSCodeForInstance(key, instance.ID); stopErr != nil {
+			return errors.Join(err, fmt.Errorf("stopping the unwanted VS Code editor: %w", stopErr))
+		}
+	}
+	return err
+}
+
+// requireCurrentVSCodeInstance makes the manager's stable session resolution a
+// spawn fence. A stale pointer can retain live-looking tabs after a dead-root
+// reap or same-title recreation; pointer equality here proves it is still the
+// exact stable instance tracked under this key.
+func (m *Manager) requireCurrentVSCodeInstance(instance *session.Instance, key, title string) error {
+	m.mu.Lock()
+	current := m.instances[key]
+	m.mu.Unlock()
+	if current != instance {
+		return fmt.Errorf("session %q changed identity before its VS Code editor could be served", title)
+	}
+	return nil
+}
+
+func (m *Manager) stopVSCodeForInstance(key, instanceID string) error {
+	err := m.vscode.stopForInstance(key, instanceID)
+	if err != nil {
+		log.WarningLog.Printf("vscode: could not determine or complete teardown for session id %q: %v", instanceID, err)
 	}
 	return err
 }
