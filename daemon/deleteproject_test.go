@@ -99,6 +99,50 @@ func TestDeleteProject_ArchivesAllSessionsRestorableRepoUntouched(t *testing.T) 
 	assert.True(t, liveProjectRoots(manager.Snapshot(repoID))[repoPath], "restoring an archived session reconstitutes the project")
 }
 
+func TestDeleteProjectTreatsHookFailureAsCommittedArchiveWarning(t *testing.T) {
+	manager, repoID, repoPath := newStatusTestManager(t)
+	inst, srcPath := registerArchivable(t, manager, repoID, repoPath, "worker")
+	require.NoError(t, manager.SaveInstances())
+	writeOnArchiveCommand(t, "printf 'project prune failed'; exit 17")
+
+	result, err := manager.DeleteProject(DeleteProjectRequest{RepoID: repoID, RepoPath: repoPath})
+	require.NoError(t, err,
+		"a project delete must not retry or fail after its nested archive committed")
+	require.Len(t, result.Archived, 1)
+	assert.Equal(t, inst.ID, result.Archived[0].ID)
+	require.Len(t, result.Warnings, 1)
+	assert.Contains(t, result.Warnings[0], "on-archive hook")
+	assert.Contains(t, result.Warnings[0], "exit status 17")
+	assert.False(t, exists(srcPath))
+	assert.Equal(t, session.Archived, inst.GetStatus())
+}
+
+func TestControlDeleteProjectPartialFailurePreservesCommittedHookWarning(t *testing.T) {
+	manager, repoID, repoPath := newStatusTestManager(t)
+	_, _ = registerArchivable(t, manager, repoID, repoPath, "alpha")
+	_, _ = registerArchivable(t, manager, repoID, repoPath, "beta")
+	require.NoError(t, manager.SaveInstances())
+	writeOnArchiveCommand(t, "printf 'project prune failed'; exit 17")
+
+	orig := archivePersist
+	archivePersist = func(m *Manager, rid string, inst *session.Instance) error {
+		if inst.Title == "beta" {
+			return fmt.Errorf("forced beta persist failure")
+		}
+		return orig(m, rid, inst)
+	}
+	t.Cleanup(func() { archivePersist = orig })
+
+	server := &controlServer{manager: manager}
+	var resp DeleteProjectResponse
+	err := server.DeleteProject(DeleteProjectRequest{RepoID: repoID, RepoPath: repoPath}, &resp)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "forced beta persist failure",
+		"the ordinary partial failure must remain visible")
+	assert.Contains(t, err.Error(), "project prune failed",
+		"the transport error must also preserve earlier committed hook warnings")
+}
+
 // TestDeleteProject_UnknownProjectIsNoOp: deleting a project the daemon knows
 // nothing about archives nothing, drops no opt-in, and returns a zero-count
 // success (idempotent).
