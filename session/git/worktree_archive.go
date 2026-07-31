@@ -1,9 +1,10 @@
 package git
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -11,6 +12,7 @@ import (
 	"github.com/sachiniyer/agent-factory/config"
 	"github.com/sachiniyer/agent-factory/internal/shellsuggest"
 	"github.com/sachiniyer/agent-factory/log"
+	"golang.org/x/sys/unix"
 )
 
 // RestoreWorktreePath returns where an archived session's worktree should be
@@ -83,8 +85,18 @@ var worktreeRepairSubmodules = func(g *GitWorktree, dest string) error {
 // Filesystem operation seams let tests force cross-device and cleanup-failure
 // paths deterministically. Production never reassigns them.
 var (
-	renamePath    = os.Rename
-	removeAllPath = os.RemoveAll
+	renamePath                  = renamePathNoReplace
+	removeDirectoryTree         = removeOpenedDirectory
+	moveDirInspectClaimedSource = identityAt
+	copyTreeBeforeSourceOpen    = func(string) error { return nil }
+	copyTreeAfterSymlinkCreate  = func(string) error { return nil }
+	copyTreeAfterDestCreate     = func(string) error { return nil }
+	moveDirBeforeDestParentOpen = func(string) error { return nil }
+	moveDirBeforeDestCommit     = func(string) error { return nil }
+	moveDirBeforeSourceCommit   = func(string) error { return nil }
+	moveDirAfterDestCommit      = func(string) error { return nil }
+	renamePathAfterCommit       = func(string) error { return nil }
+	removeTreeBeforeEntryClaim  = func(*os.File, string) error { return nil }
 )
 
 // MoveWorktree relocates this worktree's directory to dest and keeps git's
@@ -149,6 +161,8 @@ func (g *GitWorktree) relocateWorktreeTo(dest string) error {
 		// its config (rare). Only move bytes ourselves if the dir is still at
 		// src; either way, repair fixes the two-way registration.
 		var sourceCleanupErr error
+		var sourceCleanupPath string
+		var sourceCleanupPathVerified bool
 		if !pathExists(dest) {
 			if mErr := moveDirCrossDevice(src, dest); mErr != nil {
 				var copiedErr *copiedWorktreeSourceCleanupError
@@ -156,6 +170,8 @@ func (g *GitWorktree) relocateWorktreeTo(dest string) error {
 					return fmt.Errorf("failed to move worktree %s -> %s: %w", src, dest, mErr)
 				}
 				sourceCleanupErr = mErr
+				sourceCleanupPath = copiedErr.src
+				sourceCleanupPathVerified = copiedErr.cleanupPathVerified
 			}
 		}
 		// The bytes are now at dest. Commit the new location to the worktree
@@ -169,7 +185,7 @@ func (g *GitWorktree) relocateWorktreeTo(dest string) error {
 		g.setWorktreeLocation(dest)
 		if rErr := worktreeRepair(g, dest); rErr != nil {
 			if sourceCleanupErr != nil {
-				return fmt.Errorf("copied worktree to %s but failed to remove original %s and failed to repair its git registration: %v: %w", dest, src, rErr, sourceCleanupErr)
+				return fmt.Errorf("copied worktree to %s but failed to remove original %s and failed to repair its git registration: %v: %w", dest, sourceCleanupPath, rErr, sourceCleanupErr)
 			}
 			return fmt.Errorf("moved worktree to %s but failed to repair its git registration: %w", dest, rErr)
 		}
@@ -199,14 +215,22 @@ func (g *GitWorktree) relocateWorktreeTo(dest string) error {
 			// than useless: instance state may still point at src, so following it
 			// breaks recovery. Warn (so the leftover disk stays visible and
 			// reclaimable) and return nil.
-			log.WarningLog.Printf(
-				"worktree copied and registered at %s, but failed to remove the leftover source directory %s; "+
-					"the worktree is valid and usable at %s — the leftover is only reclaimable disk, "+
-					"remove it by hand with `%s`: %v",
-				dest, src, dest,
-				shellsuggest.Command("rm", "-rf", src),
-				sourceCleanupErr,
-			)
+			if sourceCleanupPathVerified {
+				log.WarningLog.Printf(
+					"worktree copied and registered at %s, but failed to remove the leftover source directory %s; "+
+						"the worktree is valid and usable at %s — the leftover is only reclaimable disk, "+
+						"remove it by hand with `%s`: %v",
+					dest, sourceCleanupPath, dest,
+					shellsuggest.Command("rm", "-rf", sourceCleanupPath),
+					sourceCleanupErr,
+				)
+			} else {
+				log.WarningLog.Printf(
+					"worktree copied and registered at %s, but source cleanup could not determine the original tree's current pathname; "+
+						"the worktree is valid and usable at %s, but do not delete the stale quarantine name %s because it now identifies different data: %v",
+					dest, dest, sourceCleanupPath, sourceCleanupErr,
+				)
+			}
 		}
 		return nil
 	}
@@ -244,31 +268,176 @@ func (g *GitWorktree) ensureRepoPresent() error {
 // common case when the archive root lives on a different device than the repo.
 // The copy preserves file contents, modes, and symlinks, so uncommitted changes
 // survive verbatim.
-func moveDirCrossDevice(src, dest string) error {
-	if err := renamePath(src, dest); err == nil {
+func moveDirCrossDevice(src, dest string) (returnErr error) {
+	renameErr := renamePath(src, dest)
+	if renameErr == nil {
 		return nil
-	} else if !errors.Is(err, syscall.EXDEV) {
+	} else if !errors.Is(renameErr, syscall.EXDEV) {
+		return renameErr
+	}
+	// Cross-device: copy into an unguessable sibling, atomically claim the
+	// verified source endpoint, then atomically publish the copied directory at
+	// dest without replacing anything. These two renames are the commit boundary:
+	// until both identities match, the source is restored and never deleted.
+	stagingPath, err := privateMovePath(dest, "copy")
+	if err != nil {
 		return err
 	}
-	// Cross-device: copy the tree, then remove the original.
-	if err := copyTree(src, dest); err != nil {
-		// Best-effort cleanup of a partial copy so a retry sees a clean dest.
-		_ = removeAllPath(dest)
+	copied, err := copyTreeWithIdentities(src, stagingPath)
+	if err != nil {
+		return fmt.Errorf("failed to copy worktree into private staging directory %s: %w", stagingPath, err)
+	}
+	defer copied.close()
+	stagingName := filepath.Base(stagingPath)
+	published := false
+	defer func() {
+		if published {
+			return
+		}
+		stagingManifest := destinationCleanupManifest(copied.root)
+		if cleanupErr := removeDirectoryTree(
+			copied.destinationParent, stagingName, stagingPath, copied.destination, &stagingManifest,
+		); cleanupErr != nil {
+			returnErr = errors.Join(returnErr, fmt.Errorf("failed to clean private staging tree %s: %w", stagingPath, cleanupErr))
+		}
+	}()
+
+	sourceParentPath := filepath.Dir(src)
+	sourceParent, _, err := openDirectoryPathFollowingLinks(sourceParentPath, "source parent")
+	if err != nil {
 		return err
 	}
-	if err := removeAllPath(src); err != nil {
-		return &copiedWorktreeSourceCleanupError{src: src, dest: dest, err: err}
+	defer sourceParent.Close()
+	sourceParentIdentity, err := identityFromFile(sourceParent)
+	if err != nil {
+		return err
+	}
+	sourceName := filepath.Base(src)
+	quarantinePath, err := privateMovePath(src, "source")
+	if err != nil {
+		return err
+	}
+	if err := moveDirBeforeSourceCommit(src); err != nil {
+		return err
+	}
+	quarantineName := filepath.Base(quarantinePath)
+	if err := renameAtNoReplace(int(sourceParent.Fd()), sourceName, int(sourceParent.Fd()), quarantineName); err != nil {
+		return fmt.Errorf("failed to atomically secure source directory %s before cleanup: %w", src, err)
+	}
+	quarantinedIdentity, err := moveDirInspectClaimedSource(sourceParent, quarantineName)
+	if err != nil {
+		// Restore only what still identifies the source this process opened. A
+		// racer can strand the claimed entry and drop a replacement at the
+		// quarantine name inside this window; an unchecked rename would publish
+		// that replacement at src and report it as the restored source, while
+		// the real tree stayed stranded under the racer's name.
+		if restoreErr := restoreSecuredSource(sourceParent, quarantineName, sourceName, copied.source); restoreErr != nil {
+			return fmt.Errorf("failed to inspect secured source %s (%v) and could not restore it to %s: %w", quarantinePath, err, src, restoreErr)
+		}
+		if pathErr := validateNamedPathIdentity(
+			sourceParentPath, sourceName, "source", sourceParentIdentity, copied.sourceIdentity,
+		); pathErr != nil {
+			return errors.Join(fmt.Errorf("failed to inspect secured source %s: %w", quarantinePath, err), pathErr)
+		}
+		return fmt.Errorf("failed to inspect secured source %s; restored it to %s: %w", quarantinePath, src, err)
+	}
+	if !copied.sourceIdentity.same(quarantinedIdentity) {
+		restoreErr := restoreClaimedSource(sourceParent, quarantineName, sourceName)
+		if restoreErr != nil {
+			return fmt.Errorf("source directory changed while it was copied; replacement was preserved at %s but could not be restored to %s: %w", quarantinePath, src, restoreErr)
+		}
+		if pathErr := validateNamedPathIdentity(
+			sourceParentPath, sourceName, "source", sourceParentIdentity, quarantinedIdentity,
+		); pathErr != nil {
+			return errors.Join(errors.New("source directory changed while it was copied"), pathErr)
+		}
+		return fmt.Errorf("source directory changed while it was copied; restored the replacement at %s and refused cleanup", src)
+	}
+	restoreSource := func(cause error) error {
+		restoreErr := restoreSecuredSource(sourceParent, quarantineName, sourceName, copied.source)
+		if restoreErr != nil {
+			return fmt.Errorf("%v; secured source at %s could not be restored to %s: %w", cause, quarantinePath, src, restoreErr)
+		}
+		if pathErr := validateNamedPathIdentity(
+			sourceParentPath, sourceName, "source", sourceParentIdentity, copied.sourceIdentity,
+		); pathErr != nil {
+			return errors.Join(cause, pathErr)
+		}
+		return cause
+	}
+
+	destinationParentPath := filepath.Dir(dest)
+	if err := moveDirBeforeDestParentOpen(destinationParentPath); err != nil {
+		return restoreSource(err)
+	}
+	currentDestinationParent, _, err := openDirectoryPathFollowingLinks(destinationParentPath, "destination parent")
+	if err != nil {
+		return restoreSource(err)
+	}
+	currentDestinationParentIdentity, err := identityFromFile(currentDestinationParent)
+	currentDestinationParent.Close()
+	if err != nil || !copied.destinationParentIdentity.same(currentDestinationParentIdentity) {
+		if err == nil {
+			err = fmt.Errorf("destination parent changed while the worktree was copied")
+		}
+		return restoreSource(err)
+	}
+	if err := moveDirBeforeDestCommit(stagingPath); err != nil {
+		return restoreSource(err)
+	}
+	if err := copied.validateSource(quarantinePath); err != nil {
+		return restoreSource(fmt.Errorf("source tree changed after copy: %w", err))
+	}
+	if err := copied.validateDestination(stagingPath); err != nil {
+		return restoreSource(fmt.Errorf("destination tree changed after copy: %w", err))
+	}
+	if err := renameAtNoReplace(
+		int(copied.destinationParent.Fd()), stagingName,
+		int(copied.destinationParent.Fd()), filepath.Base(dest),
+	); err != nil {
+		return restoreSource(fmt.Errorf("failed to atomically commit copied worktree at %s without replacement: %w", dest, err))
+	}
+	published = true
+	commitErr := errors.Join(moveDirAfterDestCommit(dest), validatePublishedDestination(dest, copied))
+	if commitErr != nil {
+		destinationManifest := destinationCleanupManifest(copied.root)
+		cleanupErr := removeDirectoryTree(
+			copied.destinationParent, filepath.Base(dest), dest, copied.destination, &destinationManifest,
+		)
+		if cleanupErr != nil {
+			commitErr = errors.Join(commitErr, fmt.Errorf("failed to remove unverified destination %s: %w", dest, cleanupErr))
+		}
+		return restoreSource(commitErr)
+	}
+
+	if err := removeDirectoryTree(sourceParent, quarantineName, quarantinePath, copied.source, &copied.root); err != nil {
+		var unverified *unverifiedCleanupPathError
+		cleanupPathVerified := !errors.As(err, &unverified)
+		if pathErr := validateDirectoryPathIdentity(sourceParentPath, "source", sourceParentIdentity); pathErr != nil {
+			err = errors.Join(err, pathErr)
+			cleanupPathVerified = false
+		}
+		return &copiedWorktreeSourceCleanupError{
+			src:                 quarantinePath,
+			dest:                dest,
+			err:                 err,
+			cleanupPathVerified: cleanupPathVerified,
+		}
 	}
 	return nil
 }
 
 type copiedWorktreeSourceCleanupError struct {
-	src  string
-	dest string
-	err  error
+	src                 string
+	dest                string
+	err                 error
+	cleanupPathVerified bool
 }
 
 func (e *copiedWorktreeSourceCleanupError) Error() string {
+	if !e.cleanupPathVerified {
+		return fmt.Sprintf("copied worktree to %s but could not determine the original source's current pathname near %s: %v", e.dest, e.src, e.err)
+	}
 	return fmt.Sprintf("copied worktree to %s but failed to remove original %s: %v", e.dest, e.src, e.err)
 }
 
@@ -276,55 +445,107 @@ func (e *copiedWorktreeSourceCleanupError) Unwrap() error {
 	return e.err
 }
 
-// copyTree recursively copies the directory rooted at src to dest, preserving
-// regular files (contents + permission bits), subdirectories, and symlinks
-// (copied as links, never followed). It is only reached on the cross-device
-// fallback. Other node kinds are rejected before opening them: in particular,
-// opening a FIFO for reading would wait indefinitely for a writer (#2654).
-func copyTree(src, dest string) error {
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(dest, rel)
-		switch {
-		case info.IsDir():
-			return os.MkdirAll(target, info.Mode().Perm())
-		case info.Mode()&os.ModeSymlink != 0:
-			link, err := os.Readlink(path)
-			if err != nil {
-				return err
-			}
-			return os.Symlink(link, target)
-		case info.Mode().IsRegular():
-			return copyFile(path, target, info.Mode().Perm())
-		default:
-			return fmt.Errorf("cannot move worktree across filesystems: unsupported file type at %s (%s)", path, info.Mode().Type())
-		}
-	})
+func openDirectoryPath(path, role string) (*os.File, os.FileInfo, error) {
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cannot move worktree across filesystems: failed to open %s directory %s safely: %w", role, path, err)
+	}
+	return openedDirectory(fd, path, role)
 }
 
-// copyFile copies a single regular file's contents to dst, creating it with the
-// given permission bits.
-func copyFile(src, dst string, perm os.FileMode) error {
-	in, err := os.Open(src)
+// openDirectoryPathFollowingLinks is used only for an already-configured
+// destination parent. Users may intentionally make worktree_root a symlink to
+// another filesystem; O_DIRECTORY and O_NONBLOCK still reject a raced-in FIFO,
+// while all writes remain anchored to the returned directory descriptor.
+func openDirectoryPathFollowingLinks(path, role string) (*os.File, os.FileInfo, error) {
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cannot move worktree across filesystems: failed to open %s directory %s safely: %w", role, path, err)
+	}
+	return openedDirectory(fd, path, role)
+}
+
+func openDirectoryAt(parent *os.File, name, path, role string) (*os.File, os.FileInfo, error) {
+	fd, err := unix.Openat(
+		int(parent.Fd()), name,
+		unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC,
+		0,
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cannot move worktree across filesystems: failed to open %s directory %s safely: %w", role, path, err)
+	}
+	return openedDirectory(fd, path, role)
+}
+
+func openedDirectory(fd int, path, role string) (*os.File, os.FileInfo, error) {
+	dir := os.NewFile(uintptr(fd), path)
+	info, err := dir.Stat()
+	if err != nil {
+		_ = dir.Close()
+		return nil, nil, err
+	}
+	if !info.IsDir() {
+		_ = dir.Close()
+		return nil, nil, fmt.Errorf("cannot move worktree across filesystems: %s path %s is not a directory", role, path)
+	}
+	return dir, info, nil
+}
+
+func readLinkAt(parent *os.File, name, path string) (string, error) {
+	for size := 256; size <= 64*1024; size *= 2 {
+		buffer := make([]byte, size)
+		n, err := unix.Readlinkat(int(parent.Fd()), name, buffer)
+		if err != nil {
+			return "", fmt.Errorf("cannot move worktree across filesystems: failed to read source symlink %s safely: %w", path, err)
+		}
+		if n < len(buffer) {
+			return string(buffer[:n]), nil
+		}
+	}
+	return "", fmt.Errorf("cannot move worktree across filesystems: source symlink %s target is too long", path)
+}
+
+func unsupportedSourceTypeError(path string, mode uint32) error {
+	return fmt.Errorf("cannot move worktree across filesystems: unsupported file type at %s (mode %#o)", path, mode&unix.S_IFMT)
+}
+
+func privateMovePath(path, purpose string) (string, error) {
+	name, err := privateMoveName(purpose)
+	if err != nil {
+		return "", fmt.Errorf("generate private %s path beside %s: %w", purpose, path, err)
+	}
+	return filepath.Join(filepath.Dir(path), name), nil
+}
+
+func privateMoveName(purpose string) (string, error) {
+	var random [16]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf(".af-%s-%s", purpose, hex.EncodeToString(random[:])), nil
+}
+
+func restoreClaimedSource(parent *os.File, securedName, sourceName string) error {
+	return renameAtNoReplace(int(parent.Fd()), securedName, int(parent.Fd()), sourceName)
+}
+
+func restoreSecuredSource(parent *os.File, securedName, sourceName string, source *os.File) error {
+	expected, err := identityFromFile(source)
 	if err != nil {
 		return err
 	}
-	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
-	if err != nil {
+	current, err := identityAt(parent, securedName)
+	if err != nil || !expected.same(current) {
+		return fmt.Errorf("secured source name no longer identifies the opened source")
+	}
+	if err := restoreClaimedSource(parent, securedName, sourceName); err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		return err
+	restored, err := identityAt(parent, sourceName)
+	if err != nil || !expected.same(restored) {
+		return fmt.Errorf("restored source name does not identify the opened source")
 	}
-	return out.Close()
+	return nil
 }
 
 // pathExists reports whether p exists (best-effort: a stat error other than
