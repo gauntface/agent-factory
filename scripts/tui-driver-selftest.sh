@@ -761,6 +761,22 @@ _expect_scrolled_rail_relaunch() {
     return "$rc"
 }
 
+# _seed_config_editor_start_value makes the live-apply transition non-vacuous
+# even when scripts/testbox.sh reuses a pinned AF_SELFTEST_NAME. The sandbox
+# reset intentionally preserves config.toml, so a previous run otherwise leaves
+# codex active before the editor writes codex again. This command runs after the
+# reset killed the sandbox daemon and RequestApplyConfig is non-spawning; the
+# daemon therefore boots from claude, then the editor must transition it to
+# codex for the live ListPrograms readback below to pass.
+_seed_config_editor_start_value() {
+    (cd / && af config set default_program claude >/dev/null) || return 1
+    grep -q "default_program = 'claude'" "$AGENT_FACTORY_HOME/config.toml" || {
+        printf 'could not seed default_program = claude before daemon boot:\n'
+        cat "$AGENT_FACTORY_HOME/config.toml"
+        return 1
+    }
+}
+
 printf '=== tui-driver self-test (#1161) ===\n'
 printf 'session=%s size=%sx%s home=%s\n' \
     "$AF_DRIVER_SESSION" "$AF_DRIVER_COLS" "$AF_DRIVER_ROWS" "$AGENT_FACTORY_HOME"
@@ -768,6 +784,7 @@ printf 'session=%s size=%sx%s home=%s\n' \
 # Start from a clean slate so the run is deterministic even in a reused
 # container (scoped to the sandbox; fails closed on a non-sandbox home).
 step "reset sandbox to a clean state"                       af_reset_sandbox
+step "seed a non-codex default before daemon boot"           _seed_config_editor_start_value
 # af_boot routes launch geometry through af_resize, which verifies the window
 # actually took the requested size — so a green boot is also positive proof
 # af_resize works (#1174 item 2 / #1201).
@@ -820,12 +837,14 @@ step "af_select handles a target with an open pane (#1996)"  _expect_af_select_o
 # _expect_config_editor_writes — the config editor's end-to-end flow against the
 # sandbox's throwaway AF home: open it, assert it rendered a tier-1 key FROM THE
 # MANIFEST, edit a value through the real write path, and assert the editor
-# echoed the write AND told the user the change is not live until a restart.
+# echoed the write AND surfaced the per-key effect returned by that write.
 #
-# The restart notice is the assertion that matters most here. config.toml is read
-# at startup, so an editor that changed a value the running daemon then ignored —
-# without saying so — would be lying by omission. This pins that it says so at the
-# moment of the edit, and names the command.
+# default_program is applied to the running daemon in place (#2480), so this
+# acceptance path must confirm that the new value is live now and must not
+# resurrect the obsolete instruction to restart the daemon (#2479). Reading the
+# notice is not enough: the daemon's ListPrograms answer shares the resolver
+# used by a create with no explicit program, so read that live contract back
+# through the real HTTP socket too.
 _expect_config_editor_writes() {
     af_open_config || return 1
     # The manifest's tier-1 keys lead; the editor holds no key list of its own.
@@ -840,18 +859,37 @@ _expect_config_editor_writes() {
     af_send Enter
 
     af_wait_for 'set default_program = codex' "$AF_DRIVER_TIMEOUT" 'config write echo' || return 1
-    # Match a fragment that survives the overlay's line wrap. The notice reads
-    # "… run `af daemon restart` and restart af to apply", and at the driver's
-    # fixed 100x30 the wrap falls between "af" and "daemon restart" — so the full
-    # phrase is NOT greppable on one line. Verified against a real capture rather
-    # than guessed; the fixed terminal size is what makes it deterministic.
-    af_wait_for 'daemon restart' "$AF_DRIVER_TIMEOUT" 'config restart notice' || return 1
+    af_wait_for 'using the new value now' "$AF_DRIVER_TIMEOUT" 'config live-apply notice' || return 1
+    af_refute_screen 'daemon restart' 'config notice prescribes no obsolete restart' || return 1
     af_close_config || return 1
 
     # It reached the real file, through the real writer.
     grep -q "default_program = 'codex'" "$AGENT_FACTORY_HOME/config.toml" || {
         printf 'config.toml does not hold the edited value:\n'
         cat "$AGENT_FACTORY_HOME/config.toml"
+        return 1
+    }
+
+    local api_catalog socket_path programs
+    api_catalog="$(af api --json)" || {
+        printf 'could not resolve the daemon HTTP socket through af api\n'
+        return 1
+    }
+    socket_path="$(printf '%s' "$api_catalog" | jq -er '.data.socket_path')" || {
+        printf 'af api did not report a daemon HTTP socket:\n%s\n' "$api_catalog"
+        return 1
+    }
+    programs="$(curl --fail --silent --show-error \
+        --max-time "$AF_DRIVER_TIMEOUT" \
+        --unix-socket "$socket_path" \
+        http://localhost/v1/ListPrograms \
+        -d '{}')" || {
+        printf 'could not read the live program catalog from the daemon\n'
+        return 1
+    }
+    printf '%s' "$programs" |
+        jq -e '.error == null and .data.default == "codex"' >/dev/null || {
+        printf 'daemon did not apply default_program = codex live:\n%s\n' "$programs"
         return 1
     }
 }
