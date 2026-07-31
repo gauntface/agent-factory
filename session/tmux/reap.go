@@ -3,6 +3,8 @@ package tmux
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -79,6 +81,9 @@ func captureSessionProcessTrees(cmdExec cmd.Executor, sanitizedName string) ([]p
 	out, err := outputTmuxBoundedWith(ctx, cmdExec,
 		"list-panes", "-s", "-t", exactTarget(sanitizedName), "-F", "#{pane_pid}")
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("%w: list-panes for %s after %s", ErrTmuxTimeout, sanitizedName, tmuxCommandTimeout)
+		}
 		return nil, fmt.Errorf("cannot list panes before teardown: %w", err)
 	}
 	snap, err := proctree.Snapshot()
@@ -125,6 +130,191 @@ func captureSessionProcessTrees(cmdExec cmd.Executor, sanitizedName string) ([]p
 		}
 	}
 	return procs, errors.Join(captureErrs...)
+}
+
+// markedOrphanProcesses filters a previously captured pane process tree down to
+// processes whose immutable launch environment proves they belong to this exact
+// tmux session and AF home. The capture happens while the listed session still
+// exists; if ownership lookup then loses the session, AF_SESSION and AF_HOME
+// provide the authority that the vanished tmux environment no longer can.
+//
+// The candidate set is load-bearing. Scanning every same-user process would
+// turn an unrelated unreadable /proc environment into a possible helper and
+// make successful absence impossible on hardened hosts. Within the captured
+// tree, unreadable or mismatched provenance is genuinely UNKNOWN and blocks
+// worktree deletion rather than being collapsed into "not ours".
+func markedOrphanProcesses(candidates []proctree.Process, sanitizedName, ownHome string) ([]proctree.Process, error) {
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	snap, err := proctree.Snapshot()
+	if err != nil {
+		return nil, fmt.Errorf("cannot inspect captured processes after tmux session vanished: %w", err)
+	}
+	selfUID, selfUIDKnown := proctree.UID(os.Getpid())
+	if !selfUIDKnown {
+		return nil, fmt.Errorf("cannot determine reset process ownership while checking vanished tmux session %s", sanitizedName)
+	}
+	selfChain := selfAndAncestorProcesses(snap)
+	cleanHome := filepath.Clean(ownHome)
+	var owned []proctree.Process
+	var inspectErrs []error
+	for _, process := range candidates {
+		same, identityErr := proctree.SameIdentity(process)
+		if identityErr != nil {
+			inspectErrs = append(inspectErrs, fmt.Errorf("cannot determine whether captured pid %d is still the same process: %w",
+				process.PID, identityErr))
+			continue
+		}
+		if !same {
+			continue
+		}
+		uid, uidKnown := proctree.UID(process.PID)
+		if !uidKnown {
+			sameAfter, recheckErr := proctree.SameIdentity(process)
+			switch {
+			case recheckErr != nil:
+				inspectErrs = append(inspectErrs, fmt.Errorf("cannot recheck captured pid %d after owner lookup failed: %w",
+					process.PID, recheckErr))
+			case sameAfter:
+				inspectErrs = append(inspectErrs, fmt.Errorf("cannot determine owner of captured live pid %d", process.PID))
+			}
+			continue
+		}
+		if uid != selfUID {
+			inspectErrs = append(inspectErrs, fmt.Errorf("captured live pid %d belongs to uid %d, not reset uid %d",
+				process.PID, uid, selfUID))
+			continue
+		}
+
+		environ, envErr := proctree.Environ(process.PID)
+		if envErr != nil {
+			sameAfter, recheckErr := proctree.SameIdentity(process)
+			switch {
+			case recheckErr != nil:
+				inspectErrs = append(inspectErrs, fmt.Errorf("cannot recheck captured pid %d after environment lookup failed: %w",
+					process.PID, errors.Join(envErr, recheckErr)))
+			case sameAfter:
+				inspectErrs = append(inspectErrs, fmt.Errorf("cannot determine whether captured live pid %d belongs to session %s: %w",
+					process.PID, sanitizedName, envErr))
+			}
+			continue
+		}
+		processSession, hasSession := processEnvValue(environ, EnvMarkerSession)
+		if !hasSession {
+			inspectErrs = append(inspectErrs, fmt.Errorf("captured live pid %d has no %s marker for vanished session %s",
+				process.PID, EnvMarkerSession, sanitizedName))
+			continue
+		}
+		if processSession != sanitizedName {
+			inspectErrs = append(inspectErrs, fmt.Errorf("captured live pid %d marks session %s instead of vanished session %s",
+				process.PID, processSession, sanitizedName))
+			continue
+		}
+		processHome, hasHome := processEnvValue(environ, EnvMarkerHome)
+		if !hasHome {
+			inspectErrs = append(inspectErrs, fmt.Errorf("captured live pid %d marks session %s but has no %s ownership marker",
+				process.PID, sanitizedName, EnvMarkerHome))
+			continue
+		}
+		if filepath.Clean(processHome) != cleanHome {
+			continue
+		}
+		if selfChain[process.PID] {
+			inspectErrs = append(inspectErrs, fmt.Errorf("refusing to reap reset process or ancestor pid %d for vanished session %s",
+				process.PID, sanitizedName))
+			continue
+		}
+		owned = append(owned, process)
+	}
+	return owned, errors.Join(inspectErrs...)
+}
+
+// refreshOrphanCandidates closes the capture-to-marker TOCTOU window. A pane
+// can launch another helper after the pre-marker snapshot but before the marker
+// lookup observes that tmux removed the session. Once absence is authoritative,
+// no pane remains to launch more work, so a fresh process-table snapshot can add
+// every process still tied to the captured kernel sessions/trees plus any
+// readable process carrying the exact AF_SESSION marker.
+//
+// Environment failures on unrelated processes are deliberately ignored: they
+// are not evidence of membership. Failures on captured/SID/descendant
+// candidates remain visible when markedOrphanProcesses validates the bounded
+// set, preserving unknown without making hardened hosts globally unreadable.
+func refreshOrphanCandidates(captured []proctree.Process, sanitizedName string) ([]proctree.Process, error) {
+	snap, err := proctree.Snapshot()
+	if err != nil {
+		return captured, fmt.Errorf("cannot refresh processes after tmux session %s vanished: %w", sanitizedName, err)
+	}
+	byPID := make(map[int]int, len(captured))
+	refreshed := make([]proctree.Process, 0, len(captured))
+	add := func(process proctree.Process) {
+		refreshed = addOrReplaceOrphanCandidate(refreshed, byPID, process)
+	}
+	for _, process := range captured {
+		add(process)
+		current, alive := snap[process.PID]
+		if alive && current.StartID == process.StartID {
+			for _, descendant := range proctree.TreeOf(snap, process.PID) {
+				add(descendant)
+			}
+		}
+		for _, member := range proctree.SessionMembers(snap, process.SID) {
+			add(member)
+		}
+	}
+	for _, process := range snap {
+		environ, envErr := proctree.Environ(process.PID)
+		if envErr != nil {
+			continue
+		}
+		if session, ok := processEnvValue(environ, EnvMarkerSession); ok && session == sanitizedName {
+			add(process)
+		}
+	}
+	return refreshed, nil
+}
+
+// addOrReplaceOrphanCandidate deduplicates by PID without confusing a PID
+// slot with a process identity. A current snapshot or marker scan must replace
+// an older entry when the same PID now carries another StartID; otherwise the
+// stale identity would be rejected later while the replacement escaped review.
+func addOrReplaceOrphanCandidate(candidates []proctree.Process, byPID map[int]int, process proctree.Process) []proctree.Process {
+	if index, exists := byPID[process.PID]; exists {
+		if candidates[index].StartID != process.StartID {
+			candidates[index] = process
+		}
+		return candidates
+	}
+	byPID[process.PID] = len(candidates)
+	return append(candidates, process)
+}
+
+func processEnvValue(environ []string, name string) (string, bool) {
+	prefix := name + "="
+	for _, value := range environ {
+		if strings.HasPrefix(value, prefix) {
+			return value[len(prefix):], true
+		}
+	}
+	return "", false
+}
+
+func selfAndAncestorProcesses(snap map[int]proctree.Process) map[int]bool {
+	ancestors := make(map[int]bool)
+	pid := os.Getpid()
+	for range 128 {
+		if pid <= 0 || ancestors[pid] {
+			break
+		}
+		ancestors[pid] = true
+		process, ok := snap[pid]
+		if !ok {
+			break
+		}
+		pid = process.PPID
+	}
+	return ancestors
 }
 
 // reapLeakedProcesses waits for the captured processes to exit after

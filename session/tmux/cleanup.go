@@ -1,6 +1,7 @@
 package tmux
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -109,6 +110,45 @@ func probeSession(cmdExec cmd.Executor, name string) (exists bool, known bool) {
 	return false, true
 }
 
+// probeSessionStrict is the non-lossy existence probe for CleanupSessions'
+// ownership gate. Unlike probeSession, it does not treat every non-timeout
+// execution failure as absence: only tmux's ordinary exit 1 paired with its
+// exact "can't find session" diagnostic is a determinate answer. Any other
+// failure remains unknown and cannot authorize reset to continue to worktree
+// deletion.
+func probeSessionStrict(cmdExec cmd.Executor, name string) (exists bool, known bool, err error) {
+	ctx, cancel := tmuxTimeoutContext()
+	defer cancel()
+	_, err = outputTmuxBoundedWith(ctx, cmdExec, "has-session", fmt.Sprintf("-t=%s", name))
+	if err == nil {
+		return true, true, nil
+	}
+	if ctx.Err() != nil {
+		return false, false, fmt.Errorf("%w: has-session %s after %s", ErrTmuxTimeout, name, tmuxCommandTimeout)
+	}
+	if missingTmuxSession(err, name) {
+		return false, true, nil
+	}
+	return false, false, fmt.Errorf("has-session for %s did not return a usable answer: %w", name, err)
+}
+
+// missingTmuxSession recognizes tmux's explicit exact-target absence answer.
+// Exit status 1 alone is ambiguous: wrapper, policy, and unclassified connection
+// failures can return the same status while the named session remains unknown.
+// An explicit no-server diagnostic is also definitive: no session can remain.
+func missingTmuxSession(err error, name string) bool {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+		return false
+	}
+	diagnostic := strings.TrimSpace(string(exitErr.Stderr))
+	if diagnostic == "can't find session: "+name {
+		return true
+	}
+	serverSocket, noServer := strings.CutPrefix(diagnostic, "no server running on ")
+	return noServer && strings.TrimSpace(serverSocket) != ""
+}
+
 // exactTarget builds an exact-match `-t` target spec for the named session.
 //
 // tmux resolves a bare `-t name` by exact match first and then PREFIX match, so
@@ -169,6 +209,25 @@ func CleanupSessions(cmdExec cmd.Executor) error {
 	for i, match := range prefixed {
 		prefixed[i] = match[:strings.Index(match, ":")]
 	}
+	// Capture every listed session's verified pane process tree before marker
+	// lookup. If the session vanishes during that lookup, tmux can no longer
+	// recover its pane ancestry; this is the last authoritative opportunity to
+	// bind any detached helper to the session. Capture errors are retained for
+	// the vanished-session branch; a live owned session is captured again just
+	// before kill, and a foreign session's unreadable panes never block this
+	// home's sweep.
+	preMarkerProcesses := make(map[string][]proctree.Process, len(prefixed))
+	preMarkerCaptureErrs := make(map[string]error, len(prefixed))
+	for _, match := range prefixed {
+		preMarkerProcesses[match], preMarkerCaptureErrs[match] = captureSessionProcessTrees(cmdExec, match)
+		if errors.Is(preMarkerCaptureErrs[match], ErrTmuxTimeout) {
+			// The server is already known to be wedged. Do not launch the
+			// ownership probe against it and pay another full timeout for an
+			// answer that still could not authorize deletion.
+			return fmt.Errorf("cannot capture tmux session %s processes before ownership lookup; refusing to continue cleanup: %w",
+				match, preMarkerCaptureErrs[match])
+		}
+	}
 
 	// Home-scope the sweep (#1122): the af_ prefix alone does not prove this
 	// home owns the session — another install or an escaped test process can
@@ -181,6 +240,31 @@ func CleanupSessions(cmdExec cmd.Executor) error {
 	for _, match := range prefixed {
 		home, ok, markerErr := sessionHomeMarker(cmdExec, match)
 		if markerErr != nil {
+			if errors.Is(markerErr, ErrTmuxTimeout) {
+				// The same server is already known to be wedged. A fallback
+				// probe would wait on it for another full timeout and still
+				// could not turn the ownership result into affirmative state.
+				return fmt.Errorf("cannot determine tmux session %s ownership; refusing to continue cleanup: %w", match, markerErr)
+			}
+			// The session may have disappeared after `tmux ls`. Re-probe the
+			// exact name after every non-timeout marker error: only an authoritative
+			// has-session absence turns this race into a successful cleanup. Session
+			// absence is not process absence: a detached AF_SESSION-marked helper may
+			// have survived after tmux lost the pane ancestry used by the normal
+			// reaper, so the absent branch performs an ownership-scoped process sweep.
+			exists, known, probeErr := probeSessionStrict(cmdExec, match)
+			if known && !exists {
+				if reapErr := reapVanishedSessionProcesses(match, ownHome, preMarkerProcesses[match], preMarkerCaptureErrs[match]); reapErr != nil {
+					return fmt.Errorf("tmux session %s vanished during ownership lookup, but its process cleanup is incomplete: %w",
+						match, reapErr)
+				}
+				log.InfoLog.Printf("tmux session %s vanished during ownership lookup; marked orphan process sweep completed", match)
+				continue
+			}
+			if !known {
+				return fmt.Errorf("cannot determine tmux session %s ownership or whether it survived; refusing to continue cleanup: %w",
+					match, errors.Join(markerErr, probeErr))
+			}
 			return fmt.Errorf("cannot determine tmux session %s ownership; refusing to continue cleanup: %w", match, markerErr)
 		}
 		switch {
@@ -228,8 +312,16 @@ func CleanupSessions(cmdExec cmd.Executor) error {
 			}
 			// Idempotent teardown (#967): a session can vanish between the
 			// `tmux ls` above and this kill (TOCTOU). A gone session is the
-			// goal of cleanup, so only a survivor is a real failure.
-			if sessionExists(cmdExec, match) {
+			// goal of cleanup, but only an authoritative absence may turn the
+			// kill error into success. A failed re-probe leaves teardown unknown
+			// and must stop before process trees are reaped.
+			exists, known, probeErr := probeSessionStrict(cmdExec, match)
+			if !known {
+				killErr = fmt.Errorf("failed to kill tmux session %s and cannot determine whether it survived: %w",
+					match, errors.Join(killErrRaw, probeErr))
+				break
+			}
+			if exists {
 				killErr = fmt.Errorf("failed to kill tmux session %s: %v", match, killErrRaw)
 				break
 			}
@@ -253,4 +345,42 @@ func CleanupSessions(cmdExec cmd.Executor) error {
 	}
 	wg.Wait()
 	return killErr
+}
+
+func reapVanishedSessionProcesses(match, ownHome string, candidates []proctree.Process, captureErr error) error {
+	var sweepErr error
+	if captureErr != nil {
+		sweepErr = fmt.Errorf("could not establish the complete pane process tree before ownership lookup: %w", captureErr)
+	}
+	// Two refresh/reap passes cover a helper that appears after the pre-marker
+	// snapshot and a child it forks during the first bounded grace period. A
+	// final non-destructive refresh below is the evidence that cleanup finished.
+	for range 2 {
+		refreshed, refreshErr := refreshOrphanCandidates(candidates, match)
+		sweepErr = errors.Join(sweepErr, refreshErr)
+		marked, inspectErr := markedOrphanProcesses(refreshed, match, ownHome)
+		sweepErr = errors.Join(sweepErr, inspectErr)
+		remaining := reapLeakedProcesses(match, marked, reapGraceWait, reapTermWait)
+		if len(remaining) > 0 {
+			pids := make([]string, 0, len(remaining))
+			for _, process := range remaining {
+				pids = append(pids, fmt.Sprintf("%d", process.PID))
+			}
+			sweepErr = errors.Join(sweepErr, fmt.Errorf("marked processes %s are still alive after bounded teardown",
+				strings.Join(pids, ", ")))
+		}
+		candidates = refreshed
+	}
+	finalCandidates, refreshErr := refreshOrphanCandidates(candidates, match)
+	left, inspectErr := markedOrphanProcesses(finalCandidates, match, ownHome)
+	sweepErr = errors.Join(sweepErr, refreshErr, inspectErr)
+	if len(left) > 0 {
+		pids := make([]string, 0, len(left))
+		for _, process := range left {
+			pids = append(pids, fmt.Sprintf("%d", process.PID))
+		}
+		sweepErr = errors.Join(sweepErr, fmt.Errorf("marked processes %s appeared or remained after the orphan sweep",
+			strings.Join(pids, ", ")))
+	}
+	return sweepErr
 }

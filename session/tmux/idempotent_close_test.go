@@ -88,6 +88,10 @@ func TestCleanupSessions_ToleratesVanishedSession(t *testing.T) {
 	t.Setenv("AGENT_FACTORY_HOME", "/owned-home")
 	const lsOutput = `af_gone: 1 windows (created Wed May 20 12:00:00 2026) [179x47]
 af_stuck: 1 windows (created Wed May 20 12:01:00 2026) [179x47]`
+	_, absentExit := exec.Command("sh", "-c", "printf \"can't find session: af_gone\\n\" >&2; exit 1").Output()
+	var tmuxExit *exec.ExitError
+	require.ErrorAs(t, absentExit, &tmuxExit)
+	require.Equal(t, 1, tmuxExit.ExitCode())
 
 	// af_stuck survives its kill; af_gone vanished before we got to it.
 	stillPresent := map[string]bool{"af_stuck": true}
@@ -119,11 +123,17 @@ af_stuck: 1 windows (created Wed May 20 12:01:00 2026) [179x47]`
 					if stillPresent[nameOf(c)] {
 						return nil
 					}
-					return errExit1
+					return absentExit
 				}
 				return nil
 			},
 			OutputFunc: func(c *exec.Cmd) ([]byte, error) {
+				if strings.Contains(strings.Join(c.Args, " "), "has-session") {
+					if stillPresent[nameOf(c)] {
+						return []byte(""), nil
+					}
+					return nil, absentExit
+				}
 				if len(c.Args) > 1 && c.Args[1] == "show-environment" {
 					// Both sessions carry this home's marker (#1122).
 					return []byte("AF_HOME=/owned-home\n"), nil
@@ -149,11 +159,17 @@ af_stuck: 1 windows (created Wed May 20 12:01:00 2026) [179x47]`
 					if stillPresent[nameOf(c)] {
 						return nil
 					}
-					return errExit1
+					return absentExit
 				}
 				return nil
 			},
 			OutputFunc: func(c *exec.Cmd) ([]byte, error) {
+				if strings.Contains(strings.Join(c.Args, " "), "has-session") {
+					if stillPresent[nameOf(c)] {
+						return []byte(""), nil
+					}
+					return nil, absentExit
+				}
 				if len(c.Args) > 1 && c.Args[1] == "show-environment" {
 					// Both sessions carry this home's marker (#1122).
 					return []byte("AF_HOME=/owned-home\n"), nil
