@@ -98,10 +98,44 @@ func (i *Instance) GetWorktreeBranch() string {
 
 // MarkUserKilled records kill intent on the instance (#1108). Callers persist
 // the instance afterwards so the tombstone survives a daemon crash mid-kill.
+// Daemon callers reach this commit at serialized points: an explicit kill owns
+// the per-session operation lock, while failed-create retention still owns the
+// repo start lock and has not exposed the instance to another operation. Any
+// carried process-local operation therefore has no live owner and must not
+// outrank the durable tombstone or hide its retry action. A TUI retry owns its
+// OpKilling on a separate projection instance and is preserved by snapshot
+// reconciliation.
 func (i *Instance) MarkUserKilled() {
 	i.mu.Lock()
 	defer i.mu.Unlock()
+	lv, op, resetAt := i.lifecycleStateLocked()
 	i.userKilled = true
+	i.inFlightOp = OpNone
+	i.noteStateChangeLocked(lv, op, resetAt)
+}
+
+// ReconcileUserKilledSnapshot applies the durable tombstone carried by a
+// daemon snapshot to an already-materialized projection row. Tombstones are
+// monotonic: an older snapshot cannot make a killed row live again. When the
+// tombstone is first adopted, stale daemon operation markers must be cleared
+// with it. OpKilling is different: snapshot reconciliation runs on the TUI's
+// projection instance, so that marker belongs to the user's current teardown
+// request and must survive even the first tombstone snapshot.
+func (i *Instance) ReconcileUserKilledSnapshot(userKilled bool) bool {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	lv, op, resetAt := i.lifecycleStateLocked()
+	changed := false
+	if userKilled && !i.userKilled {
+		i.userKilled = true
+		if i.inFlightOp != OpKilling {
+			i.inFlightOp = OpNone
+		}
+		changed = true
+	}
+	i.noteStateChangeLocked(lv, op, resetAt)
+	return changed
 }
 
 // UserKilled reports whether an explicit kill was recorded for this instance.

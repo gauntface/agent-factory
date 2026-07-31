@@ -129,11 +129,12 @@ func TestSnapshotInFlightOpRoundTrips(t *testing.T) {
 // the two non-actionable rows that triggered the regression.
 func TestLifecycleActionIsSharedAcrossInstanceAndProjection(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		id   string
-		live Liveness
-		op   InFlightOp
-		want LifecycleAction
+		name   string
+		id     string
+		live   Liveness
+		op     InFlightOp
+		killed bool
+		want   LifecycleAction
 	}{
 		{name: "ready archives", id: "ready-id", live: LiveReady, want: LifecycleActionArchive},
 		{name: "running archives", id: "running-id", live: LiveRunning, want: LifecycleActionArchive},
@@ -142,10 +143,11 @@ func TestLifecycleActionIsSharedAcrossInstanceAndProjection(t *testing.T) {
 		{name: "archived restores", id: "archived-id", live: LiveArchived, want: LifecycleActionRestore},
 		{name: "creating has no lifecycle action", id: "pending-id", live: LiveReady, op: OpCreating, want: LifecycleActionNone},
 		{name: "replacing admits no competing lifecycle action", id: "handoff-id", live: LiveReady, op: OpReplacing, want: LifecycleActionNone},
+		{name: "tombstone admits no lifecycle action", id: "killed-id", live: LiveLost, killed: true, want: LifecycleActionNone},
 		{name: "id-less has no lifecycle action", live: LiveReady, want: LifecycleActionNone},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			inst := &Instance{ID: tc.id, liveness: tc.live, inFlightOp: tc.op}
+			inst := &Instance{ID: tc.id, liveness: tc.live, inFlightOp: tc.op, userKilled: tc.killed}
 			require.Equal(t, tc.want, inst.LifecycleAction(), "TUI domain decision")
 			require.Equal(t, tc.want, inst.ToInstanceData().LifecycleAction, "web projection decision")
 		})
@@ -211,6 +213,22 @@ func TestKillAddressabilityIsSharedAcrossInstanceAndProjection(t *testing.T) {
 			require.Equal(t, tc.want, inst.ToInstanceData().CanKill, "web projection decision")
 		})
 	}
+}
+
+// TestMarkUserKilledClearsStaleOperationAndKeepsTeardownAddressable pins the
+// daemon commit point: the per-session operation lock proves a carried handoff
+// marker has no live owner by the time kill intent becomes durable. Leaving the
+// marker would hide the only retry action on a retained unknown-state teardown.
+func TestMarkUserKilledClearsStaleOperationAndKeepsTeardownAddressable(t *testing.T) {
+	inst := &Instance{ID: "killed-handoff-id", liveness: LiveRunning, inFlightOp: OpReplacing}
+
+	inst.MarkUserKilled()
+
+	require.Equal(t, OpNone, inst.GetInFlightOp(), "durable kill intent must discard the stale handoff fence")
+	require.True(t, inst.CanKill(), "a retained tombstone must keep its explicit teardown handle")
+	data := inst.ToInstanceData()
+	require.True(t, data.UserKilled)
+	require.True(t, data.CanKill, "daemon and web projections must expose the same teardown handle")
 }
 
 func TestInFlightOpStrippedFromStorageRecords(t *testing.T) {
