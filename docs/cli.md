@@ -117,17 +117,17 @@ af tasks list [--all]
 af tasks add --name <n> --prompt <p> --cron "0 9 * * *" [--target-session <title>] [--program <agent>]
 af tasks add --name <n> --watch-cmd <cmd> [--prompt "... {{line}} ..."] [--target-session <title>]
 af tasks get <id>
-af tasks update <id> [--cron ...|--watch-cmd ...] [--prompt ...] [--target-session ...] [--program <agent>] [--enabled true|false]
+af tasks update <id> [--cron ...|--watch-cmd ...] [--prompt ...] [--target-session ...] [--project-path <repo>] [--program <agent>] [--enabled true|false]
 af tasks restart <id>          # reload an edited watch script (watch tasks only)
 af tasks trigger <id>          # run a cron task immediately (cron tasks only)
 af tasks remove <id>
 ```
 
-Exactly one of `--cron` / `--watch-cmd` per task. On `update`, setting one trigger clears the other. `--target-session ""` explicitly reverts to create-a-session-per-run; omitting the flag leaves it untouched. `--program` accepts the same agent enum as `tasks add`; omitting it keeps the task's current program.
+Exactly one of `--cron` / `--watch-cmd` per task. On `update`, setting one trigger clears the other. `--target-session ""` explicitly reverts to create-a-session-per-run; omitting the flag leaves it untouched. `--project-path` moves the task to that repository; `--repo` still names the task's current project for authorization. `--program` accepts the same agent enum as `tasks add`; omitting it keeps the task's current program.
 
 ### Project binding
 
-A task is bound to exactly one project when it is created, and every run's worktree is created inside it. The binding comes from `--repo`, or from the current directory's project. It is fixed at creation: `--repo` on `update` scopes *which* task may be edited, and never re-binds one.
+A task is bound to exactly one project when it is created, and every run's worktree is created inside it. The binding comes from `--repo`, or from the current directory's project. The two flags on `update` do different jobs: `--repo` scopes *which* task may be edited and never re-binds one, while `--project-path <repo>` moves the task to another existing git repository — that path becomes both its new working directory and its project binding. So `af tasks update <id> --repo /repos/alpha --project-path /repos/beta` authorizes the task in alpha and moves it to beta.
 
 The project a task belongs to is recorded as an id resolved when the task is bound, not re-derived from its path on each read. This is why deleting a directory a task points at — a subdirectory or a linked worktree — never hides the task from its own project.
 

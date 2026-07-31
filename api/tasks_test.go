@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/sachiniyer/agent-factory/config"
 	"github.com/sachiniyer/agent-factory/daemon"
 	"github.com/sachiniyer/agent-factory/session/tmux"
 	"github.com/sachiniyer/agent-factory/task"
@@ -139,13 +140,15 @@ func resetUpdateFlags(t *testing.T) {
 		taskUpdateWatchCmdFlag = ""
 		taskUpdateTargetSessionFlag = ""
 		taskUpdateMaxConcurrentRunsFlag = 0
+		taskUpdateProjectPathFlag = ""
 		taskUpdateEnabledFlag = ""
 		taskUpdateProgramFlag = ""
-		// --target-session and --max-concurrent-runs use Changed() semantics
-		// ("" / 0 are meaningful values), so the cobra-level Changed markers
-		// must reset too.
+		// --target-session, --max-concurrent-runs, and --project-path use
+		// Changed() semantics (zero values are either meaningful or invalid), so
+		// the cobra-level Changed markers must reset too.
 		tasksUpdateCmd.Flags().Lookup("target-session").Changed = false
 		tasksUpdateCmd.Flags().Lookup("max-concurrent-runs").Changed = false
+		tasksUpdateCmd.Flags().Lookup("project-path").Changed = false
 	}
 	t.Cleanup(reset)
 	reset()
@@ -210,11 +213,20 @@ func seedTask(t *testing.T, tsk task.Task) {
 func setupAddRepo(t *testing.T) string {
 	t.Helper()
 	repo := filepath.Join(t.TempDir(), "repo")
+	real := initRepoAt(t, repo)
+	repoFlag = repo
+	return real
+}
+
+// initRepoAt creates a git repository at an exact path — including one whose
+// directory name carries leading or trailing whitespace — and returns its
+// symlink-resolved location.
+func initRepoAt(t *testing.T, repo string) string {
+	t.Helper()
 	require.NoError(t, exec.Command("git", "init", repo).Run(), "git init")
 	require.NoError(t, exec.Command("git", "-C", repo, "config", "user.email", "test@example.com").Run())
 	require.NoError(t, exec.Command("git", "-C", repo, "config", "user.name", "Test User").Run())
 	require.NoError(t, exec.Command("git", "-C", repo, "commit", "--allow-empty", "-m", "init").Run())
-	repoFlag = repo
 	real, err := filepath.EvalSymlinks(repo)
 	require.NoError(t, err)
 	return real
@@ -944,6 +956,139 @@ func TestTasksUpdate_OmittingProgramLeavesUnchanged(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "renamed", got.Name)
 	assert.Equal(t, "aider", got.Program, "absent --program must not change the program")
+}
+
+// TestTasksUpdate_ProjectPathChange closes the CLI half of the project-rebind
+// parity gap. --repo authorizes the task in its old project while
+// --project-path becomes the existing TaskUpdate.ProjectPath patch that the TUI
+// and web already send. A subdirectory stays the working directory, while the
+// shared task writer derives its stable RepoID from the repository root.
+func TestTasksUpdate_ProjectPathChange(t *testing.T) {
+	useTempConfig(t)
+	resetUpdateFlags(t)
+	calls := stubDaemon(t)
+	previousRepoFlag := repoFlag
+	t.Cleanup(func() { repoFlag = previousRepoFlag })
+
+	oldProject := setupAddRepo(t)
+	newProject := setupAddRepo(t)
+	newWorkingDir := filepath.Join(newProject, "automation")
+	require.NoError(t, os.Mkdir(newWorkingDir, 0o755))
+	repoFlag = oldProject
+	seedTask(t, task.Task{
+		ID: "move0001", Name: "watcher", WatchCmd: "tail -f events.log",
+		ProjectPath: oldProject, Enabled: true,
+	})
+
+	require.NoError(t, tasksUpdateCmd.Flags().Set("project-path", newWorkingDir))
+	require.NoError(t, tasksUpdateCmd.RunE(tasksUpdateCmd, []string{"move0001"}))
+
+	got, err := task.GetTask("move0001")
+	require.NoError(t, err)
+	assert.Equal(t, newWorkingDir, got.ProjectPath)
+	assert.Equal(t, config.RepoIDFromRoot(newProject), got.RepoID)
+	require.NotNil(t, calls.lastUpdate.ProjectPath)
+	assert.Equal(t, newWorkingDir, *calls.lastUpdate.ProjectPath)
+	assert.True(t, calls.lastExpect.Enforce)
+	assert.Equal(t, oldProject, calls.lastExpect.ProjectPath,
+		"--repo must keep authorizing the pre-move binding")
+	assert.Equal(t, 1, calls.writes)
+}
+
+func TestTasksUpdate_ProjectPathRejectsNonRepository(t *testing.T) {
+	useTempConfig(t)
+	resetUpdateFlags(t)
+	calls := stubDaemon(t)
+	previousRepoFlag := repoFlag
+	t.Cleanup(func() { repoFlag = previousRepoFlag })
+
+	oldProject := setupAddRepo(t)
+	seedTask(t, task.Task{
+		ID: "move0002", Name: "watcher", WatchCmd: "tail -f events.log",
+		ProjectPath: oldProject, Enabled: true,
+	})
+
+	notRepo := t.TempDir()
+	require.NoError(t, tasksUpdateCmd.Flags().Set("project-path", notRepo))
+	err := tasksUpdateCmd.RunE(tasksUpdateCmd, []string{"move0002"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not a valid git repository")
+	assert.Zero(t, calls.writes, "an invalid destination must not reach the daemon")
+
+	got, getErr := task.GetTask("move0002")
+	require.NoError(t, getErr)
+	assert.Equal(t, oldProject, got.ProjectPath)
+}
+
+// TestTasksUpdate_ProjectPathPreservesWhitespace pins that --project-path is
+// resolved exactly as typed. A directory name may legitimately begin or end
+// with a space, and the shell makes the user quote one to get it this far, so
+// the whitespace is intent. Trimming before resolution would make such a
+// repository unreachable — and when the trimmed spelling names a different
+// repository, as it does here, it would silently move the task to the wrong
+// project rather than failing loudly.
+func TestTasksUpdate_ProjectPathPreservesWhitespace(t *testing.T) {
+	useTempConfig(t)
+	resetUpdateFlags(t)
+	calls := stubDaemon(t)
+	previousRepoFlag := repoFlag
+	t.Cleanup(func() { repoFlag = previousRepoFlag })
+
+	oldProject := setupAddRepo(t)
+
+	// Sibling repositories whose names differ only by a trailing space, so the
+	// trimmed spelling resolves to a real — but wrong — destination.
+	parent := t.TempDir()
+	trimmedTwin := initRepoAt(t, filepath.Join(parent, "repo"))
+	spacedRepo := initRepoAt(t, filepath.Join(parent, "repo "))
+	require.NotEqual(t, trimmedTwin, spacedRepo, "the two spellings must be distinct repositories")
+
+	repoFlag = oldProject
+	seedTask(t, task.Task{
+		ID: "move0003", Name: "watcher", WatchCmd: "tail -f events.log",
+		ProjectPath: oldProject, Enabled: true,
+	})
+
+	require.NoError(t, tasksUpdateCmd.Flags().Set("project-path", spacedRepo))
+	require.NoError(t, tasksUpdateCmd.RunE(tasksUpdateCmd, []string{"move0003"}))
+
+	got, err := task.GetTask("move0003")
+	require.NoError(t, err)
+	assert.Equal(t, spacedRepo, got.ProjectPath,
+		"the trailing space is part of the directory name, not padding to strip")
+	assert.NotEqual(t, trimmedTwin, got.ProjectPath,
+		"trimming would have silently rebound the task to the sibling repository")
+	require.NotNil(t, calls.lastUpdate.ProjectPath)
+	assert.Equal(t, spacedRepo, *calls.lastUpdate.ProjectPath)
+}
+
+// TestTasksUpdate_ProjectPathRejectsAllWhitespace pins the other half: trimming
+// still decides whether the flag carries a value at all, so a value that is
+// nothing but whitespace is refused instead of being resolved into a cwd-
+// relative directory named " ".
+func TestTasksUpdate_ProjectPathRejectsAllWhitespace(t *testing.T) {
+	useTempConfig(t)
+	resetUpdateFlags(t)
+	calls := stubDaemon(t)
+	previousRepoFlag := repoFlag
+	t.Cleanup(func() { repoFlag = previousRepoFlag })
+
+	oldProject := setupAddRepo(t)
+	repoFlag = oldProject
+	seedTask(t, task.Task{
+		ID: "move0004", Name: "watcher", WatchCmd: "tail -f events.log",
+		ProjectPath: oldProject, Enabled: true,
+	})
+
+	require.NoError(t, tasksUpdateCmd.Flags().Set("project-path", "   "))
+	err := tasksUpdateCmd.RunE(tasksUpdateCmd, []string{"move0004"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be non-empty")
+	assert.Zero(t, calls.writes, "an empty destination must not reach the daemon")
+
+	got, getErr := task.GetTask("move0004")
+	require.NoError(t, getErr)
+	assert.Equal(t, oldProject, got.ProjectPath)
 }
 
 // --- Read path: list/get non-spawn + disk fallback (#1029 PR 3) ---
