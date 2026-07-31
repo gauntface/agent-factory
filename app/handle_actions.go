@@ -167,7 +167,7 @@ func (m *home) handleKill() (tea.Model, tea.Cmd) {
 	// informative "already being deleted" message into the silent no-op below.
 	// The gate hides the keybind; this still answers a key pressed anyway.
 	if selected.IsTearingDown() {
-		return m, m.handleError(fmt.Errorf("session '%s' is already being deleted", selected.Title))
+		return m, m.handleNotice(fmt.Errorf("session '%s' is already being deleted", selected.Title))
 	}
 	if !selected.CanKill() {
 		return m, nil
@@ -341,7 +341,7 @@ func (m *home) handleArchive() (tea.Model, tea.Cmd) {
 	// reports LifecycleAction()==None (#2500), so gating first would fold this
 	// informative message into the silent no-op below.
 	if selected.IsTearingDown() {
-		return m, m.handleError(fmt.Errorf("session '%s' is being deleted", selected.Title))
+		return m, m.handleNotice(fmt.Errorf("session '%s' is being deleted", selected.Title))
 	}
 	lifecycleAction := selected.LifecycleAction()
 	if lifecycleAction == session.LifecycleActionNone {
@@ -359,10 +359,10 @@ func (m *home) handleArchive() (tea.Model, tea.Cmd) {
 	// Live row → archive. Fail fast on the unarchivable session kinds for a
 	// snappy message (the daemon rejects them too).
 	if !selected.Capabilities().Archive {
-		return m, m.handleError(fmt.Errorf("cannot archive remote session '%s': it has no local worktree to relocate", title))
+		return m, m.handleNotice(fmt.Errorf("cannot archive remote session '%s': it has no local worktree to relocate", title))
 	}
 	if selected.IsExternalWorktree() {
-		return m, m.handleError(fmt.Errorf("cannot archive in-place session '%s': archive relocates the worktree, which it doesn't own", title))
+		return m, m.handleNotice(fmt.Errorf("cannot archive in-place session '%s': archive relocates the worktree, which it doesn't own", title))
 	}
 
 	message := fmt.Sprintf("[!] Archive session '%s'?\n\nIts tmux is torn down and its worktree is moved out to the archive directory (branch + uncommitted changes preserved). Restore later with %s.", title, restoreKeyHint())
@@ -400,7 +400,7 @@ func (m *home) handleRestore() (tea.Model, tea.Cmd) {
 	// reports LifecycleAction()==None (#2500), so gating first would fold this
 	// informative message into the silent no-op below.
 	if selected.IsTearingDown() {
-		return m, m.handleError(fmt.Errorf("session '%s' is being deleted", selected.Title))
+		return m, m.handleNotice(fmt.Errorf("session '%s' is being deleted", selected.Title))
 	}
 	lifecycleAction := selected.LifecycleAction()
 	if lifecycleAction == session.LifecycleActionNone {
@@ -415,7 +415,7 @@ func (m *home) handleRestore() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if selected.GetInFlightOp() == session.OpRestoring {
-		return m, m.handleError(fmt.Errorf("session '%s' is already being restored", title))
+		return m, m.handleNotice(fmt.Errorf("session '%s' is already being restored", title))
 	}
 	_ = selected.Transition(session.MarkRestoring())
 	return m, m.restoreInstanceCmd(target)
@@ -566,10 +566,10 @@ func (m *home) handleLimitRetry() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if selected.IsTearingDown() {
-		return m, m.handleError(fmt.Errorf("session '%s' is being deleted", selected.Title))
+		return m, m.handleNotice(fmt.Errorf("session '%s' is being deleted", selected.Title))
 	}
 	if !selected.LimitReached() {
-		return m, m.handleError(fmt.Errorf("session '%s' is not blocked on a usage limit", selected.Title))
+		return m, m.handleNotice(fmt.Errorf("session '%s' is not blocked on a usage limit", selected.Title))
 	}
 	target := captureSessionActionTarget(selected, m.repoID)
 	return m, m.resumeFromLimitCmd(target)
@@ -728,10 +728,10 @@ func (m *home) handleEnter() (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	if err := interactiveGuard(selected); err != nil {
-		return m, m.handleError(err)
+		return m, m.handleGuardResult(err)
 	}
 	if err := webTabAttachGuard(selected, m.store.ActiveTab()); err != nil {
-		return m, m.handleError(err)
+		return m, m.handleNotice(err)
 	}
 	if liveSessionName(selected, m.store.ActiveTab()) == "" {
 		// Not embeddable (remote): the old full-screen attach flow.
@@ -801,9 +801,43 @@ func interactiveGuard(inst *session.Instance) error {
 		return fmt.Errorf("session '%s' is archived — press %s to restore", inst.Title, restoreKeyHint())
 	}
 	if !inst.TmuxAlive() {
-		return fmt.Errorf("session '%s' is no longer running", inst.Title)
+		// Not a designed refusal, unlike every fence above. Those all describe a
+		// state the projection already knows about and offer an off-ramp; this one
+		// fires when a row still projects as RUNNING and the fresh probe disagrees
+		// — the session vanished with no kill on record, or (TmuxAlive collapses
+		// IsAlive's tri-state) tmux could not be asked at all. This guard is the
+		// component that DISCOVERS that, so it must reach ERROR monitoring rather
+		// than be filed as ordinary user feedback.
+		return livenessDiscovery{cause: fmt.Errorf("session '%s' is no longer running", inst.Title)}
 	}
 	return nil
+}
+
+// errSessionLivenessUnexpected marks the one interactiveGuard result that is a
+// discovered failure rather than a designed fence, so callers can route it by
+// KIND instead of re-deriving the distinction at each site.
+var errSessionLivenessUnexpected = errors.New("session liveness contradicted the projection")
+
+// livenessDiscovery carries that mark WITHOUT putting it in front of the user.
+// A plain `fmt.Errorf("%w: …", sentinel, …)` would prepend the sentinel's text
+// to the transient status line and the log, so the operator would read an
+// internal classification phrase instead of the specific, actionable sentence
+// the guard composed. Error() delegates to the cause; only errors.Is sees the
+// marker, via the multi-error Unwrap.
+type livenessDiscovery struct{ cause error }
+
+func (e livenessDiscovery) Error() string   { return e.cause.Error() }
+func (e livenessDiscovery) Unwrap() []error { return []error{e.cause, errSessionLivenessUnexpected} }
+
+// handleGuardResult routes an interactiveGuard/webTabAttachGuard error to the
+// severity its KIND deserves: a fence the user ran into is a notice, a liveness
+// contradiction the guard just discovered is an error. Every guard call site
+// goes through here so the two can never drift apart per site (#2575).
+func (m *home) handleGuardResult(err error) tea.Cmd {
+	if errors.Is(err, errSessionLivenessUnexpected) {
+		return m.handleError(err)
+	}
+	return m.handleNotice(err)
 }
 
 // handleAttach is the full-screen attach verb (`o`; the pre-#1089-PR-2
@@ -831,10 +865,10 @@ func (m *home) handleAttach() (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	if err := interactiveGuard(selected); err != nil {
-		return m, m.handleError(err)
+		return m, m.handleGuardResult(err)
 	}
 	if err := webTabAttachGuard(selected, m.store.ActiveTab()); err != nil {
-		return m, m.handleError(err)
+		return m, m.handleNotice(err)
 	}
 	return m.attachSelected(selected)
 }
@@ -925,7 +959,7 @@ func (m *home) handleOpenPR() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if selected.GetPRInfo() == nil {
-		return m, m.handleError(noPRForSessionErr)
+		return m, m.handleNotice(noPRForSessionErr)
 	}
 	url := selected.GetPRInfo().URL
 	var openCmd *exec.Cmd
@@ -952,7 +986,7 @@ func (m *home) handleCopyPR() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if selected.GetPRInfo() == nil {
-		return m, m.handleError(noPRForSessionErr)
+		return m, m.handleNotice(noPRForSessionErr)
 	}
 	url := selected.GetPRInfo().URL
 	if err := copyToClipboard(url); err != nil {

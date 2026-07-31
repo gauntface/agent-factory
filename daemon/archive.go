@@ -197,8 +197,17 @@ func (m *Manager) ArchiveSession(req ArchiveSessionRequest) (string, session.Ins
 		// Roll the fence back to Lost — started is still true and the agent tmux
 		// binding was kept — so the Lost-restore loop re-spawns the agent in place.
 		// Persist the recovery-eligible state, then surface the failure.
+		//
+		// The error-returning persist, for the same reason as the restore path
+		// below: since the relocate became bounded, this branch is reachable with
+		// the worktree already moved to dest and only the in-memory object knowing
+		// it. A logged-and-swallowed write failure would leave the record pointing
+		// at the pre-archive path, so a restart would send the Lost-restore loop to
+		// rebuild a worktree whose bytes are sitting in the archive directory.
 		_ = instance.Transition(session.AbortArchiveToLost())
-		m.persistInstance(repoID, instance)
+		if perr := m.persistInstanceErr(repoID, instance); perr != nil {
+			return "", session.InstanceData{}, fmt.Errorf("failed to archive session %q AND could not record its recovered state on disk (%v); its worktree is at %s — check that path before restarting the daemon: %w", req.Title, perr, instance.GetWorktreePath(), err)
+		}
 		return "", session.InstanceData{}, fmt.Errorf("failed to archive session %q (its agent will be restored in place): %w", req.Title, err)
 	}
 
@@ -454,6 +463,28 @@ func (m *Manager) restoreArchivedInstance(instance *session.Instance, repoID, ti
 	if err := instance.RestoreArchivedWorktree(dest); err != nil {
 		if errors.Is(err, sessiongit.ErrRepoGone) {
 			return "", fmt.Errorf("cannot restore session %q: its origin repo is gone; the archived worktree is intact at %s — recover it manually with git: %w", req.Title, instance.GetWorktreePath(), err)
+		}
+		if errors.Is(err, sessiongit.ErrRelocateStateUnknown) {
+			// The relocate was cut off by its deadline AFTER the bytes reached
+			// dest: the git layer commits the new location to the worktree object
+			// before repairing, precisely because the registration can be stale
+			// while the location is not. That new location only exists in memory,
+			// and this failure path returns without persisting — so a daemon
+			// restart would reload the session as Archived pointing at an archive
+			// path that is no longer there, and every later restore would fail the
+			// source-exists guard while the user's work sat at dest.
+			//
+			// Persist first, then report — and take the error-returning persist,
+			// not the log-and-continue one. The whole point of this branch is that
+			// the location must survive a restart, so a write that did NOT happen
+			// (full or read-only disk) reproduces the exact stranding it exists to
+			// prevent. Reporting the relocate error alone would tell the operator
+			// their worktree is safely recorded when nothing recorded it.
+			restoredPath := instance.GetWorktreePath()
+			if perr := m.persistInstanceErr(repoID, instance); perr != nil {
+				return "", fmt.Errorf("restore of %q was cut off mid-relocate AND its new location %s could not be written to disk (%v); the worktree is there but nothing durable points at it — move it back or re-register it manually before restarting the daemon: %w", req.Title, restoredPath, perr, err)
+			}
+			return "", fmt.Errorf("restore of %q was cut off mid-relocate; its worktree is recorded at %s so it is not lost, but its git registration is unverified — check that path and retry: %w", req.Title, restoredPath, err)
 		}
 		return "", fmt.Errorf("failed to restore worktree for %q: %w", req.Title, err)
 	}

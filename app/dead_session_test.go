@@ -302,3 +302,61 @@ func TestInteractiveActionsBlockLiveUserKilledSession(t *testing.T) {
 		})
 	}
 }
+
+// TestInteractiveGuardSeverity separates the two kinds of "no" the Enter guard
+// can produce. Every fence above the liveness probe describes a state the
+// projection already knows and offers an off-ramp — user feedback, INFO. The
+// last branch does not: it fires when a row still projects as RUNNING and the
+// fresh probe disagrees, i.e. the session vanished with no kill on record (or
+// TmuxAlive could not ask at all). This guard is the component that DISCOVERS
+// that, so #2575's severity sweep must not file it as ordinary feedback.
+func TestInteractiveGuardSeverity(t *testing.T) {
+	t.Run("designed fence is a notice", func(t *testing.T) {
+		h := newTestHome(t)
+		info, errorLogs := captureHomeMessageLogs(t)
+
+		// A restore already in flight: a state the projection knows about, which
+		// the user simply has to wait out. (Archived is not usable here — Enter on
+		// a resting row RESTORES it rather than hitting the fence, #2489.)
+		inst := newDeadInstance(t, "coming-back", session.Ready)
+		inst.SetInFlightOpForTest(session.OpRestoring)
+		h.store.AddInstance(inst)
+		h.sidebar.SetSelectedInstance(0)
+
+		_, _ = h.handleEnter()
+
+		require.Contains(t, info.String(), "is being restored",
+			"a fence the user ran into is feedback")
+		require.Empty(t, errorLogs.String(),
+			"a designed refusal must not be indistinguishable from an operation failure")
+	})
+
+	t.Run("liveness contradiction is an error", func(t *testing.T) {
+		h := newTestHome(t)
+		h.errBox.SetSize(200, 1)
+		info, errorLogs := captureHomeMessageLogs(t)
+
+		// Ready is the deceptive projection: the sidebar still paints it green.
+		inst := newDeadInstance(t, "vanished", session.Ready)
+		h.store.AddInstance(inst)
+		h.sidebar.SetSelectedInstance(0)
+
+		_, _ = h.handleEnter()
+
+		require.Contains(t, errorLogs.String(), "is no longer running",
+			"a session that vanished while projecting as running is a discovered failure")
+		require.NotContains(t, info.String(), "is no longer running",
+			"the discovery must not be downgraded to a notice")
+
+		// Classifying it must stay invisible: the marker exists for errors.Is,
+		// not for the reader. A %w-prepended sentinel would push an internal
+		// phrase to the front of both the status line and the log, displacing
+		// the specific sentence the guard composed.
+		require.NotContains(t, errorLogs.String(), "contradicted the projection",
+			"the internal classification must not leak into the operator's log line")
+		require.NotContains(t, h.errBox.FullError(), "contradicted the projection",
+			"nor into the status surface the user reads")
+		require.Contains(t, h.errBox.FullError(), "'vanished' is no longer running",
+			"the user still gets the specific message")
+	})
+}

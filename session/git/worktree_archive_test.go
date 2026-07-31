@@ -152,10 +152,24 @@ func TestMoveWorktree_FallbackRepairsRegistration(t *testing.T) {
 	}
 	t.Cleanup(func() { worktreeMoveFast = prev })
 
+	var info, warnings bytes.Buffer
+	previousInfo := aflog.InfoLog
+	previousWarning := aflog.WarningLog
+	aflog.InfoLog = stdlog.New(&info, "INFO: ", 0)
+	aflog.WarningLog = stdlog.New(&warnings, "WARNING: ", 0)
+	t.Cleanup(func() {
+		aflog.InfoLog = previousInfo
+		aflog.WarningLog = previousWarning
+	})
+
 	gw, _, srcPath := archiveTestWorktree(t)
 	dest := filepath.Join(testguard.CanonicalTempDir(t), "archived", "repoid", "arch")
 
 	require.NoError(t, gw.MoveWorktree(dest))
+	require.Contains(t, info.String(), "using manual move + repair",
+		"the fast-path limitation remains visible as the reason for choosing the fallback")
+	require.Empty(t, warnings.String(),
+		"a successful designed fallback must not look like a failed archive")
 
 	assert.False(t, pathExists(srcPath), "the source directory must be gone after the fallback move")
 	assertLiveWorktreeAt(t, gw, dest)
@@ -437,12 +451,6 @@ func TestMoveWorktree_CleanupErrorRechecksQuarantineIdentity(t *testing.T) {
 // `git worktree repair` fixed the superproject but left deps/sub/.git pointing
 // at the old relative path, so the archived worktree was not a valid git repo.
 func TestRestoreWorktreeTo_FallbackRepairsSubmoduleGitdirs(t *testing.T) {
-	prev := worktreeMoveFast
-	worktreeMoveFast = func(*GitWorktree, string, string) error {
-		return errors.New("forced fast-path failure")
-	}
-	t.Cleanup(func() { worktreeMoveFast = prev })
-
 	gw, _, srcPath := archiveTestWorktreeWithSubmodule(t)
 	archiveDest := filepath.Join(testguard.CanonicalTempDir(t), "archived", "repoid", "arch")
 	require.NoError(t, gw.MoveWorktree(archiveDest))
