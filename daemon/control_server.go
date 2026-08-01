@@ -16,6 +16,7 @@ import (
 	"github.com/sachiniyer/agent-factory/agentproto"
 	"github.com/sachiniyer/agent-factory/apiproto"
 	"github.com/sachiniyer/agent-factory/config"
+	"github.com/sachiniyer/agent-factory/log"
 	"github.com/sachiniyer/agent-factory/session"
 	"github.com/sachiniyer/agent-factory/task"
 )
@@ -156,16 +157,22 @@ func (s *controlServer) reloadTaskSchedulesLocked() error {
 	if s.manager != nil && !s.manager.Ready() {
 		return nil
 	}
+	if s.manager != nil {
+		refused, err := reloadTaskAutomation(s.manager, s.scheduler, s.watchers)
+		if err != nil {
+			return err
+		}
+		for _, refusal := range refused {
+			log.WarningLog.Printf("task automation reload: %v", refusal)
+		}
+		return nil
+	}
 	if err := s.scheduler.Reload(); err != nil {
 		return err
 	}
-	// Watch tasks live in the watcher supervisor; one reload poke re-arms
-	// both trigger types (#782 phase 2). Nil only in tests that exercise the
-	// scheduler alone.
+	// Nil only in tests that exercise the scheduler alone.
 	if s.watchers != nil {
-		if err := s.watchers.Reload(); err != nil {
-			return err
-		}
+		return s.watchers.Reload()
 	}
 	return nil
 }
@@ -304,14 +311,37 @@ func (s *controlServer) AddTask(req AddTaskRequest, resp *AddTaskResponse) error
 		return err
 	}
 	defer unlock()
-	if err := task.AddTask(req.Task); err != nil {
+	var validate func(task.Task) error
+	targetLocked := false
+	if s.manager != nil {
+		s.manager.taskTargetMu.Lock()
+		targetLocked = true
+		defer func() {
+			if targetLocked {
+				s.manager.taskTargetMu.Unlock()
+			}
+		}()
+		repoID := taskRepoIDForValidation(req.Task.ProjectPath)
+		validation := s.manager.prepareTaskTargetValidation(
+			repoID, req.Task.TargetSession, req.Task.Enabled,
+		)
+		validate = func(candidate task.Task) error {
+			return s.manager.validateEnabledTaskTarget(candidate, validation)
+		}
+	}
+	created, err := task.AddTaskChecked(req.Task, validate)
+	if targetLocked {
+		s.manager.taskTargetMu.Unlock()
+		targetLocked = false
+	}
+	if err != nil {
 		return err
 	}
 	resp.OK = true
 	// The task-file write is the durable commit. Publish it before the
 	// non-transactional scheduler/watch reload so other clients never remain
 	// stale when that follow-up fails.
-	s.manager.publishEvent(agentproto.EventTaskCreated, req.Task)
+	s.manager.publishEvent(agentproto.EventTaskCreated, created)
 	if reloadErr := s.reloadTaskSchedulesLocked(); reloadErr != nil {
 		return &mutationCommittedError{err: fmt.Errorf(
 			"%s %w", taskAddCommittedErrorPrefix, reloadErr)}
@@ -328,7 +358,67 @@ func (s *controlServer) UpdateTask(req UpdateTaskRequest, resp *UpdateTaskRespon
 		return err
 	}
 	defer unlock()
-	merged, err := task.UpdateTask(req.ID, req.Update, req.Expect)
+	var validate func(task.Task) (string, error)
+	targetLocked := false
+	if s.manager != nil {
+		s.manager.taskTargetMu.Lock()
+		targetLocked = true
+		defer func() {
+			if targetLocked {
+				s.manager.taskTargetMu.Unlock()
+			}
+		}()
+		// Legacy rows have no retained RepoID. Resolve the current authoritative
+		// ProjectPath before UpdateTaskChecked takes the tasks-file lock (git must
+		// never run under that lock), then lend that identity to validation. The
+		// task-control lock makes this stable against every supported writer; the
+		// path equality check fails closed if an out-of-band edit races us.
+		existing, getErr := task.GetTask(req.ID)
+		if getErr != nil {
+			return getErr
+		}
+		legacyPath := ""
+		legacyRepoID := ""
+		if existing.RepoID == "" && req.Update.ProjectPath == nil {
+			legacyPath = existing.ProjectPath
+			legacyRepoID = taskRepoIDForValidation(legacyPath)
+		}
+		validationRepoID := existing.RepoID
+		if req.Update.ProjectPath != nil {
+			validationRepoID = taskRepoIDForValidation(*req.Update.ProjectPath)
+		} else if validationRepoID == "" {
+			validationRepoID = legacyRepoID
+		}
+		validationTarget := existing.TargetSession
+		if req.Update.TargetSession != nil {
+			validationTarget = *req.Update.TargetSession
+		}
+		validationEnabled := existing.Enabled
+		if req.Update.Enabled != nil {
+			validationEnabled = *req.Update.Enabled
+		}
+		validation := s.manager.prepareTaskTargetValidation(
+			validationRepoID, validationTarget, validationEnabled,
+		)
+		validateTargetRelationship := req.Update.Enabled != nil ||
+			req.Update.TargetSession != nil || req.Update.ProjectPath != nil
+		validate = func(candidate task.Task) (string, error) {
+			if candidate.RepoID == "" && candidate.ProjectPath == legacyPath {
+				candidate.RepoID = legacyRepoID
+			}
+			if validateTargetRelationship {
+				if err := s.manager.validateEnabledTaskTarget(candidate, validation); err != nil {
+					return "", err
+				}
+			}
+			return candidate.RepoID, nil
+		}
+	}
+	merged, err := task.UpdateTaskChecked(req.ID, req.Update, req.Expect, validate)
+	if targetLocked {
+		s.manager.taskTargetMu.Unlock()
+		targetLocked = false
+	}
 	if err != nil {
 		return err
 	}
@@ -367,37 +457,6 @@ func (s *controlServer) RemoveTask(req RemoveTaskRequest, resp *RemoveTaskRespon
 		return &mutationCommittedError{err: fmt.Errorf(
 			"%s %w", taskRemoveCommittedErrorPrefix, reloadErr)}
 	}
-	return nil
-}
-
-// RestartTask synchronously replaces one enabled watch command. The task-control
-// lock makes the scope re-check, stop/join, and replacement one operation with
-// respect to Add/Update/Remove/ReloadTasks, so a concurrent rebind cannot turn a
-// project-scoped restart into a different project's process.
-func (s *controlServer) RestartTask(req RestartTaskRequest, resp *RestartTaskResponse) error {
-	if err := s.requireStateMutationAdmission(); err != nil {
-		return err
-	}
-	if s.watchers == nil {
-		return fmt.Errorf("this daemon does not host a watch task supervisor")
-	}
-	unlock, err := s.lockTaskControl()
-	if err != nil {
-		return err
-	}
-	defer unlock()
-
-	tsk, err := task.GetTask(req.ID)
-	if err != nil {
-		return err
-	}
-	if err := req.Expect.Verify(*tsk); err != nil {
-		return err
-	}
-	if err := s.watchers.restart(*tsk); err != nil {
-		return err
-	}
-	resp.OK = true
 	return nil
 }
 

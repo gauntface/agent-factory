@@ -76,9 +76,17 @@ type Manager struct {
 	// later barrier where scheduler, watcher, and status work may run.
 	lifecycle *daemonLifecycle
 
-	mu        sync.Mutex
-	storage   *session.Storage
-	instances map[string]*session.Instance
+	mu sync.Mutex
+	// taskTargetMu makes the enabled-task snapshot and a session archive one
+	// transaction with respect to AddTask/UpdateTask. Archive/DeleteProject hold
+	// it through their lifecycle mutation; task writers hold it through validation
+	// and commit. A writer that wins is visible to archive, while an archive that
+	// wins leaves an OpArchiving/Archived fence the writer must reject (#2646).
+	// Scheduler-owned status writes do not change Enabled, TargetSession, or repo
+	// membership and therefore do not participate.
+	taskTargetMu sync.Mutex
+	storage      *session.Storage
+	instances    map[string]*session.Instance
 	// pendingCreates is the daemon-owned projection of creates that have passed
 	// admission but have not finished provisioning. It is intentionally separate
 	// from instances: a docker/ssh/hook backend may block inside NewInstance before
@@ -86,6 +94,12 @@ type Manager struct {
 	// mutation lookups do not, so a half-built runtime cannot be acted on.
 	pendingCreates map[string]session.InstanceData
 	reservedTitles map[string]struct{}
+	// projectDeletes is a short-lived admission fence keyed by repo ID. A delete
+	// installs it under m.mu in the same decision that proves no create is already
+	// reserved or pending; reserveCreate checks it under that lock before any title
+	// reuse or reservation mutation. This closes the preflight-to-first-mutation
+	// gap without holding m.mu across config, task, or archive I/O.
+	projectDeletes map[string]struct{}
 	// reservedTmuxNames closes the second namespace a local create claims. Titles
 	// such as "a/b" and "a_b" can derive distinct git branches but the same
 	// positive-policy tmux name; reserving only the raw title leaves that collision
@@ -184,12 +198,18 @@ type Manager struct {
 	// effect on the next daemon start" contract — a re-added project's root
 	// materializes on restart, not mid-run). Guarded by m.mu.
 	deletedRootRepos map[string]struct{}
-	// killsInFlight marks sessions (by daemon instance key) whose KillSession
-	// teardown is currently running, so the status poll's finish-kill pass for
-	// tombstoned records (#1108) never runs a second concurrent teardown of
-	// the same session, and a duplicate KillSession RPC is rejected instead of
-	// double-killing.
+	// killsInFlight marks sessions (by daemon instance key) with an exclusive
+	// lifecycle operation in progress (kill/archive/restore). The status poll's
+	// finish-kill pass for tombstoned records (#1108) therefore never runs a
+	// second concurrent teardown, duplicate operations are rejected, and project
+	// deletion can see a restore claim before the row changes lifecycle state.
 	killsInFlight map[string]struct{}
+	// restoresInFlight identifies the subset of killsInFlight entries admitted
+	// by a manual restore. DeleteProject treats these as early blockers because
+	// an archived row has not necessarily changed lifecycle state yet. Keeping
+	// the subset explicit preserves the existing partial-failure behavior for
+	// ordinary kill/archive operations already in progress.
+	restoresInFlight map[string]struct{}
 	// lostRestoreStates tracks per-session retry state for the Lost-session
 	// restore loop (#1108 PR 2), keyed by daemon instance key — the general
 	// sibling of rootEnsureStates.
@@ -340,6 +360,7 @@ func newManagerShellForDaemon(cfg *config.Config, transactionID string) (*Manage
 		instances:              make(map[string]*session.Instance),
 		pendingCreates:         make(map[string]session.InstanceData),
 		reservedTitles:         make(map[string]struct{}),
+		projectDeletes:         make(map[string]struct{}),
 		reservedTmuxNames:      make(map[string]string),
 		reservedRemoteNames:    make(map[string]struct{}),
 		reservedTaskRuns:       make(map[string]int),
@@ -355,6 +376,7 @@ func newManagerShellForDaemon(cfg *config.Config, transactionID string) (*Manage
 		rootKilledAt:           make(map[string]time.Time),
 		deletedRootRepos:       make(map[string]struct{}),
 		killsInFlight:          make(map[string]struct{}),
+		restoresInFlight:       make(map[string]struct{}),
 		lostRestoreStates:      make(map[string]*lostRestoreState),
 		limitResumeStates:      make(map[string]*limitResumeState),
 		handoffRetryDue:        make(map[string]time.Time),

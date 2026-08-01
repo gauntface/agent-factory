@@ -307,29 +307,41 @@ func saveTasks(tasks []Task) error {
 }
 
 func AddTask(t Task) error {
+	_, err := AddTaskChecked(t, nil)
+	return err
+}
+
+// AddTaskChecked is AddTask with a final pre-commit validator. The validator
+// runs after RepoID derivation and trigger validation, under the tasks-file
+// lock, so an error guarantees that no task was appended. It must not shell out
+// or recursively access the task store. The daemon uses this to make target-
+// session lifecycle validation atomic with archive fencing (#2646). On success
+// it returns the canonical record that was appended, including derived fields
+// such as RepoID, so callers do not publish a stale request projection.
+func AddTaskChecked(t Task, validate func(Task) error) (Task, error) {
 	if err := ValidateTaskID(t.ID); err != nil {
-		return err
+		return Task{}, err
 	}
 	// Canonicalize before validating so validation judges exactly what will be
 	// stored — a whitespace-only target session must not validate as "no target
 	// session" and then behave as one at delivery time (#1892).
 	t.canonicalizeTargetSession()
 	if err := t.ValidateTrigger(); err != nil {
-		return err
+		return Task{}, err
 	}
 	// Empty Program means "fall back to the configured default_program at
 	// run time"; only validate when an explicit per-task override was set.
 	if t.Program != "" {
 		if err := config.ValidateProgramEnum("task program", "task program", t.Program, ""); err != nil {
-			return err
+			return Task{}, err
 		}
 	}
 	path, err := getTasksPathFn()
 	if err != nil {
-		return err
+		return Task{}, err
 	}
 	if err := ensureTasksSchemaMigrated(path); err != nil {
-		return err
+		return Task{}, err
 	}
 	// Resolve the owning project's ID now, while ProjectPath is known to
 	// resolve, and retain it — see Task.RepoID. Outside the lock: this shells
@@ -337,14 +349,23 @@ func AddTask(t Task) error {
 	// failing the add, so callers that bind a task to a not-yet-existing path
 	// keep working; scope matching falls back to resolving the path for those.
 	t.RepoID = repoIDForPath(t.ProjectPath)
-	return config.WithFileLock(path, func() error {
+	lockErr := config.WithFileLock(path, func() error {
 		tasks, err := loadTasksLocked(path)
 		if err != nil {
 			return err
 		}
+		if validate != nil {
+			if err := validate(t); err != nil {
+				return err
+			}
+		}
 		tasks = append(tasks, t)
 		return saveTasks(tasks)
 	})
+	if lockErr != nil {
+		return Task{}, lockErr
+	}
+	return t, nil
 }
 
 // repoIDForPath resolves a project path to its owning repo's canonical ID,
@@ -484,14 +505,18 @@ func LoadTasksForCurrentRepo() ([]Task, error) {
 // SUBDIRECTORY or a linked worktree of repoRoot belongs to it, because that is
 // what git says (#2098). See repo_scope.go.
 func LoadTasksForRepo(repoRoot string) ([]Task, error) {
+	return loadTasksForScope(newRepoScope(repoRoot))
+}
+
+func loadTasksForScope(scope *repoScope) ([]Task, error) {
 	all, err := LoadTasks()
 	if err != nil {
 		return nil, err
 	}
-	scope := newRepoScope(repoRoot)
 	var filtered []Task
 	for _, t := range all {
-		if scope.matches(t) {
+		matched, _ := scope.matches(t)
+		if matched {
 			filtered = append(filtered, t)
 		}
 	}
@@ -790,6 +815,15 @@ func DiffTask(old, cur Task) TaskUpdate {
 // same locked operation, that the task is still bound to the project the caller
 // authorized it against — see ProjectExpectation.
 func UpdateTask(id string, update TaskUpdate, expect ProjectExpectation) (Task, error) {
+	return UpdateTaskChecked(id, update, expect, nil)
+}
+
+// UpdateTaskChecked is UpdateTask with a validator applied to the authoritative
+// merged record immediately before commit. Alongside an error, the validator
+// may return a nonempty resolved RepoID to persist on a legacy row; no other
+// field can be changed after ordinary task validation. A validator error leaves
+// the stored task unchanged. See AddTaskChecked for the callback constraints.
+func UpdateTaskChecked(id string, update TaskUpdate, expect ProjectExpectation, validate func(Task) (string, error)) (Task, error) {
 	if err := ValidateTaskID(id); err != nil {
 		return Task{}, err
 	}
@@ -837,6 +871,15 @@ func UpdateTask(id string, update TaskUpdate, expect ProjectExpectation) (Task, 
 				if update.Program != nil && merged.Program != "" {
 					if err := config.ValidateProgramEnum("task program", "task program", merged.Program, ""); err != nil {
 						return err
+					}
+				}
+				if validate != nil {
+					validatedRepoID, err := validate(merged)
+					if err != nil {
+						return err
+					}
+					if validatedRepoID != "" {
+						merged.RepoID = validatedRepoID
 					}
 				}
 				tasks[i] = merged

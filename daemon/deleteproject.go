@@ -10,27 +10,45 @@ import (
 	"github.com/sachiniyer/agent-factory/config"
 	"github.com/sachiniyer/agent-factory/log"
 	"github.com/sachiniyer/agent-factory/session"
+	"github.com/sachiniyer/agent-factory/task"
 )
 
 // repoSessionTitlesLocked returns the titles of the repo's sessions the daemon still
-// tracks, across BOTH maps a session can live in — m.pendingCreates (a create that has
-// passed validation but not finished provisioning, so it is NOT yet in m.instances,
-// #2549) and m.instances (its live, non-archived rows). This exists because
-// m.instances is not the universe (the same class the #1892 ghostTaskRuns comment in
-// manager.go warns about, reached through a different door): a delete that walked only
-// m.instances would miss a still-provisioning create, deregister the project, and let
-// the create finish into a live orphan.
+// tracks, across every create/restore phase: m.reservedTitles (admitted but not yet
+// projected), m.pendingCreates (provisioning, so not yet in m.instances, #2549),
+// m.restoresInFlight (the restore-only subset of m.killsInFlight), and m.instances
+// (live, non-archived rows). m.instances is not the universe (the same class the #1892
+// ghostTaskRuns comment in manager.go warns about, reached through a different door): a
+// delete that walked only it would miss a still-provisioning create or a restoring
+// archive, deregister the project, and let that session finish into a live orphan.
 //
 // inFlightOnly selects the ones a delete cannot archive YET — every pending create,
 // plus any m.instances row with an op in flight — which is what the up-front fail-closed
 // gate refuses on. With inFlightOnly false it returns every live-or-pending session,
 // which is the concurrent-create re-check before the deregister. The caller holds m.mu.
 func (m *Manager) repoSessionTitlesLocked(repoID string, inFlightOnly bool) []string {
-	var titles []string
+	titleSet := make(map[string]struct{})
+	// A successful reservation is already an admitted create, even during the
+	// narrow interval before CreateSession publishes pendingCreates. Counting it
+	// here makes the delete fence decision atomic with reserveCreate under m.mu.
+	for key := range m.reservedTitles {
+		if rid, title := splitDaemonInstanceKey(key); rid == repoID {
+			titleSet[title] = struct{}{}
+		}
+	}
 	// A pending create is always in flight (still provisioning), so it counts either way.
 	for key := range m.pendingCreates {
 		if rid, title := splitDaemonInstanceKey(key); rid == repoID {
-			titles = append(titles, title)
+			titleSet[title] = struct{}{}
+		}
+	}
+	// Restore claims are admitted under m.mu. Count them even while an archived
+	// row has not yet transitioned to Lost+OpRestoring; the matching restore
+	// admission checks projectDeletes under this same lock. Other lifecycle ops
+	// retain DeleteProject's established per-session partial-failure behavior.
+	for key := range m.restoresInFlight {
+		if rid, title := splitDaemonInstanceKey(key); rid == repoID {
+			titleSet[title] = struct{}{}
 		}
 	}
 	for key, inst := range m.instances {
@@ -41,6 +59,10 @@ func (m *Manager) repoSessionTitlesLocked(repoID string, inFlightOnly bool) []st
 		if inFlightOnly && inst.GetInFlightOp() == session.OpNone {
 			continue
 		}
+		titleSet[title] = struct{}{}
+	}
+	titles := make([]string, 0, len(titleSet))
+	for title := range titleSet {
 		titles = append(titles, title)
 	}
 	return titles
@@ -141,6 +163,14 @@ func registeredProjectRootForRepoID(repoID string) (string, error) {
 // unknown project archives nothing, drops no opt-in or registration, and returns
 // a zero-count success; a registered project with no sessions is deregistered.
 func (m *Manager) DeleteProject(req DeleteProjectRequest) (DeleteProjectResult, error) {
+	m.taskTargetMu.Lock()
+	defer m.taskTargetMu.Unlock()
+	return m.deleteProject(req)
+}
+
+// deleteProject performs DeleteProject while taskTargetMu is already held from
+// blocker preflight through the final session mutation.
+func (m *Manager) deleteProject(req DeleteProjectRequest) (DeleteProjectResult, error) {
 	repoID := strings.TrimSpace(req.RepoID)
 	repoPath := strings.TrimSpace(req.RepoPath)
 	if repoID == "" {
@@ -189,10 +219,31 @@ func (m *Manager) DeleteProject(req DeleteProjectRequest) (DeleteProjectResult, 
 	// durable removals below, "nothing was changed" is literally true.
 	m.mu.Lock()
 	starting := m.repoSessionTitlesLocked(repoID, true)
+	if len(starting) == 0 {
+		if m.projectDeletes == nil {
+			m.projectDeletes = make(map[string]struct{})
+		}
+		m.projectDeletes[repoID] = struct{}{}
+	}
 	m.mu.Unlock()
 	if len(starting) > 0 {
 		sort.Strings(starting)
-		return result, fmt.Errorf("delete project %s: session(s) %v are still starting; nothing was changed — delete again once they are ready", repoID, starting)
+		return result, fmt.Errorf("delete project %s: session(s) %v are still starting or changing; nothing was changed — delete again once their operations finish", repoID, starting)
+	}
+	defer func() {
+		m.mu.Lock()
+		delete(m.projectDeletes, repoID)
+		m.mu.Unlock()
+	}()
+
+	// A task-target refusal is predictable and must precede BOTH stores this
+	// operation mutates. Discovering it inside the later archive loop used to
+	// remove root_agents and suppress respawn before returning the error. The
+	// caller then had neither a deleted project nor its previous lifecycle
+	// configuration. taskTargetMu keeps this preflight stable through the loop.
+	taskTargets, err := m.preflightDeleteProjectTaskTargets(repoID)
+	if err != nil {
+		return result, err
 	}
 
 	// Durably drop the repo's root_agents opt-in FIRST, before mutating ANY state,
@@ -274,7 +325,7 @@ func (m *Manager) DeleteProject(req DeleteProjectRequest) (DeleteProjectResult, 
 		// external-session kill path above carries into KillSession. A title-only
 		// lookup here can resolve a NEW same-title session created after the
 		// snapshot and archive work the user never confirmed deleting.
-		_, archived, err := m.ArchiveSession(ArchiveSessionRequest{ID: t.id, Title: t.title, RepoID: repoID})
+		_, archived, err := m.archiveSession(ArchiveSessionRequest{ID: t.id, Title: t.title, RepoID: repoID}, taskTargets)
 		if errors.Is(err, errSessionNotFound) {
 			// Snapshot-gated idempotency, exactly like the kill path: this target
 			// existed under m.mu and is now authoritatively absent by stable ID, so
@@ -365,6 +416,50 @@ func (m *Manager) DeleteProject(req DeleteProjectRequest) (DeleteProjectResult, 
 
 	log.InfoLog.Printf("deleted project %s: archived %d session(s), tore down %d in-place session(s)", repoID, len(result.Archived), len(result.Killed))
 	return result, nil
+}
+
+func (m *Manager) preflightDeleteProjectTaskTargets(repoID string) (map[string][]task.Task, error) {
+	m.mu.Lock()
+	var titles []string
+	hasRoot := false
+	for key, instance := range m.instances {
+		rid, title := splitDaemonInstanceKey(key)
+		if rid != repoID || instance == nil || instance.GetLiveness() == session.LiveArchived {
+			continue
+		}
+		titles = append(titles, title)
+		hasRoot = hasRoot || title == session.RootSessionTitle
+	}
+	m.mu.Unlock()
+	// An enabled root is part of the project's effective live-session set even
+	// while its process is momentarily absent: the ensure loop will recreate it,
+	// and task delivery waits for that same promise. Include the reserved target
+	// before the empty-roster return, or DeleteProject can suppress re-creation
+	// and strand a root-targeted task behind a title ordinary auto-create refuses.
+	if !hasRoot && m.repoRootAgentWillMaterialize(repoID) {
+		titles = append(titles, session.RootSessionTitle)
+	}
+	sort.Strings(titles)
+	if len(titles) == 0 {
+		return make(map[string][]task.Task), nil
+	}
+
+	taskTargets, err := m.loadEnabledTaskTargets(repoID)
+	if err != nil {
+		return nil, fmt.Errorf("delete project %s: could not determine whether enabled tasks target its sessions; nothing was changed: %w", repoID, err)
+	}
+
+	var blockers []string
+	for _, title := range titles {
+		targeted := taskTargets[title]
+		if len(targeted) > 0 {
+			blockers = append(blockers, fmt.Sprintf("session %q: %s", title, describeTargetTasks(targeted)))
+		}
+	}
+	if len(blockers) > 0 {
+		return nil, fmt.Errorf("delete project %s: enabled task(s) target session(s) it must remove: %s; disable or retarget them, then delete the project again; nothing was changed", repoID, strings.Join(blockers, "; "))
+	}
+	return taskTargets, nil
 }
 
 // suppressRootAgent marks repoID's project as deleted for the rest of this

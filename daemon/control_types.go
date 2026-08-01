@@ -26,12 +26,17 @@ type CreateSessionRequest struct {
 	// counts a task's in-flight sessions by provenance rather than by a title
 	// prefix, and so the count survives a daemon restart.
 	//
-	// Both are `json:"-"`: they ride the net/rpc GOB control socket (which encodes
+	// These provenance fields are `json:"-"`: they ride the net/rpc GOB control
+	// socket (which encodes
 	// exported fields and ignores json tags), so the daemon's own task-delivery
 	// loopback still carries them, while the HTTP/JSON plane — the user-facing
 	// surface, reachable over TCP with a token since #1592 — cannot set them at
 	// all. encoding/json drops a "-" field on decode, and jsonFields skips it, so
 	// it is neither accepted nor advertised in the route catalog.
+	//
+	// TaskRepoID carries the same retained project binding used by targeted task
+	// delivery, so reserveCreate can reject a path that was rebound between the
+	// task runner and final create admission.
 	//
 	// That boundary is the point: provenance is an assertion the daemon makes
 	// about its own delivery, never a claim a client gets to make. Were it
@@ -39,8 +44,15 @@ type CreateSessionRequest struct {
 	// capped task's id and have countTaskRunsLocked charge it against that task —
 	// consuming its slots and parking its events, from a session that task never
 	// spawned.
-	TaskID            string `json:"-"`
-	MaxConcurrentRuns int    `json:"-"`
+	TaskID     string `json:"-"`
+	TaskRepoID string `json:"-"`
+	// TaskOrigin marks every daemon-internal automated create, including a
+	// legacy targeted task with neither retained RepoID nor per-run ownership.
+	// Unlike TaskID it is not persisted on the session and never affects
+	// concurrency accounting; it exists only to preserve the three-valued
+	// not-attempted outcome across admission and net/rpc.
+	TaskOrigin        bool `json:"-"`
+	MaxConcurrentRuns int  `json:"-"`
 	// InPlace attaches the session to the repo's existing working tree at its
 	// current branch (`af sessions create --here`) instead of creating a new
 	// git worktree+branch; kill/cleanup leaves the user's tree and branch
@@ -101,7 +113,8 @@ type KillSessionResponse struct {
 
 // ArchiveSessionRequest asks the daemon to archive a session (#1028): tear down
 // its tmux, relocate its worktree to the global archive dir, and mark it
-// Archived while preserving the record.
+// Archived while preserving the record. The daemon refuses the archive before
+// mutation when an enabled task targets the session and names every blocker.
 type ArchiveSessionRequest struct {
 	Title  string `json:"title"`
 	RepoID string `json:"repo_id"`
@@ -274,6 +287,14 @@ type DeliverPromptRequest struct {
 	RepoPath string `json:"repo_path"`
 	Program  string `json:"program"`
 	Prompt   string `json:"prompt"`
+	// TaskRepoID is the task's retained project binding. Like CreateSession's
+	// TaskID, it is daemon-internal provenance carried over GOB and excluded from
+	// HTTP/JSON so a client cannot forge task authority. DeliverPrompt compares it
+	// with RepoPath's current resolution at the final daemon boundary. TaskOrigin
+	// is the identity-independent marker that lets a legacy targeted auto-create
+	// retain a provable not-attempted outcome without claiming TaskID ownership.
+	TaskRepoID string `json:"-"`
+	TaskOrigin bool   `json:"-"`
 	// DeferWhileAttached is set by the automated task-delivery path (cron +
 	// watch) so DeliverPrompt holds the send when a TUI is attached full-screen
 	// to an existing target session, rather than pasting a prompt + Enter into a

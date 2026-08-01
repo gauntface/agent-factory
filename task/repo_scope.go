@@ -32,7 +32,15 @@ type repoScope struct {
 	id   string
 	// seen memoizes resolution within this load. The process-level cache below
 	// carries positives ACROSS loads, which is what keeps the poll cheap.
-	seen map[string]string
+	seen map[string]repoResolution
+}
+
+// repoResolution preserves the third value lifecycle callers need: a derived
+// fallback ID keeps display scoping usable, but is not proof that a legacy path
+// belongs to a different repository.
+type repoResolution struct {
+	id    string
+	known bool
 }
 
 // newRepoScope canonicalizes the target side.
@@ -46,17 +54,19 @@ func newRepoScope(repoRoot string) *repoScope {
 	return &repoScope{
 		root: repoRoot,
 		id:   config.RepoIDFromRoot(repoRoot),
-		seen: map[string]string{},
+		seen: map[string]repoResolution{},
 	}
 }
 
-// matches reports whether t belongs to this scope.
-func (s *repoScope) matches(t Task) bool {
+// matches reports both whether t belongs to this display scope and whether that
+// answer is known. Lifecycle scopes use LoadTasksForRepoID's stable-binding
+// transaction instead of this intentionally cached display path.
+func (s *repoScope) matches(t Task) (matched, known bool) {
 	// The RETAINED id wins when present: it was resolved at bind time, while the
 	// recorded path was known to resolve, so it survives that path being deleted
 	// or moved. Re-deriving would be strictly worse information — and it is free.
 	if t.RepoID != "" {
-		return t.RepoID == s.id
+		return t.RepoID == s.id, true
 	}
 	// An unbound task belongs to no project, so no project's pane claims it.
 	// This deliberately diverges from api/scope.go, which matches an unbound task
@@ -64,23 +74,24 @@ func (s *repoScope) matches(t Task) bool {
 	// duplicating one orphan into every project's pane is noise, not a fix. No
 	// supported writer creates one (see Task.ProjectPath).
 	if strings.TrimSpace(t.ProjectPath) == "" {
-		return false
+		return false, true
 	}
 	// Exact match short-circuits the git resolution for every task created from
 	// the repo root — the majority, and the case that already worked.
 	if t.ProjectPath == s.root {
-		return true
+		return true, true
 	}
-	return s.resolve(t.ProjectPath) == s.id
+	resolved := s.resolve(t.ProjectPath)
+	return resolved.id == s.id, resolved.known
 }
 
-func (s *repoScope) resolve(projectPath string) string {
+func (s *repoScope) resolve(projectPath string) repoResolution {
 	if got, ok := s.seen[projectPath]; ok {
 		return got
 	}
-	id := resolveProjectID(projectPath)
-	s.seen[projectPath] = id
-	return id
+	resolved := repoResolution{id: resolveProjectID(projectPath), known: true}
+	s.seen[projectPath] = resolved
+	return resolved
 }
 
 // projectIDMemo caches path→repo-ID resolutions that RESOLVED to a real

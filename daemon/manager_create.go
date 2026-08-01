@@ -249,9 +249,27 @@ func (m *Manager) reserveCreate(req CreateSessionRequest) (*config.RepoContext, 
 	if err != nil {
 		return nil, "", nil, nil, err
 	}
+	if req.TaskRepoID != "" && req.TaskRepoID != repo.ID {
+		return nil, "", nil, nil, fmt.Errorf("task is bound to repo %s, but project path %q now resolves to repo %s; session was not created and prompt not delivered — rebind the task to use this project", req.TaskRepoID, req.RepoPath, repo.ID)
+	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, deleting := m.projectDeletes[repo.ID]; deleting {
+		err := fmt.Errorf("project %s is being deleted; retry the session create after deletion finishes", repo.ID)
+		// TaskOrigin is daemon-only provenance independent of retained identity or
+		// concurrency ownership. Legacy targeted rows can have neither TaskID nor
+		// TaskRepoID, but admission still knows this create came from automation.
+		// Nothing has reserved a name, created a runtime, or sent a prompt, so the
+		// refusal is provably not attempted and carries the wire-visible marker.
+		// Keep the older identity shapes as compatibility evidence for in-process
+		// callers constructed before TaskOrigin was added; ordinary client creates
+		// carry none of these fields and retain their plain error.
+		if req.TaskOrigin || req.TaskID != "" || req.TaskRepoID != "" {
+			err = notAttempted(fmt.Errorf("%w; %s", err, notDeliveredMarker))
+		}
+		return nil, "", nil, nil, err
+	}
 	if err := m.refreshLocked(); err != nil {
 		return nil, "", nil, nil, err
 	}

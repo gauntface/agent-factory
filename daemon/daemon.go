@@ -281,11 +281,17 @@ func runDaemon(cfg *config.Config, upgradeTransactionID string) error {
 	sweepStartupTabCleanup(manager)
 	manager.finishInstanceRestore()
 
-	// Start schedule evaluation only after the control server is up and the
-	// restore has finished: a task firing immediately goes through the
-	// CreateSession RPC on our own socket, which requires a ready manager.
-	if err := scheduler.Reload(); err != nil {
-		log.WarningLog.Printf("failed to load task schedules: %v", err)
+	// Start task automation only after the control server is up and restore has
+	// finished: a task firing immediately loops back through our own socket and
+	// needs a ready manager. Revalidate every persisted target first. In
+	// particular, root-agent policy takes effect on this daemon start, so a root
+	// task accepted under the previous config must not be armed when the new
+	// policy can no longer materialize it. One preflight owns both cron and watch:
+	// on failure neither starts, and one actionable log replaces a permanent
+	// per-fire retry loop (#2646).
+	taskArmErr := armTaskAutomation(manager, scheduler, watchers)
+	if taskArmErr != nil {
+		log.WarningLog.Printf("task automation not armed: %v", taskArmErr)
 	}
 	scheduler.Start()
 	defer scheduler.Stop()
@@ -295,9 +301,6 @@ func runDaemon(cfg *config.Config, upgradeTransactionID string) error {
 	// watcher spawns only once the server is accepting. The deferred Stop
 	// runs before the deferred closeControl (LIFO), so in-flight deliveries
 	// during shutdown still find a live socket.
-	if err := watchers.Reload(); err != nil {
-		log.WarningLog.Printf("failed to start task watchers: %v", err)
-	}
 	defer watchers.Stop()
 
 	pollInterval := time.Duration(cfg.DaemonPollInterval) * time.Millisecond

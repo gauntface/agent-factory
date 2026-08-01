@@ -19,7 +19,7 @@ Request fields are the JSON keys of each route's request body; a `—` means the
 | `POST` | `/v1/SuggestSessionName` | — | Suggest a random, readable session name (adjective-noun) not used by any live session, for the create form's autocreate placeholder. |
 | `POST` | `/v1/Snapshot` | `repo_id` | List sessions from the daemon's authoritative in-memory state (empty repo_id = all repos). |
 | `POST` | `/v1/KillSession` | `title`, `repo_id`, `id` | Tear down a session: kill its tmux/agent and remove its worktree and record. |
-| `POST` | `/v1/ArchiveSession` | `title`, `repo_id`, `id` | Archive a session: tear down tmux and relocate its worktree to the archive dir, keeping the record. |
+| `POST` | `/v1/ArchiveSession` | `title`, `repo_id`, `id` | Archive a session: tear down tmux and relocate its worktree to the archive dir, keeping the record; refused before mutation when enabled tasks target it. |
 | `POST` | `/v1/RestoreArchived` | `title`, `repo_id`, `id` | Restore an archived session: move its worktree back next to the repo and re-spawn the agent. |
 | `POST` | `/v1/RestoreSession` | `title`, `repo_id`, `id` | Restore an archived, Lost, or Dead session. |
 | `POST` | `/v1/SendPrompt` | `title`, `repo_id`, `prompt`, `id` | Send a prompt to an existing session's agent. |
@@ -37,8 +37,8 @@ Request fields are the JSON keys of each route's request body; a `—` means the
 | `POST` | `/v1/GetConfig` | — | List every user-facing global config key with its purpose, type, default, and current value. |
 | `POST` | `/v1/SetConfigValue` | `key`, `value` | Set one global config key, exactly as `af config set` does (validated, locked, atomic). |
 | `POST` | `/v1/ListTasks` | — | List every task across all repos. |
-| `POST` | `/v1/AddTask` | `task` | Append a new task and re-arm the scheduler. |
-| `POST` | `/v1/UpdateTask` | `id`, `update`, `expect` | Apply a field-level patch to a task (only the fields in `update` are changed), preserving every unspecified field and the scheduler-owned fields. |
+| `POST` | `/v1/AddTask` | `task` | Append a new task and re-arm the scheduler; an enabled archived/archiving target_session is refused before commit. |
+| `POST` | `/v1/UpdateTask` | `id`, `update`, `expect` | Apply a field-level patch to a task (only the fields in `update` are changed), preserving every unspecified field and the scheduler-owned fields; an enabled archived/archiving target_session is refused before commit. |
 | `POST` | `/v1/RemoveTask` | `id`, `expect` | Remove a task by ID. |
 | `POST` | `/v1/RestartTask` | `id`, `expect` | Stop and replace one enabled watch task without overlapping its process tree. |
 | `POST` | `/v1/TriggerTask` | `id`, `expect` | Fire a cron task now through the daemon's scheduler path (refuses disabled and watch tasks). |
