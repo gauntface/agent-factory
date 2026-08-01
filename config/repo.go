@@ -3,7 +3,9 @@ package config
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -15,6 +17,12 @@ import (
 // hex characters; tests and any future ID schemes are constrained to the
 // same character class so the value can never escape its parent directory.
 var repoIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+// ErrNotGitRepository identifies the one CurrentRepo failure for which callers
+// may deliberately fall back to global scope. Other git failures (missing git,
+// an invalid .git file, safe-directory rejection, permissions) must remain
+// visible rather than being mistaken for "outside git."
+var ErrNotGitRepository = errors.New("not inside a git repository")
 
 // maxRepoIDLength caps the size of an accepted repoID. Legitimate IDs are
 // 12 chars; the cap is loose enough to accommodate future schemes while
@@ -48,6 +56,12 @@ func resolveMainRepoRoot(pathArgs ...string) (string, error) {
 	topCmd := exec.Command("git", append(pathArgs, "rev-parse", "--show-toplevel")...)
 	topOut, err := topCmd.Output()
 	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) &&
+			strings.Contains(string(exitErr.Stderr), "not a git repository (or any of the parent directories)") &&
+			!gitMetadataMayExist(pathArgs...) {
+			return "", fmt.Errorf("%w: %s", ErrNotGitRepository, strings.TrimSpace(string(exitErr.Stderr)))
+		}
 		return "", fmt.Errorf("failed to get git repo root: %w", err)
 	}
 	toplevel := strings.TrimSpace(string(topOut))
@@ -97,6 +111,36 @@ func resolveMainRepoRoot(pathArgs ...string) (string, error) {
 	}
 	// Fallback: parent of .git directory (correct for non-submodule repos)
 	return filepath.Dir(commonDir), nil
+}
+
+// gitMetadataMayExist fails closed when a failed rev-parse could be caused by
+// broken or unreadable repository metadata. Git reports the same no-ancestor
+// diagnostic for an unreadable .git directory that it reports outside Git, so
+// stderr alone cannot authorize a global-config fallback.
+func gitMetadataMayExist(pathArgs ...string) bool {
+	if os.Getenv("GIT_DIR") != "" {
+		return true
+	}
+	start := "."
+	if len(pathArgs) == 2 && pathArgs[0] == "-C" {
+		start = pathArgs[1]
+	}
+	current, err := filepath.Abs(start)
+	if err != nil {
+		return true
+	}
+	for {
+		if _, err := os.Lstat(filepath.Join(current, ".git")); err == nil {
+			return true
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return true
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false
+		}
+		current = parent
+	}
 }
 
 // RepoContext identifies a git repository and provides scoped path resolution.

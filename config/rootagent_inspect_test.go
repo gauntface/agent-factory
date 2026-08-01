@@ -31,7 +31,7 @@ func TestRootAgentExplainTraceNamesLayerPerField(t *testing.T) {
 			Global: &RootAgentLayer{Value: RootAgent{Program: "codex"}}, // program set, enabled unset
 			Legacy: &RootAgentConfig{},                                  // empty: enables, program unset
 		})
-		rv := rootAgentResolvedValue(res, rootAgentLocations{})
+		rv := rootAgentResolvedValue(res, rootAgentLocations{}, true)
 
 		// Per-field winners: enabled from legacy, program from global.
 		require.Contains(t, rv.Origins, "enabled")
@@ -61,7 +61,7 @@ func TestRootAgentExplainTraceNamesLayerPerField(t *testing.T) {
 			Legacy:   &RootAgentConfig{Program: "legacy-prog"},                            // enables, program set
 			Personal: &RootAgentLayer{Value: RootAgent{Enabled: false}, EnabledSet: true}, // explicit disable
 		})
-		rv := rootAgentResolvedValue(res, rootAgentLocations{})
+		rv := rootAgentResolvedValue(res, rootAgentLocations{}, true)
 
 		// The disable must be attributed to the personal layer.
 		require.Contains(t, rv.Origins, "enabled")
@@ -82,7 +82,7 @@ func TestRootAgentExplainTraceNamesLayerPerField(t *testing.T) {
 // absent layer reads as "not participating" rather than vanishing from the
 // explanation.
 func TestRootAgentExplainTraceCoversAllFourLayers(t *testing.T) {
-	rv := rootAgentResolvedValue(ResolveRootAgent(RootAgentInputs{}), rootAgentLocations{})
+	rv := rootAgentResolvedValue(ResolveRootAgent(RootAgentInputs{}), rootAgentLocations{}, false)
 	for _, layer := range []RootAgentSource{
 		RootAgentSourceBuiltIn, RootAgentSourceGlobal, RootAgentSourceLegacy, RootAgentSourcePersonal,
 	} {
@@ -120,7 +120,7 @@ func TestRootAgentInspectionInputsPopulateEveryLayer(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(home, TomlConfigFileName), []byte(globalTOML), 0o644))
 	writePersonalConfig(t, project.ID, "[root_agent]\nenabled = false\n")
 
-	inputs, _, err := assembleRootAgentInspectionInputs(repoRoot)
+	inputs, _, _, _, err := assembleRootAgentInspectionInputs(repoRoot, true)
 	require.NoError(t, err)
 
 	v := reflect.ValueOf(inputs)
@@ -133,4 +133,15 @@ func TestRootAgentInspectionInputsPopulateEveryLayer(t *testing.T) {
 		require.Falsef(t, field.IsNil(),
 			"RootAgentInputs.%s was left nil by assembleRootAgentInspectionInputs even though the fixture configures every layer — a new root-agent layer must be assembled for --explain too, or it silently drops out of the trace (the drift this guard prevents)", name)
 	}
+}
+
+func TestRootAgentInspectionErrorUsesCanonicalProjectWording(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("AGENT_FACTORY_HOME", home)
+	require.NoError(t, os.WriteFile(filepath.Join(home, TomlConfigFileName), []byte("schema_version = 1\n"), 0o644))
+
+	_, err := ResolveRootAgentForInspection(t.TempDir(), true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to resolve project path")
+	assert.NotContains(t, err.Error(), "--project")
 }

@@ -19,19 +19,19 @@ import (
 
 func setConfigGetReadFlags(t *testing.T, project string, explain, jsonMode bool) {
 	t.Helper()
-	oldProject, oldExplain, oldJSON := configGetProjectFlag, configGetExplainFlag, configJSONFlag
-	configGetProjectFlag, configGetExplainFlag, configJSONFlag = project, explain, jsonMode
+	oldRepo, oldProject, oldExplain, oldJSON := configGetRepoFlag, configGetProjectFlag, configGetExplainFlag, configJSONFlag
+	configGetRepoFlag, configGetProjectFlag, configGetExplainFlag, configJSONFlag = "", project, explain, jsonMode
 	t.Cleanup(func() {
-		configGetProjectFlag, configGetExplainFlag, configJSONFlag = oldProject, oldExplain, oldJSON
+		configGetRepoFlag, configGetProjectFlag, configGetExplainFlag, configJSONFlag = oldRepo, oldProject, oldExplain, oldJSON
 	})
 }
 
 func setConfigListReadFlags(t *testing.T, project string, explain, jsonMode bool) {
 	t.Helper()
-	oldProject, oldExplain, oldJSON := configListProjectFlag, configListExplainFlag, configJSONFlag
-	configListProjectFlag, configListExplainFlag, configJSONFlag = project, explain, jsonMode
+	oldRepo, oldProject, oldExplain, oldJSON := configListRepoFlag, configListProjectFlag, configListExplainFlag, configJSONFlag
+	configListRepoFlag, configListProjectFlag, configListExplainFlag, configJSONFlag = "", project, explain, jsonMode
 	t.Cleanup(func() {
-		configListProjectFlag, configListExplainFlag, configJSONFlag = oldProject, oldExplain, oldJSON
+		configListRepoFlag, configListProjectFlag, configListExplainFlag, configJSONFlag = oldRepo, oldProject, oldExplain, oldJSON
 	})
 }
 
@@ -75,6 +75,7 @@ func runConfigListForTest(t *testing.T) (string, error) {
 
 func TestConfigGetExplainKeepsBareGlobalContract(t *testing.T) {
 	_, _ = setupConfigExplainCommandTest(t, "schema_version = 1\ndefault_program = \"codex\"\n")
+	t.Chdir(t.TempDir())
 
 	setConfigGetReadFlags(t, "", false, false)
 	bare, err := runConfigGetForTest(t, "default_program")
@@ -121,6 +122,27 @@ codex = "/repo/codex"
 	assert.True(t, os.IsNotExist(statErr), "a path selector must not register durable identity in stage two")
 	_, statErr = os.Stat(filepath.Join(home, "repos"))
 	assert.True(t, os.IsNotExist(statErr), "a project config read must not persist load-observation state")
+}
+
+// TestConfigReadsDefaultToCurrentProject covers the adjacent read surfaces
+// sharing root_agent's selector path. A bare get or list inside a repository
+// must include its checked-in layer; only a caller outside git falls back to
+// global defaults.
+func TestConfigReadsDefaultToCurrentProject(t *testing.T) {
+	_, repoRoot := setupConfigExplainCommandTest(t, "schema_version = 1\ndefault_program = \"codex\"\n")
+	writeCommandTestInRepoConfig(t, repoRoot, "default_program = \"aider\"\n")
+	t.Chdir(repoRoot)
+
+	setConfigGetReadFlags(t, "", false, false)
+	got, err := runConfigGetForTest(t, "default_program")
+	require.NoError(t, err)
+	assert.Equal(t, "aider\n", got)
+
+	setConfigListReadFlags(t, "", false, false)
+	listed, err := runConfigListForTest(t)
+	require.NoError(t, err)
+	assert.Contains(t, listed, "default_program")
+	assert.Contains(t, listed, "aider")
 }
 
 func TestConfigGetExplainJSONCarriesContextAndCompleteTrace(t *testing.T) {
@@ -253,6 +275,7 @@ codex = "/global/codex"
 func TestConfigListProjectIncludesRepoOnlyKeysButBareListDoesNot(t *testing.T) {
 	_, repoRoot := setupConfigExplainCommandTest(t, "schema_version = 1\ndefault_program = \"codex\"\n")
 	writeCommandTestInRepoConfig(t, repoRoot, "backend = \"docker\"\n[docker]\nimage = \"af-test\"\n")
+	t.Chdir(t.TempDir())
 
 	setConfigListReadFlags(t, "", false, false)
 	globalOutput, err := runConfigListForTest(t)
@@ -352,9 +375,10 @@ codex = "/repo/codex"
 	repo, err := config.RepoFromPath(repoRoot)
 	require.NoError(t, err)
 	wantPaths := map[string]string{
-		config.SourceGlobal.String():     filepath.Join(home, config.TomlConfigFileName),
-		config.SourceLegacyRepo.String(): filepath.Join(home, "repos", repo.ID, config.ConfigFileName),
-		config.SourceRepoShared.String(): filepath.Join(repoRoot, config.InRepoConfigDirName, config.TomlConfigFileName),
+		config.SourceGlobal.String():         filepath.Join(home, config.TomlConfigFileName),
+		config.SourceLegacyRepo.String():     filepath.Join(home, "repos", repo.ID, config.ConfigFileName),
+		config.SourceRepoShared.String():     filepath.Join(repoRoot, config.InRepoConfigDirName, config.TomlConfigFileName),
+		string(config.RootAgentSourceLegacy): filepath.Join(home, config.TomlConfigFileName),
 	}
 	assertSource := func(layer, path string) {
 		t.Helper()
@@ -395,7 +419,7 @@ func TestConfigGetProjectRejectsNonRepositoryWithJSONEnvelope(t *testing.T) {
 
 	output, err := runConfigGetForTest(t, "default_program")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to resolve --project path")
+	assert.Contains(t, err.Error(), "failed to resolve project path")
 	assert.True(t, strings.HasSuffix(output, "\n"))
 	var envelope struct {
 		Data  any `json:"data"`
@@ -405,5 +429,74 @@ func TestConfigGetProjectRejectsNonRepositoryWithJSONEnvelope(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(output), &envelope))
 	require.NotNil(t, envelope.Error)
-	assert.Contains(t, envelope.Error.Message, "failed to resolve --project path")
+	assert.Contains(t, envelope.Error.Message, "failed to resolve project path")
+}
+
+func TestConfigReadDoesNotHideUnexpectedCurrentRepoFailure(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("PATH", t.TempDir())
+
+	_, _, err := configReadProjectSelector("", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "resolve current repository")
+}
+
+func TestConfigReadDoesNotHideBrokenGitDirectory(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("GIT_DIR", filepath.Join(t.TempDir(), "missing"))
+
+	_, _, err := configReadProjectSelector("", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "resolve current repository")
+}
+
+func TestConfigReadDoesNotHideUnreadableGitMetadata(t *testing.T) {
+	repoRoot := t.TempDir()
+	gitDir := filepath.Join(repoRoot, ".git")
+	require.NoError(t, os.Mkdir(gitDir, 0o000))
+	t.Cleanup(func() {
+		require.NoError(t, os.Chmod(gitDir, 0o700))
+	})
+	t.Chdir(repoRoot)
+
+	_, _, err := configReadProjectSelector("", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "resolve current repository")
+}
+
+// TestConfigGetDeprecatedProjectAliasKeepsJSONParseable drives the real pflag
+// parser before RunE. An automatic deprecation warning must not prefix the JSON
+// error envelope when a script uses the retained --project alias with --json.
+func TestConfigGetDeprecatedProjectAliasKeepsJSONParseable(t *testing.T) {
+	_, _ = setupConfigExplainCommandTest(t, "schema_version = 1\ndefault_program = \"codex\"\n")
+	notRepo := t.TempDir()
+
+	oldOut, oldErr := configGetCmd.OutOrStdout(), configGetCmd.ErrOrStderr()
+	oldRepo, oldProject := configGetRepoFlag, configGetProjectFlag
+	oldExplain, oldJSON := configGetExplainFlag, configJSONFlag
+	flags := configGetCmd.Flags()
+	oldFlagOut := flags.Output()
+	projectFlag := flags.Lookup("project")
+	jsonFlag := flags.Lookup("json")
+	require.NotNil(t, projectFlag)
+	require.NotNil(t, jsonFlag)
+	oldProjectChanged, oldJSONChanged := projectFlag.Changed, jsonFlag.Changed
+	t.Cleanup(func() {
+		configGetCmd.SetOut(oldOut)
+		configGetCmd.SetErr(oldErr)
+		configGetRepoFlag, configGetProjectFlag = oldRepo, oldProject
+		configGetExplainFlag, configJSONFlag = oldExplain, oldJSON
+		projectFlag.Changed, jsonFlag.Changed = oldProjectChanged, oldJSONChanged
+		flags.SetOutput(oldFlagOut)
+	})
+
+	var output bytes.Buffer
+	configGetCmd.SetOut(&output)
+	configGetCmd.SetErr(&output)
+	flags.SetOutput(&output)
+	require.NoError(t, flags.Parse([]string{"--project", notRepo, "--json"}))
+
+	err := configGetCmd.RunE(configGetCmd, []string{"default_program"})
+	require.Error(t, err)
+	assert.Truef(t, json.Valid(output.Bytes()), "stderr must be one parseable JSON envelope, got:\n%s", output.String())
 }
