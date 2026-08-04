@@ -1,11 +1,13 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"unicode"
 
 	"github.com/sachiniyer/agent-factory/internal/namegen"
+	"github.com/sachiniyer/agent-factory/keys"
 	"github.com/sachiniyer/agent-factory/log"
 	"github.com/sachiniyer/agent-factory/session"
 	"github.com/sachiniyer/agent-factory/session/git"
@@ -296,6 +298,25 @@ func (m *home) handleStateNew(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // startNewInstance creates a new instance and enters stateNew for naming.
 // If remote is true, the instance is forced to use the remote hook backend.
 func (m *home) startNewInstance(remote bool) (tea.Model, tea.Cmd) {
+	// A session lives in a project, and registry mode has none until the user
+	// selects one (#2477) — so refuse here rather than opening a form that cannot
+	// be submitted (#2764).
+	//
+	// The old fallback to the process cwd was written when m.repoRoot was always
+	// the launch repo, and #2477 made it reachable with no repo behind it: the
+	// naming form opened, the user typed a name, and the create failed only on
+	// submit, daemon-side, with `failed to get git repo root for <cwd>: exit
+	// status 128`. Nothing in that sentence tells them a project has to be picked
+	// first, and by then they had already done the work of naming the session.
+	//
+	// Both keys, not just `n`. `N` did refuse in registry mode, but by asking the
+	// cwd about remote_hooks and reporting that repo-shaped answer — sending a
+	// user with no project selected off to configure hooks for a directory that
+	// is not even a project. Ahead of that check, this one names the actual
+	// blocker, which is also why nothing below needs a repo-less path anymore.
+	if m.repoRoot == "" {
+		return m, m.handleNotice(errors.New(noActiveProjectNotice()))
+	}
 	m.pendingProgram = m.program
 	// Every create starts with an empty prompt field and an unchosen backend. The
 	// cancel paths clear both too, but this is the authoritative reset: it also
@@ -309,11 +330,9 @@ func (m *home) startNewInstance(remote bool) (tea.Model, tea.Cmd) {
 	// Target the ACTIVE project's repo root, not the process cwd: after an
 	// in-place project switch (#1461) the active repo is m.repoRoot, which may no
 	// longer be where af was launched. At launch m.repoRoot is the cwd's repo, so
-	// this is equivalent for the unswitched case.
+	// this is equivalent for the unswitched case. The guard above guarantees it is
+	// set.
 	repoPath := m.repoRoot
-	if repoPath == "" {
-		repoPath = "."
-	}
 	if remote {
 		configured, err := session.RemoteHooksConfiguredForPath(repoPath)
 		if err != nil {
@@ -385,6 +404,28 @@ func (m *home) startNewInstance(remote bool) (tea.Model, tea.Cmd) {
 	m.menu.SetNamingBackend(false)
 	m.menu.SetState(ui.StateNewInstance)
 	return m, nil
+}
+
+// noActiveProjectNotice is the refusal a create gets with no active project.
+//
+// The action and its key LEAD the sentence and the explanation trails: the
+// transient notice clips to the terminal width and the TAIL is what vanishes
+// (#1973). Driving the real TUI at 120 columns with the explanation first cut
+// exactly the recovery step, leaving a message that named a problem and no way
+// out of it.
+//
+// The key is read from the binding rather than spelled here, because
+// switch_project is REBINDABLE (`[keys]` config) — keys.go's own note on
+// KeySetPrompt calls out that hardcoding ctrl+p "would silently drift the day a
+// user rebinds that action". A user who unbound it entirely gets the section
+// instead of a key that does nothing.
+func noActiveProjectNotice() string {
+	pick := "pick one in the Projects section"
+	if k := keys.GlobalKeyBindings[keys.KeySwitchProject].Help().Key; k != "" {
+		pick = fmt.Sprintf("press %s to pick one", k)
+	}
+	return "select a project first — " + pick +
+		"; af is running with no active project, so there is no repo for this session to live in"
 }
 
 // suggestSessionName picks a readable random "adjective-noun" name for the
