@@ -395,6 +395,10 @@ func (m *Manager) ensureResolvedRoot(stateKey string, st *rootEnsureState, repo 
 		// that record, so there is nothing to continue or rebuild).
 		resumeConversation: carried.conversation,
 		restoreTabs:        carried.tabs,
+		// True only for a heal, including one whose reaped root had nothing to
+		// carry — that is the heal whose replacement most needs the marker.
+		replacesReapedRecord:  reapedRoot,
+		pendingRecreateNotice: carried.notice,
 	}
 	data, err := m.CreateSession(context.Background(), req)
 	if err != nil && req.resumeConversation.HasID() {
@@ -416,7 +420,7 @@ func (m *Manager) ensureResolvedRoot(stateKey string, st *rootEnsureState, repo 
 	}
 	log.InfoLog.Printf("ensured root agent for %s (in-place, program %q)", repo.Root, program)
 	if reapedRoot {
-		reportRootConversationCarry(repo.Root, carried.conversation, data.AgentConversation)
+		reportRootConversationCarry(repo.Root, carried.conversation, data.AgentConversation, data.CurrentAgent)
 		reportRootTabCarry(repo.Root, carried.tabs, data.Tabs)
 	}
 	m.rootEnsureSucceeded(st)
@@ -472,18 +476,32 @@ func countNonAgentTabs(tabs []session.TabData) int {
 // come up on a different one (the resolved program runs another agent, or pins
 // its own resume flag), and the record is the thing that will be resumed from
 // next time.
-func reportRootConversationCarry(repoRoot string, carried session.AgentConversationData, created *session.AgentConversationData) {
-	switch {
-	case !carried.HasID():
-		log.WarningLog.Printf("re-created root agent for %s had no recorded conversation to carry; it starts with a fresh context", repoRoot)
-	case created != nil && created.Agent == carried.Agent && created.ID == carried.ID:
+//
+// The judgment itself is session.ClassifyRootRecreateContext — the SAME call
+// that decides the note on the row (#2629), not a second copy of the rule. The
+// log adds one distinction the note does not need (nothing recorded to carry vs
+// recorded and not resumed); it cannot add a different verdict.
+func reportRootConversationCarry(repoRoot string, carried session.AgentConversationData, created *session.AgentConversationData, launchedAgent string) {
+	switch session.ClassifyRootRecreateContext(carried, created, launchedAgent) {
+	case session.RootRecreateContextNone:
 		log.InfoLog.Printf("re-created root agent for %s resumed its prior %s conversation %s", repoRoot, carried.Agent, carried.ID)
-	case created == nil:
+	case session.RootRecreateContextUnknown:
 		log.WarningLog.Printf("re-created root agent for %s did not record its prior %s conversation %s; the resolved command may select its own conversation, so context continuity is unknown",
 			repoRoot, carried.Agent, carried.ID)
 	default:
-		log.WarningLog.Printf("re-created root agent for %s did not come up on its prior %s conversation %s; it starts with a fresh context",
-			repoRoot, carried.Agent, carried.ID)
+		switch {
+		case !carried.HasID():
+			log.WarningLog.Printf("re-created root agent for %s had no recorded conversation to carry; it starts with a fresh context", repoRoot)
+		case created == nil:
+			// The provable agent-change fallback: the root now runs a different
+			// agent, so its prior conversation cannot be resumed at all. Naming both
+			// agents is what makes a repointed root_agents program diagnosable.
+			log.WarningLog.Printf("re-created root agent for %s now runs %s, so its prior %s conversation %s cannot be resumed; it starts with a fresh context",
+				repoRoot, launchedAgent, carried.Agent, carried.ID)
+		default:
+			log.WarningLog.Printf("re-created root agent for %s did not come up on its prior %s conversation %s; it starts with a fresh context",
+				repoRoot, carried.Agent, carried.ID)
+		}
 	}
 }
 
@@ -566,6 +584,11 @@ type reapedRootState struct {
 	// ignores index 0 and rebuilds the rest; keeping the roster whole means the
 	// snapshot is exactly what the record held, not a pre-filtered view of it.
 	tabs []session.TabData
+	// notice is an unacknowledged re-create warning the reaped record still
+	// carried (#2629) — a root healed twice before anyone looked at it. It floors
+	// the replacement'"'"'s own verdict so the older, unseen loss is not erased by a
+	// cleaner second heal.
+	notice session.RootRecreateContext
 }
 
 // reapDeadRoot removes a Dead root instance so ensureRootAgent can re-create
@@ -608,7 +631,7 @@ func (m *Manager) reapDeadRoot(repoID string, inst *session.Instance) (reapedRoo
 	// and a roster that never coexisted; there is no reason to leave that open
 	// when the whole record is available atomically.
 	snapshot := inst.ToInstanceData()
-	carried := reapedRootState{tabs: snapshot.Tabs}
+	carried := reapedRootState{tabs: snapshot.Tabs, notice: snapshot.RootRecreateContext}
 	if snapshot.AgentConversation != nil {
 		carried.conversation = *snapshot.AgentConversation
 	}
