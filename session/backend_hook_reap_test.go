@@ -582,6 +582,239 @@ func TestHookProvisionSucceedsWhenLaunchLeavesOutputPipeOpen(t *testing.T) {
 	assert.DirExists(t, h.sandbox(p.slug), "the working sandbox must still exist")
 }
 
+// TestHookProvisionSelectsEndpointAmongJSONLogs covers launch_cmd programs that
+// emit structured logs to stderr. stdout and stderr intentionally share one file,
+// so endpoint selection must inspect JSON shape rather than take the first value.
+func TestHookProvisionSelectsEndpointAmongJSONLogs(t *testing.T) {
+	h := newHookState(t, `
+echo '{"level":"info","msg":"connecting"}' >&2
+echo '{"level":"info","url":"http://wrong.invalid","token":"logged-secret"}' >&2
+echo '{"URL":"http://case-variant.invalid","TOKEN":"case-variant-secret"}' >&2
+echo '{"url":"http://first-duplicate.invalid","url":"http://last-duplicate.invalid","token":"duplicate-secret"}' >&2
+echo '{"level":"info","endpoint":{"url":"http://nested.invalid","token":"nested-secret"},INVALID}' >&2
+echo '{"level":INVALID,"endpoint":{"url":"http://post-error.invalid","token":"post-error-secret"}}' >&2
+echo '{"url":"http://10.0.0.7:8080","token":"secret"}'
+echo '{"level":"info","msg":"tunnel ready"}' >&2
+exit 0
+`, "")
+	p := newHookProvisioner(h, "json logger")
+
+	res, err := p.provisionOrReap()
+	require.NoError(t, err, "a JSON log record must not hide the later endpoint JSON")
+	require.NotNil(t, res.Endpoint)
+	assert.Equal(t, "http://10.0.0.7:8080", res.Endpoint.URL)
+	assert.Equal(t, "secret", res.Endpoint.Token)
+	assert.False(t, h.deleteRan(t), "valid endpoint output must not reap the working sandbox")
+	assert.DirExists(t, h.sandbox(p.slug))
+}
+
+// TestHookProvisionRedactsEndpointTokenFromParseError covers the failure path
+// where launch_cmd emits JSON but never supplies a usable endpoint. The raw
+// aggregate output reaches durable error reporting, so bearer tokens in any JSON
+// candidate must be redacted before the error leaves this package.
+func TestHookProvisionRedactsEndpointTokenFromParseError(t *testing.T) {
+	const secret = "must-not-reach-the-error"
+	h := newHookState(t, `
+echo '{"level":"info","msg":"connecting"}' >&2
+echo '{"url":"","token":"must-not-reach-the-error"}'
+exit 0
+`, "")
+	p := newHookProvisioner(h, "invalid endpoint")
+
+	_, err := p.provisionOrReap()
+	require.Error(t, err, "an empty endpoint URL must fail provisioning")
+	assert.NotContains(t, err.Error(), secret, "agent-server bearer tokens must never enter reported errors")
+	assert.Contains(t, err.Error(), "[REDACTED]", "the diagnostic should show that sensitive output was removed")
+	assert.True(t, h.deleteRan(t), "invalid endpoint output must reap the provisioned sandbox")
+	assert.NoDirExists(t, h.sandbox(p.slug))
+}
+
+// TestHookOutputSuffixPreservesNumbersWhileRedactingTokens guards diagnostic
+// fidelity: token redaction must not decode and re-encode unrelated JSON values,
+// which can round large integer resource IDs through float64.
+func TestHookOutputSuffixPreservesNumbersWhileRedactingTokens(t *testing.T) {
+	const resourceID = "9223372036854775807"
+	const secret = "diagnostic-token-must-not-leak"
+
+	suffix := hookOutputSuffix([]byte(`{"resource_id":9223372036854775807,"token":"diagnostic-token-must-not-leak"}`))
+	assert.Contains(t, suffix, resourceID, "redaction must preserve the exact remote resource identifier")
+	assert.NotContains(t, suffix, secret, "redaction must remove the bearer token")
+	assert.Contains(t, suffix, "[REDACTED]")
+}
+
+// TestHookOutputSuffixRedactsTokenAfterUnmatchedQuote covers arbitrary prose
+// before endpoint output. A stray quote must not phase-shift the scanner and
+// make every later JSON string look like the end of the preceding one.
+func TestHookOutputSuffixRedactsTokenAfterUnmatchedQuote(t *testing.T) {
+	const secret = "misaligned-token-must-not-leak"
+
+	suffix := hookOutputSuffix([]byte("warning: unmatched \"\n" +
+		`{"url":"","token":"misaligned-token-must-not-leak"}`))
+	assert.NotContains(t, suffix, secret, "malformed diagnostic text must not bypass token redaction")
+	assert.Contains(t, suffix, "[REDACTED]")
+}
+
+// TestHookOutputSuffixRedactsAfterMalformedTokenCandidate covers overlapping
+// quotes where prose ends in a valid-looking "token" string but the same closing
+// quote is also the opening boundary of the real token key.
+func TestHookOutputSuffixRedactsAfterMalformedTokenCandidate(t *testing.T) {
+	const secret = "overlapping-token-must-not-leak"
+
+	suffix := hookOutputSuffix([]byte(`warning: "token"token":"overlapping-token-must-not-leak"`))
+	assert.NotContains(t, suffix, secret, "a malformed token candidate must not hide the next real token field")
+	assert.Contains(t, suffix, "[REDACTED]")
+}
+
+// TestHookOutputSuffixRedactsAfterOverlappingValueBoundary covers malformed
+// text where the closing quote of a decoy token value is also the opening quote
+// of the real token key. Successful redaction must not skip that boundary.
+func TestHookOutputSuffixRedactsAfterOverlappingValueBoundary(t *testing.T) {
+	const secret = "overlapping-value-token-must-not-leak"
+
+	suffix := hookOutputSuffix([]byte(`warning: "token":"decoy"token":"overlapping-value-token-must-not-leak"`))
+	assert.NotContains(t, suffix, secret, "a redacted decoy value must not hide the next real token field")
+	assert.Contains(t, suffix, "[REDACTED]")
+}
+
+// TestHookOutputSuffixHandlesEscapedQuoteFlood keeps malformed diagnostic
+// scanning linear. Every quote below is escaped, so rescanning the remaining
+// suffix from each one is quadratic even though there is no token to redact.
+func TestHookOutputSuffixHandlesEscapedQuoteFlood(t *testing.T) {
+	output := strings.Repeat(`\"`, 50_000)
+	started := time.Now()
+	suffix := hookOutputSuffix([]byte(output))
+	assert.Less(t, time.Since(started), time.Second, "escaped-quote diagnostics must be scanned in linear time")
+	assert.Equal(t, "; its output was:\n"+output, suffix)
+}
+
+// TestHookOutputSuffixRedactsJSONEscapedToken covers structured loggers that
+// serialize endpoint JSON into a string field. The inner bearer token is still
+// sensitive even though its delimiters are escaped by the outer JSON object.
+func TestHookOutputSuffixRedactsJSONEscapedToken(t *testing.T) {
+	const secret = "json-escaped-token-must-not-leak"
+	output := `{"endpoint":"{\"url\":\"\",\"token\":\"json-escaped-token-must-not-leak\"}"}`
+
+	suffix := hookOutputSuffix([]byte(output))
+	assert.NotContains(t, suffix, secret, "a serialized endpoint object must not expose its bearer token")
+	assert.Contains(t, suffix, "[REDACTED]")
+}
+
+// TestHookOutputSuffixRedactsTruncatedJSONEscapedToken covers a structured log
+// whose string field contains only the prefix of an endpoint document. The
+// complete outer log must not make the incomplete inner token safe to report.
+func TestHookOutputSuffixRedactsTruncatedJSONEscapedToken(t *testing.T) {
+	const secret = "truncated-json-escaped-token-must-not-leak"
+	output := `{"endpoint":"{\"url\":\"\",\"token\":\"truncated-json-escaped-token-must-not-leak\""}`
+
+	suffix := hookOutputSuffix([]byte(output))
+	assert.NotContains(t, suffix, secret, "a truncated serialized endpoint must not expose its bearer token")
+	assert.Contains(t, suffix, "[REDACTED]")
+}
+
+// TestHookOutputSuffixRedactsTopLevelSerializedEndpoint covers log pipelines
+// that JSON-encode the endpoint document itself as a complete string record.
+// It has no enclosing object for the recursive map walk to discover.
+func TestHookOutputSuffixRedactsTopLevelSerializedEndpoint(t *testing.T) {
+	const secret = "top-level-json-string-token-must-not-leak"
+	output := "{\"level\":\"info\"}\n" +
+		`"{\"url\":\"\",\"token\":\"top-level-json-string-token-must-not-leak\"}"`
+
+	suffix := hookOutputSuffix([]byte(output))
+	assert.NotContains(t, suffix, secret, "a serialized top-level endpoint must not expose its bearer token")
+	assert.Contains(t, suffix, "[REDACTED]")
+}
+
+// TestHookOutputSuffixRedactsPrefixedSerializedEndpoint covers conventional
+// logger metadata around a JSON string literal containing endpoint output.
+func TestHookOutputSuffixRedactsPrefixedSerializedEndpoint(t *testing.T) {
+	const secret = "prefixed-json-string-token-must-not-leak"
+	output := `INFO endpoint="{\"url\":\"\",\"token\":\"prefixed-json-string-token-must-not-leak\"}" ready`
+
+	suffix := hookOutputSuffix([]byte(output))
+	assert.NotContains(t, suffix, secret, "a prefixed serialized endpoint must not expose its bearer token")
+	assert.Contains(t, suffix, "[REDACTED]")
+}
+
+// TestHookOutputSuffixRedactsSerializedEndpointVariants covers JSON-equivalent
+// encodings where the decoded document begins with whitespace or an escaped
+// opening brace rather than a literal raw delimiter.
+func TestHookOutputSuffixRedactsSerializedEndpointVariants(t *testing.T) {
+	tests := []struct {
+		name   string
+		secret string
+		output string
+	}{
+		{
+			name:   "leading whitespace",
+			secret: "whitespace-json-string-token-must-not-leak",
+			output: `"  {\"token\":\"whitespace-json-string-token-must-not-leak\"}"`,
+		},
+		{
+			name:   "unicode escaped opener",
+			secret: "escaped-opener-token-must-not-leak",
+			output: `"\u007b\"token\":\"escaped-opener-token-must-not-leak\"}"`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			suffix := hookOutputSuffix([]byte(test.output))
+			assert.NotContains(t, suffix, test.secret, "a JSON-equivalent serialized endpoint must redact its token")
+			assert.Contains(t, suffix, "[REDACTED]")
+		})
+	}
+}
+
+// TestExtractJSONAtHandlesMalformedDelimiterFlood keeps endpoint selection
+// linear after a valid JSON log. No unmatched opener can produce a complete
+// value, so retrying a suffix scan from each one is pure quadratic work.
+func TestExtractJSONAtHandlesMalformedDelimiterFlood(t *testing.T) {
+	const logRecord = `{"level":"info"}`
+	output := logRecord + strings.Repeat("{", 50_000)
+
+	first, next := extractJSONAt(output, 0)
+	require.Equal(t, logRecord, first)
+	started := time.Now()
+	value, end := extractJSONAt(output, next)
+	assert.Less(t, time.Since(started), time.Second, "unmatched delimiters must be scanned in linear time")
+	assert.Empty(t, value)
+	assert.Equal(t, len(output), end)
+
+	balanced := strings.Repeat("[", 50_000) + "not-json" + strings.Repeat("]", 50_000)
+	started = time.Now()
+	value, end = extractJSONAt(balanced, 0)
+	assert.Less(t, time.Since(started), time.Second, "balanced malformed nesting must be scanned in linear time")
+	assert.Empty(t, value)
+	assert.Equal(t, len(balanced), end)
+
+	recoverable := strings.Repeat("[bad", 20_000) + logRecord + strings.Repeat("]", 20_000)
+	started = time.Now()
+	value, _ = extractJSONAt(recoverable, 0)
+	assert.Less(t, time.Since(started), time.Second, "nested recovery must walk each candidate once")
+	assert.Equal(t, logRecord, value)
+}
+
+// TestHookProvisionRedactsTokenFromIncompleteEndpointOutput covers a launch
+// killed or interrupted while writing its endpoint JSON. The unmatched tail is
+// still diagnostic output, but a complete quoted token value inside it is just
+// as sensitive as one in a complete JSON object.
+func TestHookProvisionRedactsTokenFromIncompleteEndpointOutput(t *testing.T) {
+	const secret = "truncated-token-must-not-leak"
+	h := newHookState(t, `
+echo '{"level":"info","msg":"connecting"}' >&2
+echo '{"url":"","token":"truncated-token-must-not-leak"'
+exit 0
+`, "")
+	p := newHookProvisioner(h, "truncated endpoint")
+
+	_, err := p.provisionOrReap()
+	require.Error(t, err, "an incomplete endpoint object must fail provisioning")
+	assert.NotContains(t, err.Error(), secret, "an incomplete JSON tail must not expose its bearer token")
+	assert.Contains(t, err.Error(), "[REDACTED]", "the diagnostic should show that sensitive output was removed")
+	assert.True(t, h.deleteRan(t), "invalid endpoint output must reap the provisioned sandbox")
+	assert.NoDirExists(t, h.sandbox(p.slug))
+}
+
 // TestHookProvisionKeepsASuccessfulLaunchsTunnelAlive is the #1966-review P2: a
 // launch_cmd that SUCCEEDS and leaves a tunnel running must end with a REACHABLE
 // endpoint. The tunnel is not a leak — it is the product, the thing making the
