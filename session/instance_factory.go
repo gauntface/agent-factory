@@ -163,6 +163,72 @@ func resolveBackendKind(opts InstanceOptions, absPath string) (BackendKind, erro
 	return ParseBackendKind(cfg.Backend)
 }
 
+// ErrInPlaceRemoteBackend marks the refusal of an in-place create whose session
+// would not run on this machine. An in-place session attaches the agent to the
+// repo's OWN working tree; a docker/ssh/hook session works in a sandbox clone
+// and has no local worktree at all, so the two requests cannot both be honored.
+//
+// A sentinel rather than a bare message because the surfaces that offer in-place
+// (the CLI's --here, the daemon's create RPC, the root agent) need to tell this
+// refusal apart from the provisioning-config errors it used to hide behind.
+var ErrInPlaceRemoteBackend = errors.New("an in-place session cannot run on a non-local backend")
+
+// InPlaceBackendConflict reports the in-place/remote contradiction for a create
+// with these options against absPath, or nil when there is none. NewInstance
+// enforces it, so an ordinary caller never needs this.
+//
+// It is exported for callers that MUTATE state before reaching NewInstance. The
+// daemon's reserveCreate is the one that matters: for an explicit title held
+// only by an archived session it renames that session — relocating its worktree
+// and rewriting its durable record — and only later builds the instance. A
+// refusal raised at NewInstance would therefore land after an irreversible
+// rename done for a create that could never have succeeded, which is exactly the
+// state reserveCreate promises never to leave behind (#2127, #2415). Asking the
+// same question ahead of the mutation is what keeps that promise, and asking it
+// through THIS function is what keeps the two answers from drifting.
+//
+// Judged on the RESOLVED kind, not on opts.Backend (#2778). An empty
+// opts.Backend does not mean local — it means "resolve from the repo's `backend`
+// key" — so a flag-only test waves a repo-configured docker/ssh/hook create
+// straight through with InPlace still set. In a half-configured repo that
+// surfaces as a provisioning-config error naming nothing about in-place; in a
+// fully configured one it SUCCEEDS, and the session's record claims the user's
+// working tree while its agent runs in a sandbox clone that cannot see it.
+//
+// Resolving here mirrors LocalPrereqsRequired (#2592) for the same reason: a
+// check that reimplements the backend precedence rules drifts from them.
+//
+// A kind that will not RESOLVE yields nil. That is not a local create and not a
+// remote one — it is an unusable `backend` value, and the runtime factory
+// reports it in one place. Converting it into an in-place refusal would name the
+// wrong problem.
+func InPlaceBackendConflict(opts InstanceOptions, absPath string) error {
+	if !opts.InPlace {
+		return nil
+	}
+	kind, err := resolveBackendKind(opts, absPath)
+	if err != nil || kind == BackendLocal {
+		return nil
+	}
+	return inPlaceBackendConflict(kind, opts)
+}
+
+// inPlaceBackendConflict builds that refusal, naming both the resolved backend
+// and WHERE it was selected. The source matters for the case #2778 is about: a
+// user who passed no backend flag at all has nothing to correlate the error
+// with unless it points at the repo's `backend` key.
+func inPlaceBackendConflict(kind BackendKind, opts InstanceOptions) error {
+	source := "this repo's `backend` config key"
+	switch {
+	case opts.Backend != "":
+		source = "the requested backend"
+	case opts.ForceRemote:
+		source = "the remote-session request"
+	}
+	return fmt.Errorf("%w: %s selected the %s backend, which runs the agent in a sandbox clone with no access to this repo's working tree — create the session on the local backend, or drop the in-place request",
+		ErrInPlaceRemoteBackend, source, kind)
+}
+
 // BackendKindFor reports which runtime a create with these options against
 // absPath will use, WITHOUT creating anything. It is the same decision (and the
 // same precedence) NewInstance makes internally.
@@ -262,18 +328,14 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 		id = NewInstanceID()
 	}
 
-	// An in-place session runs in the repo's local working tree; a remote
-	// session has no local worktree at all — the two are contradictory. This
-	// covers both the legacy ForceRemote hook selector and an explicit
-	// non-local --backend (#1592 Phase 4 PR3).
-	if opts.InPlace && (opts.ForceRemote || (opts.Backend != "" && opts.Backend != BackendLocal)) {
-		return nil, fmt.Errorf("remote sessions cannot run in-place in the local repo working tree")
-	}
-
 	// Convert path to absolute
 	absPath, err := filepath.Abs(opts.Path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
+	if err := InPlaceBackendConflict(opts, absPath); err != nil {
+		return nil, err
 	}
 	normalizedSessionEnv, err := sessionenv.NormalizeExtraNames(opts.SessionEnvPassthrough)
 	if err != nil {
