@@ -251,6 +251,72 @@ func (m *Manager) CreateSession(ctx context.Context, req CreateSessionRequest) (
 	return data, nil
 }
 
+// backendKindForCreate is the runtime resolution reserveCreate performs before
+// taking the manager lock. A package var so a test can block inside it and prove
+// m.mu is genuinely not held across it — the property is invisible otherwise,
+// since the call succeeds either way and only its LOCK CONTEXT is the bug (#2931).
+// Production never reassigns it.
+var backendKindForCreate = session.BackendKindFor
+
+// projectDeleteGenLocked reads the repo's completed-delete-attempt counter. The
+// caller MUST already hold m.mu; a missing entry means no delete has ever been
+// attempted for this repo and reads as 0, which is also what a first sample sees.
+func (m *Manager) projectDeleteGenLocked(repoID string) uint64 {
+	return m.projectDeleteGen[repoID]
+}
+
+// projectDeleteRefusal builds the refusal every delete-fence arm returns, so the
+// three of them cannot drift in wording or in what they promise the caller.
+//
+// inProgress distinguishes a delete still running from one that finished while
+// this create was outside m.mu; the guidance differs, and a create told to
+// "retry after deletion finishes" about a delete that already finished would be
+// telling the user to wait for nothing.
+//
+// TaskOrigin is daemon-only provenance independent of retained identity or
+// concurrency ownership. Legacy targeted rows can have neither TaskID nor
+// TaskRepoID, but admission still knows this create came from automation.
+// Nothing has reserved a name, created a runtime, or sent a prompt on any of
+// these paths, so the refusal is provably not attempted and carries the
+// wire-visible marker. Keep the older identity shapes as compatibility evidence
+// for in-process callers constructed before TaskOrigin was added; ordinary
+// client creates carry none of these fields and retain their plain error.
+func projectDeleteRefusal(req CreateSessionRequest, repoID string, inProgress bool) error {
+	err := fmt.Errorf("project %s is being deleted; retry the session create after deletion finishes", repoID)
+	if !inProgress {
+		err = fmt.Errorf("project %s was being deleted while this session create resolved its backend; nothing was created — retry if the project still exists", repoID)
+	}
+	if req.TaskOrigin || req.TaskID != "" || req.TaskRepoID != "" {
+		err = notAttempted(fmt.Errorf("%w; %s", err, notDeliveredMarker))
+	}
+	return err
+}
+
+// admitTaskRunFast is the pre-resolver half of the task-run cap, for a caller
+// that does not hold m.mu. It returns the SAME errAtConcurrencyLimit sentinel as
+// the authoritative check, so the watch-delivery path cannot tell the two apart
+// and parks the event either way.
+func (m *Manager) admitTaskRunFast(repoID, taskID string, limit int) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.admitTaskRunLocked(repoID, taskID, limit)
+}
+
+// projectDeleteStateFor samples BOTH halves of the repo's delete state for a
+// caller that does not hold m.mu; it takes the lock itself.
+//
+// The two must be read together, in one acquisition. The generation alone
+// answers "did a delete BEGIN after this point" — it cannot answer "was a delete
+// already running AT this point", because such a delete bumped the counter
+// before the sample and removes its fence before the re-check, leaving both
+// readings identical while the delete ran to completion across the entire gap.
+func (m *Manager) projectDeleteStateFor(repoID string) (active bool, generation uint64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, active = m.projectDeletes[repoID]
+	return active, m.projectDeleteGenLocked(repoID)
+}
+
 func (m *Manager) reserveCreate(req CreateSessionRequest) (*config.RepoContext, string, func(), *session.InstanceData, error) {
 	if req.RepoPath == "" {
 		return nil, "", nil, nil, fmt.Errorf("repo path is required")
@@ -263,22 +329,100 @@ func (m *Manager) reserveCreate(req CreateSessionRequest) (*config.RepoContext, 
 		return nil, "", nil, nil, fmt.Errorf("task is bound to repo %s, but project path %q now resolves to repo %s; session was not created and prompt not delivered — rebind the task to use this project", req.TaskRepoID, req.RepoPath, repo.ID)
 	}
 
+	// Resolve the runtime BEFORE taking the manager lock (#2931).
+	//
+	// Both resolvers below reach session.resolveBackendKind -> resolveRepoConfig ->
+	// config.RepoFromPath, which shells out to `git rev-parse` with no context, no
+	// timeout, and no WaitDelay. Under m.mu that turned one unreachable repo — a
+	// stalled NFS/FUSE mount, a spun-down disk — into a daemon-wide outage: the
+	// exec never returns, the deferred unlock never runs, and every operation that
+	// needs m.mu blocks behind it. Snapshot (so every TUI and web client), the
+	// liveness poll, kill, archive, delete-project, task delivery: all of them, in
+	// every project, not just the broken one.
+	//
+	// Neither resolver reads any manager state — they are pure functions of the
+	// request and the repo root — so hoisting them costs nothing and bounds the
+	// damage to the one create that asked. The sibling git call this function makes
+	// under the lock (branch holds) is already bounded with its own deadline (#856);
+	// this was the path that was not.
+	// Sample the repo's delete state first, and refuse an ALREADY-RUNNING delete
+	// right here — ahead of the resolvers, not after them.
+	//
+	// Deferring this refusal until after the resolution would make a create that
+	// is already known to be impossible wait on the unbounded git below, which is
+	// exactly the stall this hoist exists to bound. Before the hoist the fence
+	// check ran ahead of backend resolution and such a create returned promptly;
+	// keeping the refusal early preserves that. It is still behind everything a
+	// refusal needs — repo identity and the task-binding check — and still ahead
+	// of every mutation, so admission order is unchanged.
+	//
+	// The sampled state plus the post-lock check cover EVERY delete overlapping
+	// the unlocked region. Writing the delete's fence interval as
+	// [install, remove] and this region as [sample, check]:
+	//
+	//   - install before sample, remove after sample -> refused immediately below
+	//   - install within the region                  -> the generation moved
+	//   - remove after check                         -> the fence is still up
+	//   - install after check                        -> the create has reserved by
+	//     then, so DeleteProject's own fail-closed preflight refuses instead
+	//
+	// The first arm is why the fence is sampled and not just the counter: such a
+	// delete bumped the generation BEFORE the sample and drops its fence BEFORE
+	// the check, so both readings match while it ran across the whole gap (#2937
+	// review). A delete that finished entirely before the sample is not an overlap
+	// at all — that is an ordinary create after a completed delete.
+	deleteActive, deleteGen := m.projectDeleteStateFor(repo.ID)
+	if deleteActive {
+		return nil, "", nil, nil, projectDeleteRefusal(req, repo.ID, true)
+	}
+
+	// Same reasoning for the task-run cap, which the hoist also moved behind the
+	// resolvers. A capped watch delivery for a stalled repo would otherwise hang
+	// in unbounded git instead of returning errAtConcurrencyLimit promptly and
+	// parking the event on the durable queue — the cap's whole contract is that a
+	// refusal is cheap and the event retries when a slot frees.
+	//
+	// ADVISORY, and one-way on purpose. It reads the counts without the
+	// refreshLocked below, so it may only REFUSE early, never admit: the
+	// authoritative check still runs post-refresh, under the same lock hold as the
+	// reservation. refreshLocked replaces m.instances wholesale, so a stale count
+	// can be high as well as low, and a spurious refusal here costs one park and
+	// retry — the same tradeoff releaseTaskRunLocked already documents for its
+	// momentary over-count, and the opposite of admitting one too many.
+	if err := m.admitTaskRunFast(repo.ID, req.TaskID, req.MaxConcurrentRuns); err != nil {
+		return nil, "", nil, nil, err
+	}
+
+	runtimeKind := session.BackendLocal
+	if req.ForceRemote {
+		runtimeKind = session.BackendHook
+	}
+	backendOpts := session.InstanceOptions{
+		Backend:     session.BackendKind(req.Backend),
+		ForceRemote: req.ForceRemote,
+		InPlace:     req.InPlace,
+	}
+	if kind, kerr := backendKindForCreate(backendOpts, repo.Root); kerr == nil {
+		runtimeKind = kind
+	}
+	// A kerr means an invalid backend value. Leave the conservative default above
+	// and let NewInstance surface the canonical error rather than duplicating it.
+	//
+	// The in-place/off-box contradiction is resolved here too but REPORTED below,
+	// inside the lock, at the point it was refused before. Hoisting the resolution
+	// must not hoist the refusal: reserveCreate's admission order is load-bearing
+	// (#2778/#2415), and this check has to stay ahead of the archived-name-reuse
+	// rename and behind the project-delete fence, exactly where it was.
+	inPlaceConflict := session.InPlaceBackendConflict(backendOpts, repo.Root)
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, deleting := m.projectDeletes[repo.ID]; deleting {
-		err := fmt.Errorf("project %s is being deleted; retry the session create after deletion finishes", repo.ID)
-		// TaskOrigin is daemon-only provenance independent of retained identity or
-		// concurrency ownership. Legacy targeted rows can have neither TaskID nor
-		// TaskRepoID, but admission still knows this create came from automation.
-		// Nothing has reserved a name, created a runtime, or sent a prompt, so the
-		// refusal is provably not attempted and carries the wire-visible marker.
-		// Keep the older identity shapes as compatibility evidence for in-process
-		// callers constructed before TaskOrigin was added; ordinary client creates
-		// carry none of these fields and retain their plain error.
-		if req.TaskOrigin || req.TaskID != "" || req.TaskRepoID != "" {
-			err = notAttempted(fmt.Errorf("%w; %s", err, notDeliveredMarker))
-		}
-		return nil, "", nil, nil, err
+	// The remaining two arms: a delete still holding its fence, and one that both
+	// started and finished while this create resolved. The already-running case
+	// returned above, before the resolvers.
+	_, deleting := m.projectDeletes[repo.ID]
+	if deleting || m.projectDeleteGenLocked(repo.ID) != deleteGen {
+		return nil, "", nil, nil, projectDeleteRefusal(req, repo.ID, deleting)
 	}
 	if err := m.refreshLocked(); err != nil {
 		return nil, "", nil, nil, err
@@ -303,22 +447,6 @@ func (m *Manager) reserveCreate(req CreateSessionRequest) (*config.RepoContext, 
 		return nil, "", nil, nil, err
 	}
 
-	// Resolve the runtime once for every namespace decision below. Hook creates
-	// claim a global external slug; local creates claim a repo-scoped tmux name;
-	// docker/ssh claim neither on this host. ForceRemote is only one way to select
-	// hook, so ask the same resolver NewInstance uses.
-	runtimeKind := session.BackendLocal
-	if req.ForceRemote {
-		runtimeKind = session.BackendHook
-	}
-	if kind, kerr := session.BackendKindFor(session.InstanceOptions{
-		Backend:     session.BackendKind(req.Backend),
-		ForceRemote: req.ForceRemote,
-	}, repo.Root); kerr == nil {
-		runtimeKind = kind
-	}
-	// A kerr means an invalid backend value. Leave the conservative default above
-	// and let NewInstance surface the canonical error rather than duplicating it.
 	nameNamespace := runtimeNamespaceForKind(runtimeKind)
 
 	// An in-place session and an off-box runtime are contradictory, and
@@ -338,12 +466,8 @@ func (m *Manager) reserveCreate(req CreateSessionRequest) (*config.RepoContext, 
 	// against runtimeKind, so the daemon's answer and NewInstance's cannot drift
 	// — including on the deliberate non-firing for a backend value that will not
 	// resolve, which belongs to the factory's canonical error.
-	if err := session.InPlaceBackendConflict(session.InstanceOptions{
-		Backend:     session.BackendKind(req.Backend),
-		ForceRemote: req.ForceRemote,
-		InPlace:     req.InPlace,
-	}, repo.Root); err != nil {
-		return nil, "", nil, nil, err
+	if inPlaceConflict != nil {
+		return nil, "", nil, nil, inPlaceConflict
 	}
 
 	var renamedArchived *session.InstanceData
