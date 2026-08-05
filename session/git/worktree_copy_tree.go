@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -453,7 +454,14 @@ func applyCopiedDirectoryMode(source, destination *os.File, destinationPath stri
 			destinationPath, err,
 		)
 	}
-	return preserveSourceMode(int(destination.Fd()), info.Mode(), destinationPath, "directory")
+	if err := preserveSourceMode(int(destination.Fd()), info.Mode(), destinationPath, "directory"); err != nil {
+		return err
+	}
+	// Times last, and only here. Creating an entry inside a directory updates
+	// that directory's own mtime, so a timestamp written any earlier would be
+	// overwritten by the copy's own writes — the same ordering the mode already
+	// depends on.
+	return preserveSourceModTime(int(destination.Fd()), ".", info.ModTime(), destinationPath, "directory")
 }
 
 // holeCopyChunk is the read granularity of the hole-preserving copy. It is a
@@ -520,6 +528,39 @@ func isAllZero(chunk []byte) bool {
 		}
 	}
 	return true
+}
+
+// preserveSourceModTime reproduces a source node's modification time on its copy.
+//
+// The copy writes new nodes, so without this every file and directory in an
+// archived worktree carries the time it was archived rather than the time its
+// contents were last touched. rename(2) keeps them exactly, so this is one more
+// place where which filesystem $AF_HOME sits on decided what a restored session
+// looked like (#2919). It is not cosmetic: build tools decide what to rebuild
+// from mtime, and git's index stores stat data, so a restored worktree that
+// looks entirely new re-hashes every file it could have trusted.
+//
+// Anchored to a directory descriptor plus a name, like the node creation around
+// it, with AT_SYMLINK_NOFOLLOW so a name swapped for a symlink between creation
+// and this call cannot redirect the timestamp onto a file outside the tree. A
+// DIRECTORY passes its own descriptor with "." — that addresses the directory
+// itself without AT_EMPTY_PATH, which is Linux-only, so one call covers every
+// platform at full nanosecond resolution.
+//
+// Both slots are set to the source mtime because there is no portable way to set
+// one and leave the other: UTIME_OMIT is not defined on darwin. atime is
+// therefore NOT preserved, deliberately — it is rewritten by any read, most
+// filesystems mount relatime so it is already approximate, and nothing in a
+// worktree depends on it. mtime is the property tools actually read.
+func preserveSourceModTime(dirFD int, name string, sourceModTime time.Time, destinationPath, kind string) error {
+	stamp := unix.NsecToTimespec(sourceModTime.UnixNano())
+	if err := unix.UtimesNanoAt(dirFD, name, []unix.Timespec{stamp, stamp}, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return fmt.Errorf(
+			"cannot move worktree across filesystems: failed to preserve the source modification time on destination %s %s: %w",
+			kind, destinationPath, err,
+		)
+	}
+	return nil
 }
 
 // preserveSourceMode restores a source node's permission bits on the descriptor
@@ -642,6 +683,14 @@ func copyRegularFileAtWithIdentity(
 	// step, once there is nothing half-written left to expose. The already-open
 	// descriptor keeps its write access regardless of the new mode.
 	if err := preserveSourceMode(outFD, info.Mode(), destinationPath, "file"); err != nil {
+		_ = out.Close()
+		return created, err
+	}
+	// After the contents for the same reason the mode is: writing bytes bumps
+	// mtime, so this has to be the last thing that touches the file.
+	if err := preserveSourceModTime(
+		int(destination.Fd()), filepath.Base(destinationPath), info.ModTime(), destinationPath, "file",
+	); err != nil {
 		_ = out.Close()
 		return created, err
 	}
