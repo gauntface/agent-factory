@@ -4,6 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sachiniyer/agent-factory/ui"
+	"github.com/sachiniyer/agent-factory/ui/layout"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -82,4 +85,105 @@ func TestStartNewInstanceWithActiveProjectStillOpensNaming(t *testing.T) {
 	require.NotNil(t, h.namingInstance)
 	assert.Equal(t, repoDir, h.namingInstance.Path,
 		"the placeholder must target the ACTIVE project's repo root")
+}
+
+// TestRegistryModeEmptyWorkspaceDoesNotAdvertiseCreate is #2830, the other half
+// of the same dead end. #2764 fixed the path where `n` REACHES creation and now
+// refuses with a reason; this covers the path where it never arrives at all.
+//
+// In registry mode newHome lands focus on the Projects section, which is a
+// captive vim-style list that consumes the create verbs on purpose (#1620). So
+// `n` produced no form, no notice, and no repaint — while the workspace beside
+// it read "No sessions yet — press n to create one."
+//
+// The table is the point: WHICH key is live depends on the focused region and on
+// whether the section has a row, so a single hardcoded hint is a dead key in one
+// of these states whichever key it names. Two review rounds on this PR were
+// exactly that mistake, twice.
+func TestRegistryModeEmptyWorkspaceNamesOnlyLiveKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		focus      string
+		hasProject bool
+		want       string
+		absent     string
+	}{
+		{
+			// The startup state once a project is registered.
+			name: "projects focused with a row", focus: layout.RegionProjects, hasProject: true,
+			want: "press enter to pick one", absent: "ctrl+p",
+		},
+		{
+			// Enter is a no-op with nothing under the cursor, and ctrl+p is
+			// suppressed here, so the only way forward is out of the section.
+			name: "projects focused with no rows", focus: layout.RegionProjects,
+			want: "press esc, then press ctrl+p to add one", absent: "press enter",
+		},
+		{
+			// From the tree ctrl+p reaches the picker and Enter means something else.
+			name: "tree focused", focus: layout.RegionTree, hasProject: true,
+			want: "press ctrl+p to pick one", absent: "press enter",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newTestHome(t)
+			h.repoRoot = "" // registry mode: launched outside a repo (#2477)
+			if tc.hasProject {
+				h.projects.SetProjects([]ui.SidebarProject{{Name: "elsewhere", Root: "/repos/elsewhere"}})
+			}
+			resizeHome(h, 120, 30)
+			h.focusRegion(tc.focus)
+			require.Equal(t, 0, h.store.NumInstances(), "precondition: the rail is empty")
+
+			view := flatten(h.View())
+
+			assert.NotContains(t, view, "press n to create one",
+				"no focused region in registry mode can honor that promise (#2830)")
+			assert.Contains(t, view, "No project selected", "the empty state must name the actual blocker")
+			assert.Contains(t, view, tc.want, "the hint must name a key that is live from here")
+			assert.NotContains(t, view, tc.absent, "and must not name one that is not")
+		})
+	}
+}
+
+// A pane-empty workspace keeps its own message even with no active project.
+// "no panes open" and "no project selected" answer different questions and are
+// not alternatives — collapsing them told a user who had just closed their panes
+// to go pick a project instead of reopening one. Caught in review on this PR.
+func TestPaneEmptyWorkspaceKeepsItsOwnMessageWithoutAProject(t *testing.T) {
+	h := newTestHome(t)
+	h.repoRoot = ""
+	h.store.AddInstance(instanceWithFakeBackend(t, "somewhere"))
+	resizeHome(h, 120, 30)
+	require.Positive(t, h.store.NumInstances())
+	require.Empty(t, h.visiblePanes, "precondition: sessions exist, no pane is open")
+
+	view := flatten(h.View())
+
+	assert.Contains(t, view, "no panes open", "the pane-empty state owns this message")
+	assert.NotContains(t, view, "No project selected",
+		"#2830 is scoped to the EMPTY rail; it must not reach a workspace that has sessions")
+}
+
+// Inside a repo the ordinary onboarding copy is untouched: `n` works there, so
+// advertising it is correct and this fix must not reach that state.
+func TestNonRegistryModeEmptyWorkspaceStillAdvertisesCreate(t *testing.T) {
+	h := newTestHome(t)
+	h.repoRoot = t.TempDir()
+	resizeHome(h, 120, 30)
+	require.Equal(t, 0, h.store.NumInstances())
+
+	view := flatten(h.View())
+
+	assert.Contains(t, view, "No sessions yet — press n to create one.")
+	assert.NotContains(t, view, "No project selected")
+}
+
+// The create refusal is reached by pressing `n`, which cannot arrive from the
+// captive section — so it names ctrl+p. Pinned because the two surfaces share a
+// helper and must still be allowed to name different keys.
+func TestNoActiveProjectNoticeNamesTheKeyForItsFocus(t *testing.T) {
+	assert.Contains(t, noActiveProjectNotice(false, false), "press ctrl+p to pick one")
+	assert.Contains(t, noActiveProjectNotice(true, true), "press enter to pick one")
+	assert.Contains(t, noActiveProjectNotice(false, true), "press esc, then press ctrl+p to add one")
 }

@@ -171,10 +171,29 @@ func (m *home) View() string {
 	rail := lipgloss.JoinVertical(lipgloss.Left, railParts...)
 	cols := []string{rail}
 	if len(m.visiblePanes) == 0 {
-		if m.store.NumInstances() == 0 {
-			cols = append(cols, ui.FirstRunWorkspace(m.lastLayout.Workspace))
-		} else {
+		switch {
+		// Session count FIRST, and the order is load-bearing. "no panes open" and
+		// "no project selected" answer different questions — why is this area
+		// blank, versus what af is scoped to — and they are not alternatives: a
+		// user who closed their panes has panes to reopen whatever the project
+		// state is, so sending them off to pick a project would be a worse answer
+		// than the one #2830 set out to fix.
+		//
+		// Registry mode CAN hold sessions it cannot act on: the refresh tick
+		// fetches with an empty repoID, which the daemon answers with the
+		// cross-repo snapshot, contradicting the launch path that skips exactly
+		// that. Advertising `s` for a row that would no-op is a real problem, but
+		// a PROJECTION one — those rows should not be in the store — and
+		// re-prioritizing this message would paper over it in the wrong layer.
+		case m.store.NumInstances() > 0:
 			cols = append(cols, ui.EmptyWorkspace(m.lastLayout.Workspace))
+		case m.repoRoot == "":
+			// The empty rail, which is all #2830 is about: no sessions, and no
+			// active project to create one in, so `n` cannot work from any focused
+			// region here (#2477/#2764).
+			cols = append(cols, ui.NoActiveProjectWorkspace(m.lastLayout.Workspace, switchProjectPickHint(m.enterPicksAProject(), m.projectsFocused())))
+		default:
+			cols = append(cols, ui.FirstRunWorkspace(m.lastLayout.Workspace))
 		}
 	}
 	for i, p := range m.visiblePanes {
