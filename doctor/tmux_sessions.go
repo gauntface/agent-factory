@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -29,39 +28,26 @@ import (
 // error when tmux could not tell us.
 //
 // THE INVARIANT, stated rather than borrowed: A FAILED READ IS NOT AN EMPTY
-// RESULT. `tmux ls` exits 1 both for "there is no server" and for "I could not
-// reach the server", so the exit status alone cannot separate them and only the
-// diagnostic can — tmux.NoServerRunning is the one place that judgement lives.
+// RESULT. Every consumer below treats a name's ABSENCE as evidence the session
+// is dead, and two of them spend that evidence on a kill or an rm -rf.
 //
-// The version this replaces returned nil for every failure and explained itself
-// by claiming parity with CleanupSessions, which had the same defect: an
-// unreachable socket read as "no sessions are live", and checkOrphanedProcesses
-// turned that into an armed `kill pid N` for every live session's processes
-// (#2874). Do not restore a "mirrors X" comment in either direction. State the
-// property, so a copy of this code cannot inherit a bug by inheriting a claim.
+// It DELEGATES rather than shelling out — the second read in this file to do so,
+// after tmuxSessionHomeMarker, and for the same reason. The copy that lived here
+// fell outside both invariants session/tmux maintains:
 //
-// A missing tmux binary is a determinate empty, not blindness: af drives tmux
-// through PATH, so a tmux it cannot execute is a tmux that holds none of its
-// sessions.
+//   - the classification of tmux's ambiguous exit 1, which it got wrong: every
+//     failure became an empty list, an unreachable socket read as "no sessions
+//     are live", and checkOrphanedProcesses turned that into an armed
+//     `kill pid N` for every live session's processes (#2874);
+//   - the tmuxCommandTimeout BOUND, which it lacked entirely. `af doctor --fix`
+//     re-lists before removing a stale home, so against a server that wedged
+//     mid-run an unbounded listing hangs the cleanup instead of refusing the
+//     removal it can no longer justify (#2910).
+//
+// Do not restore a "mirrors X" comment in either direction, and do not
+// re-inline the shell-out. State the property; keep the mechanism in one place.
 func listTmuxSessions(ctx *scanContext) ([]string, error) {
-	out, err := ctx.opts.Exec.Output(exec.Command("tmux", "ls", "-F", "#{session_name}"))
-	if err != nil {
-		if tmux.NoServerRunning(err) || errors.Is(err, exec.ErrNotFound) {
-			return nil, nil
-		}
-		diagnostic := tmux.CommandDiagnostic(err)
-		if diagnostic != "" {
-			diagnostic = " (" + diagnostic + ")"
-		}
-		return nil, fmt.Errorf("could not list tmux sessions%s: %w", diagnostic, err)
-	}
-	var names []string
-	for _, line := range strings.Split(string(out), "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			names = append(names, line)
-		}
-	}
-	return names, nil
+	return tmux.ListSessionNames(ctx.opts.Exec)
 }
 
 // tmuxSessions returns the run's memoized session listing, or the error that
@@ -296,6 +282,26 @@ func liveTmuxHomes(ctx *scanContext) (map[string]bool, error) {
 	if err != nil {
 		return nil, err
 	}
+	return tmuxHomesFor(ctx, names)
+}
+
+// liveTmuxHomesNow is liveTmuxHomes against a FRESH listing rather than the
+// run's memo, for the fix-time recheck.
+//
+// The memo is right for detection — one run, one view. It is wrong for the
+// recheck, and the difference is the whole point of rechecking: findings are
+// applied after detection, so the session that must veto an rm -rf is precisely
+// the one that STARTED in that window, and it cannot appear in a listing taken
+// before the window opened. Re-reading markers for the old list would miss it.
+func liveTmuxHomesNow(ctx *scanContext) (map[string]bool, error) {
+	names, err := listTmuxSessions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return tmuxHomesFor(ctx, names)
+}
+
+func tmuxHomesFor(ctx *scanContext, names []string) (map[string]bool, error) {
 	homes := map[string]bool{}
 	var unreadable []string
 	for _, name := range names {
