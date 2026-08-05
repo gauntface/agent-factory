@@ -895,6 +895,34 @@ exit 0
 	writeHookScript(t, h.delete, fmt.Sprintf(`echo "$name" >> %s/delete-ran.log`, shellsuggest.Arg(dir)))
 
 	p := newHookProvisioner(h, "tunnel holder")
+	// Own the tunnel's lifetime, exactly as TestHookLaunchDoesNotKillBackgroundedChildren
+	// below owns its child's. The production code is right to leave this process alone —
+	// that is the whole claim — but "nothing in the capture path reaps it" is not the same
+	// as "nobody reaps it". Without this the tunnel outlives the test forever: t.TempDir()
+	// removes the directory out from under a python3 that keeps looping and holding a
+	// listening socket, detached, owned by no one (#2842 — 65 of them accumulated on the
+	// dev box, the oldest six days old).
+	//
+	// This cannot weaken the claim: t.Cleanup runs after the test body, so the reachability
+	// assertion has already passed by the time the kill fires. And t.Cleanup is LIFO, so it
+	// runs BEFORE the TempDir removal registered by t.TempDir() above — no writer survives
+	// into os.RemoveAll. launchPgid is populated by provisionOrReap below and read here at
+	// cleanup time.
+	//
+	// This signals, and relies on PID 1 to reap. It cannot wait(2) the tunnel: launch_cmd
+	// backgrounded it and then exited, so the test was never its parent — and it must not
+	// be, because a test-owned server would survive a reap and pass against the very bug
+	// this test exists to catch (see the comment on the script above). Every environment
+	// the suite runs in supplies a reaping init: systemd on dev boxes and CI runners, and
+	// tini in the container harness, which passes --init for exactly this reason
+	// (scripts/testbox.sh). Under a PID 1 that ignores SIGCHLD the killed tunnel would
+	// linger as a defunct entry until that PID 1 exits — no socket, no CPU, and no way
+	// around it from here short of giving the tunnel an owner the test is not allowed to be.
+	t.Cleanup(func() {
+		if p.launchPgid != 0 {
+			_ = syscall.Kill(-p.launchPgid, syscall.SIGKILL)
+		}
+	})
 	res, err := p.provisionOrReap()
 	require.NoError(t, err, "a launch_cmd that exits 0 with a valid endpoint must succeed")
 	require.NotNil(t, res.Endpoint)
