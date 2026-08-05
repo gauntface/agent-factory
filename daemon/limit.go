@@ -386,6 +386,9 @@ func (m *Manager) resumeFromLimitLocked(repoID, key string, instance *session.In
 }
 
 func (m *Manager) resumeFromLimitLockedOutcome(repoID, key string, instance *session.Instance, requestedTitle string) (resumeFromLimitOutcome, error) {
+	// Set by the respawn arm's settlement below and reported at the very end, so a
+	// failed durable write neither aborts the resume nor disappears from it.
+	var settleErr error
 	// Re-verify under the lock: a self-recovery or the poll may have cleared the
 	// limit between the check above and the lock.
 	if !instance.LimitReached() {
@@ -490,7 +493,22 @@ func (m *Manager) resumeFromLimitLockedOutcome(repoID, key string, instance *ses
 		// statement — a disk write above all — out of the window between the runtime
 		// swap and the debounce reset, so a blip there is not judged against the dead
 		// runtime. restore.go resolves the same ordering the same way.
-		m.persistInstance(repoID, instance)
+		//
+		// A SETTLEMENT, not a checkpoint (#2883): the paragraph above says the poll
+		// does not cover this write, which is precisely what made best-effort the
+		// wrong contract — a failed write silently reverted branchCreatedByUs and
+		// orphaned the branch the rebuild had just created. Durable, and enrolled
+		// for retry when it fails.
+		// Carried, not returned here: the resume has not finished yet, and the
+		// prompt below must still be attempted — a failed write is no reason to
+		// leave the agent parked. It is reported at the end, because this arm is
+		// also reachable through the public ResumeFromLimit RPC and a caller that
+		// hears only about the prompt would never learn its rebuilt branch's
+		// provenance is still memory-only.
+		settleErr = m.persistSettlement(repoID, key, instance)
+		if settleErr != nil {
+			log.WarningLog.Printf("limit resume for %q: %v", instance.Title, settleErr)
+		}
 	}
 
 	prompt := strings.TrimSpace(instance.GetPrompt())
@@ -500,7 +518,15 @@ func (m *Manager) resumeFromLimitLockedOutcome(repoID, key string, instance *ses
 		prompt = "continue"
 	}
 	if serr := as.SendPrompt(prompt); serr != nil {
-		return resumeNotPerformed, fmt.Errorf("failed to resume %q: %w", requestedTitle, serr)
+		resumeErr := fmt.Errorf("failed to resume %q: %w", requestedTitle, serr)
+		if settleErr != nil {
+			// This return skips the whole-row checkpoint below, so unlike the success
+			// path there is nothing to make the settlement moot — the gap is still
+			// open and the caller has to hear about it alongside the prompt failure.
+			// Joined, not wrapped, so errors.Is still finds either one.
+			return resumeNotPerformed, errors.Join(resumeErr, settleErr)
+		}
+		return resumeNotPerformed, resumeErr
 	}
 	// The prompt landed: this is the resume's single completion point, and the only
 	// place the limit block is lifted on either arm.
@@ -521,6 +547,23 @@ func (m *Manager) resumeFromLimitLockedOutcome(repoID, key string, instance *ses
 	repoStartLock.Unlock()
 	if persistErr != nil {
 		log.WarningLog.Printf("failed to persist instance %q: %v", instance.Title, persistErr)
+	} else if settleErr != nil {
+		// That write persisted the WHOLE row — the provenance the earlier settlement
+		// was carrying AND the resume that just landed — so the durability gap it
+		// described is closed. Retire the owed retry and the error with it: reporting
+		// a completed, fully durable resume as a failure would make a caller treat it
+		// as one.
+		m.clearOwedSettlement(repoID, instance)
+		settleErr = nil
+	}
+	if settleErr != nil {
+		// The resume itself landed — the prompt was delivered and the limit lifted —
+		// but the respawn's durable state did not. Say both, so a caller cannot read
+		// this as a failed resume, and cannot read a successful resume as meaning
+		// everything is on disk (#2883).
+		return resumePerformed, fmt.Errorf(
+			"resumed %q, but the state its respawn rebuilt could not be written to disk: %w",
+			requestedTitle, settleErr)
 	}
 	return resumePerformed, nil
 }
