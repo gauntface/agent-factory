@@ -257,6 +257,7 @@ func (m *Manager) pollLeaseActiveLocked(repoID, title, id string, now time.Time)
 func (m *Manager) observeTaskRunWhilePaused(repoID, key string, instance *session.Instance) {
 	before := instance.GetLiveness()
 	beforeReset, _ := instance.LimitResetAt()
+	taskRunWasActive := instance.TaskRunActive()
 	epoch := instance.StateEpoch() // see refreshInstanceStatus (#2135)
 	obs, err := instance.AgentServer().Snapshot()
 	// Whatever happened, no loss episode survives an attach (see above).
@@ -276,6 +277,10 @@ func (m *Manager) observeTaskRunWhilePaused(repoID, key string, instance *sessio
 	// never conclude death. The attach already answers that question.
 	m.resolveIdleLiveness(instance, obs.Content, epoch)
 	m.persistPollChange(repoID, instance, before, beforeReset, projectionChanged)
+	// The run may have just ended here, on the one path that cannot act on it: the
+	// attach owns this session's tmux. Park the declared lifecycle so the first
+	// unpaused tick applies it, instead of losing the edge entirely (#2595).
+	m.deferTaskSessionLifecycleWhilePaused(repoID, instance, taskRunWasActive)
 }
 
 // RefreshStatuses recomputes every started instance's status the way the TUI
@@ -295,6 +300,9 @@ func (m *Manager) RefreshStatuses() {
 		repoID, _ := splitDaemonInstanceKey(key)
 		entries = append(entries, entry{repoID: repoID, instance: inst})
 	}
+	// Reclaim lifecycle intents whose session is gone, in the same hold that
+	// already has the instance map (#2595).
+	m.sweepDeferredTaskLifecycleLocked()
 	m.mu.Unlock()
 
 	// Drop debounce state for sessions that are gone or replaced, colocated with
@@ -443,6 +451,11 @@ func (m *Manager) refreshInstanceStatus(repoID string, instance *session.Instanc
 	as := instance.AgentServer()
 	before := instance.GetLiveness()
 	beforeReset, _ := instance.LimitResetAt()
+	// The task run's own in-flight marker, captured beside the liveness it will be
+	// compared against. Reading it here rather than deriving it later is what makes
+	// the completion edge observable: taskRunActive flips true→false exactly once,
+	// inside a Transition below, and nothing else in the tick reports it (#2595).
+	taskRunWasActive := instance.TaskRunActive()
 	// Snapshot dismisses a pending trust prompt then reads the pane in one probe
 	// (the exact order the poll used to run CheckAndHandleTrustPrompt then
 	// HasUpdated). Content is the capture handed back so the idle branch runs the
@@ -542,6 +555,15 @@ func (m *Manager) refreshInstanceStatus(repoID string, instance *session.Instanc
 
 	// Persist a liveness OR usage-limit reset-time change (#1146); see limit.go.
 	m.persistPollChange(repoID, instance, before, beforeReset, projectionChanged)
+
+	// The run this session was spawned for may have just finished on the idle edge
+	// above. Apply the owning task's declared lifecycle (#2595) — last, after the
+	// state it reacts to is durable, so a teardown can never outrun the record of
+	// why it happened.
+	m.applyTaskSessionLifecycleOnRunEnd(repoID, instance, taskRunWasActive)
+	// And drain a lifecycle owed from a run that finished while this session was
+	// attached, now that it is being polled normally again.
+	m.applyDeferredTaskSessionLifecycle(repoID, instance)
 }
 
 // SaveInstances writes the manager's authoritative in-memory instances to disk
