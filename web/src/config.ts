@@ -28,6 +28,12 @@
 
 import { h } from "./dom.js";
 import type { ConfigEntry } from "./types.js";
+import { rebuildKeepingScroll } from "./scrollkeep.js";
+
+/** The config list is ONE global manifest, so every rebuild shows the same list and
+ *  the reader's place is always worth keeping — there is no project or filter here to
+ *  change what the list contains. */
+const CONFIG_LIST_TOKEN = "config";
 
 /** What the config view can ask the shell to do. Saving is the shell's job (it
  *  owns the token and the refresh), so the pane reports intent and renders the
@@ -177,6 +183,10 @@ export class ConfigPane {
    *  imply an atomicity across keys that the writer does not offer. */
   private editing: string | null = null;
   private draft = "";
+  // The live controls a rebuild replaces, so focus can be handed back to whichever of
+  // them had it (#2933). Null whenever that control is not currently rendered.
+  private editingInput: HTMLInputElement | null = null;
+  private advancedToggle: HTMLElement | null = null;
 
   private lastEntries: ConfigEntry[] | null = null;
   private lastStatus: ConfigStatus | null = null;
@@ -201,11 +211,59 @@ export class ConfigPane {
     // it open would invite a second write of the same thing.
     if (status && !status.error && status.key === this.editing) {
       this.editing = null;
+      this.draft = "";
     }
-    this.render();
+    this.rerenderKeepingUserState();
+  }
+
+  /**
+   * Re-renders the pane without throwing away what the user was in the middle of.
+   *
+   * Every rebuild replaces the controls, which costs three things the render itself
+   * cannot recover: the reader's scroll offset, focus, and the caret. The typed text
+   * already survives (render reads `draft`); focus did not, and that is the one that
+   * bites hardest — the app's document-level keys are gated on
+   * `isNativeControl(document.activeElement)` (index.ts), so once focus falls back to
+   * <body> the REST of what the user types stops being a value and starts being
+   * shortcuts: a "[" or "]" in a path cycles the view out from under them mid-edit.
+   *
+   * Focus is handed back only to a control that genuinely HAD it, so a rebuild can
+   * never steal focus from wherever the user actually is. Both re-render paths go
+   * through here — the data update and the advanced-settings toggle — because a toggle
+   * that drops its own focus cannot be operated twice from the keyboard.
+   */
+  private rerenderKeepingUserState(): void {
+    const active = document.activeElement;
+    const wasEditing = this.editingInput !== null && active === this.editingInput;
+    // Both ends, not just the start: a rebuild landing while text is SELECTED would
+    // otherwise silently collapse the selection the user was about to overwrite.
+    const caretStart = wasEditing ? (this.editingInput?.selectionStart ?? null) : null;
+    const caretEnd = wasEditing ? (this.editingInput?.selectionEnd ?? null) : null;
+    const wasToggle = this.advancedToggle !== null && active === this.advancedToggle;
+    // The config list is always the same list — one global manifest — so a rebuild
+    // never legitimately starts at the top. Keeping the place matters most right after
+    // a save, which is exactly when this fires.
+    rebuildKeepingScroll(this.el, CONFIG_LIST_TOKEN, CONFIG_LIST_TOKEN, () => this.render());
+    // preventScroll on BOTH: focus() scrolls its target into view by default, which
+    // would undo the offset rebuildKeepingScroll just restored. That is not a corner
+    // case — a user who wheels the pane while a field still holds focus is exactly the
+    // reader this change exists for, and a plain focus() would yank them back to the
+    // field the moment a save or an external refresh landed.
+    if (wasEditing && this.editingInput) {
+      this.editingInput.focus({ preventScroll: true });
+      if (caretStart !== null) {
+        this.editingInput.setSelectionRange(caretStart, caretEnd ?? caretStart);
+      }
+    } else if (wasToggle && this.advancedToggle) {
+      this.advancedToggle.focus({ preventScroll: true });
+    }
   }
 
   private render(): void {
+    // Dropped first: every rebuild replaces the controls, and a handle to a previous
+    // one would name a detached node for the rest of this render.
+    this.editingInput = null;
+    this.advancedToggle = null;
     const head = h(
       "div",
       { class: "af-config-head" },
@@ -245,8 +303,9 @@ export class ConfigPane {
         );
         toggle.addEventListener("click", () => {
           this.showAdvanced = !this.showAdvanced;
-          this.render();
+          this.rerenderKeepingUserState();
         });
+        this.advancedToggle = toggle;
         heading.append(toggle);
       }
       sections.push(heading);
@@ -344,6 +403,9 @@ export class ConfigPane {
 
     const input = h("input", { type: "text", class: "af-input af-config-input", autocomplete: "off" });
     input.value = this.editing === e.key ? this.draft : e.value;
+    if (this.editing === e.key) {
+      this.editingInput = input;
+    }
     input.setAttribute("aria-label", e.key);
 
     const save = h("button", { type: "button", class: "af-primary af-config-save" }, "Save");

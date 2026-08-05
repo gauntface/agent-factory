@@ -6482,7 +6482,24 @@ function h(tag, props = {}, ...children) {
   return el2;
 }
 
+// src/scrollkeep.ts
+function listToken(parts) {
+  return parts.map((p) => p ?? "none").join("\0");
+}
+function keptScrollTop(previous, next, before) {
+  return previous !== null && previous === next ? before : 0;
+}
+function rebuildKeepingScroll(el2, previous, next, rebuild) {
+  const before = el2.scrollTop;
+  rebuild();
+  const wanted = keptScrollTop(previous, next, before);
+  if (el2.scrollTop !== wanted) {
+    el2.scrollTop = wanted;
+  }
+}
+
 // src/config.ts
+var CONFIG_LIST_TOKEN = "config";
 function tiersInOrder(entries) {
   const seen = /* @__PURE__ */ new Map();
   for (const e of entries) {
@@ -6539,6 +6556,10 @@ var ConfigPane = class {
    *  imply an atomicity across keys that the writer does not offer. */
   editing = null;
   draft = "";
+  // The live controls a rebuild replaces, so focus can be handed back to whichever of
+  // them had it (#2933). Null whenever that control is not currently rendered.
+  editingInput = null;
+  advancedToggle = null;
   lastEntries = null;
   lastStatus = null;
   /** Feeds the pane fresh manifest rows. Re-rendering is skipped when nothing
@@ -6554,10 +6575,45 @@ var ConfigPane = class {
     this.status = status;
     if (status && !status.error && status.key === this.editing) {
       this.editing = null;
+      this.draft = "";
     }
-    this.render();
+    this.rerenderKeepingUserState();
+  }
+  /**
+   * Re-renders the pane without throwing away what the user was in the middle of.
+   *
+   * Every rebuild replaces the controls, which costs three things the render itself
+   * cannot recover: the reader's scroll offset, focus, and the caret. The typed text
+   * already survives (render reads `draft`); focus did not, and that is the one that
+   * bites hardest — the app's document-level keys are gated on
+   * `isNativeControl(document.activeElement)` (index.ts), so once focus falls back to
+   * <body> the REST of what the user types stops being a value and starts being
+   * shortcuts: a "[" or "]" in a path cycles the view out from under them mid-edit.
+   *
+   * Focus is handed back only to a control that genuinely HAD it, so a rebuild can
+   * never steal focus from wherever the user actually is. Both re-render paths go
+   * through here — the data update and the advanced-settings toggle — because a toggle
+   * that drops its own focus cannot be operated twice from the keyboard.
+   */
+  rerenderKeepingUserState() {
+    const active = document.activeElement;
+    const wasEditing = this.editingInput !== null && active === this.editingInput;
+    const caretStart = wasEditing ? this.editingInput?.selectionStart ?? null : null;
+    const caretEnd = wasEditing ? this.editingInput?.selectionEnd ?? null : null;
+    const wasToggle = this.advancedToggle !== null && active === this.advancedToggle;
+    rebuildKeepingScroll(this.el, CONFIG_LIST_TOKEN, CONFIG_LIST_TOKEN, () => this.render());
+    if (wasEditing && this.editingInput) {
+      this.editingInput.focus({ preventScroll: true });
+      if (caretStart !== null) {
+        this.editingInput.setSelectionRange(caretStart, caretEnd ?? caretStart);
+      }
+    } else if (wasToggle && this.advancedToggle) {
+      this.advancedToggle.focus({ preventScroll: true });
+    }
   }
   render() {
+    this.editingInput = null;
+    this.advancedToggle = null;
     const head = h(
       "div",
       { class: "af-config-head" },
@@ -6590,8 +6646,9 @@ var ConfigPane = class {
         );
         toggle.addEventListener("click", () => {
           this.showAdvanced = !this.showAdvanced;
-          this.render();
+          this.rerenderKeepingUserState();
         });
+        this.advancedToggle = toggle;
         heading.append(toggle);
       }
       sections.push(heading);
@@ -6674,6 +6731,9 @@ var ConfigPane = class {
     }
     const input = h("input", { type: "text", class: "af-input af-config-input", autocomplete: "off" });
     input.value = this.editing === e.key ? this.draft : e.value;
+    if (this.editing === e.key) {
+      this.editingInput = input;
+    }
     input.setAttribute("aria-label", e.key);
     const save = h("button", { type: "button", class: "af-primary af-config-save" }, "Save");
     const commit = () => {
@@ -11465,6 +11525,9 @@ var TasksPane = class {
   el;
   lastTasks = null;
   lastProject = null;
+  // Which list was last rendered, so a rebuild driven by a task event (a cron fire, a
+  // next-run recalculation) keeps the reader's place (#2933).
+  lastToken = null;
   /** Re-renders the tasks list SCOPED to the selected project (redesign PR2): only
    *  tasks whose project_path matches, so the tasks view operates within the same
    *  project the rail is scoped to. A null project (none exist) shows no tasks. */
@@ -11472,10 +11535,13 @@ var TasksPane = class {
     if (this.lastTasks === tasks && this.lastProject === selectedProject) {
       return;
     }
+    const token2 = listToken([selectedProject]);
+    const previous = this.lastToken;
+    this.lastToken = token2;
     this.lastTasks = tasks;
     this.lastProject = selectedProject;
     const scoped = selectedProject ? tasks.filter((t) => t.project_path === selectedProject) : [];
-    this.render(scoped);
+    rebuildKeepingScroll(this.el, previous, token2, () => this.render(scoped));
   }
   render(tasks) {
     const addBtn = h(
@@ -12474,6 +12540,9 @@ var AppShell = class {
   filterDot;
   filterMenuOpen = false;
   lastStatusFilter = null;
+  // Which list the rail last rendered, so a rebuild driven by status churn keeps the
+  // reader's place while a project/filter change still starts at the top (#2933).
+  lastRailToken = null;
   // Header text nodes for the selected pane, (re)created per selection.
   headTitle = null;
   // The selected visible rail row's archive/restore control and daemon-owned verb it
@@ -12657,7 +12726,13 @@ var AppShell = class {
     const filterChanged = this.lastStatusFilter !== state.statusFilter;
     this.lastStatusFilter = state.statusFilter;
     if (sessionsChanged || selectionChanged || projectChanged || filterChanged) {
-      this.renderRail(state);
+      const railToken = listToken([
+        state.selectedProject,
+        Object.entries(state.statusFilter).filter(([, on]) => on).map(([kind]) => kind).sort().join(",")
+      ]);
+      const previousRailToken = this.lastRailToken;
+      this.lastRailToken = railToken;
+      rebuildKeepingScroll(this.railList, previousRailToken, railToken, () => this.renderRail(state));
     }
     if (selectionChanged || !this.mainRendered) {
       this.mainRendered = true;
