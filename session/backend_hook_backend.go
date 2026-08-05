@@ -569,35 +569,200 @@ func (p *hookProvisioner) launch() (*AgentServerEndpoint, error) {
 // endpoint schema, and whether stdout held any JSON at all (which separates
 // "printed nothing usable" from "printed the wrong shape" in the error).
 //
-// Only complete, top-level values are considered. A value nested inside
-// malformed output is never promoted: recovering one would mean deciding, from
-// text that is by definition unparseable, whether it was an independent record
-// or a field of someone's log line — a question with no sound answer. stdout
-// carrying a bare endpoint object is the documented contract, so refusing to
-// guess costs a well-behaved script nothing.
+// stdout is not exclusively the endpoint's. docs/remote-hooks.md has launch_cmd
+// echo its endpoint there, and ALSO lets a background tunnel inherit the stream
+// and keep logging — so plain prose between records is normal and must not
+// disturb selection. What must never happen is promoting a value that belongs to
+// a malformed JSON record: the daemon would dial a logged service with a logged
+// credential and reap the real sandbox when that failed.
+//
+// Deciding which of those a value is, once the surrounding JSON is malformed, is
+// not possible from the bytes — a log can break before its endpoint value and
+// leave it at column 0 of the next line, identical to a record the script
+// echoed. Earlier rules (shape, wrapper provenance, line start, column) each
+// bought one counterexample. So this does not rank candidates; it tracks whether
+// the stream is still trustworthy:
+//
+//   - A line that is not a JSON opener is prose — tunnel chatter. Skipped, and
+//     it changes nothing.
+//   - A line that opens a JSON value and decodes completely is a record. It is a
+//     candidate, and scanning continues after it.
+//   - A line that opens a JSON value and does NOT decode leaves the structure
+//     unknown. From there no further value is promoted, because any of them may
+//     be that record's contents. Provision fails with the output attached rather
+//     than dialing something a log named.
 func selectHookEndpoint(stdout string) (*AgentServerEndpoint, bool) {
 	sawJSON := false
 	for cursor := 0; cursor < len(stdout); {
-		candidate, next := extractJSONAt(stdout, cursor)
-		if candidate == "" {
-			break
+		lineEnd := nextHookOutputLine(stdout, cursor)
+		line := strings.TrimRight(stdout[cursor:lineEnd], "\r\n")
+		open := cursor
+		for open < lineEnd && isJSONSpace(stdout[open]) {
+			open++
 		}
-		cursor = next
-		sawJSON = true
-
-		// The documented endpoint schema itself is the discriminator. Reject
-		// unknown fields so a structured log that merely includes url and token
-		// cannot win. First match is deliberate: logs may also follow the endpoint,
-		// so choosing by last position would only reverse the ambiguity.
-		ej, ok := decodeHookEndpointJSON(candidate)
-		if !ok {
+		// The endpoint is an OBJECT (docs/remote-hooks.md), so only a `{` line can
+		// be a record. Everything else is a tunnel logging into the inherited
+		// stream — plain prose, or a bracketed prefix like `[INFO] …`, `[2026] …`,
+		// `[2026], …` — and is skipped without parsing, which also keeps a flood of
+		// them linear.
+		if open >= lineEnd || stdout[open] != '{' {
+			cursor = lineEnd
 			continue
 		}
-		// ej.TLSFingerprint is intentionally not read — TLS was removed; an old
-		// script that still echoes it parses fine and the value is dropped.
-		return &AgentServerEndpoint{URL: ej.URL, Token: ej.Token}, true
+
+		decoder := json.NewDecoder(strings.NewReader(stdout[open:]))
+		var raw json.RawMessage
+		if err := decoder.Decode(&raw); err != nil {
+			// The endpoint is an OBJECT (docs/remote-hooks.md), so a line opening a
+			// BRACKET is never a record: `[INFO] …`, `[2026] …` and `[INFO] opening
+			// {config` are log prefixes however their message is punctuated.
+			//
+			// Only a `{` line can be a record that broke, and only an unbalanced one
+			// leaves a structure whose extent is unknown — anything after it may be
+			// its contents, so selection stops. `{config} loaded` closes what it
+			// opened, so skipping just that line is safe.
+			// Only an UNBALANCED record leaves a structure whose extent is unknown —
+			// anything after it may be its contents, so selection stops.
+			// `{config} loaded` closes what it opened, so skipping that line is safe.
+			if hookLineBracketsBalanced(line) {
+				cursor = lineEnd
+				continue
+			}
+			return nil, sawJSON
+		}
+		sawJSON = true
+
+		// The value may span several lines, so trailing content is judged on ITS
+		// last physical line — and judged BEFORE the record is accepted, since an
+		// endpoint-shaped prefix followed by a continuation is not a record either.
+		valueEnd := open + int(decoder.InputOffset())
+		valueLineEnd := nextHookOutputLine(stdout, valueEnd)
+		rest := valueEnd
+		for rest < valueLineEnd && isJSONSpace(stdout[rest]) {
+			rest++
+		}
+		switch {
+		case rest >= valueLineEnd && !hookNextLineContinues(stdout, valueLineEnd):
+			// A clean record, and the only shape that may be the endpoint. The next
+			// line is checked too: a separator moved onto its own line continues
+			// this record just as one on the same line does.
+			if ej, ok := decodeHookEndpointJSON(string(raw)); ok {
+				// ej.TLSFingerprint is intentionally not read — TLS was removed; an
+				// old script that still echoes it parses fine and the value is
+				// dropped.
+				return &AgentServerEndpoint{URL: ej.URL, Token: ej.Token}, true
+			}
+		case stdout[rest] == '{' || stdout[rest] == '[':
+			// Another value beside it: a log line carrying several. None of them is
+			// a record, so skip them all — later lines stay trustworthy because
+			// this line closed.
+		case rest >= valueLineEnd:
+			// The record continues on the next line.
+			return nil, sawJSON
+		case stdout[rest] == ',' || stdout[rest] == ':':
+			// `{…},"endpoint":` — a structural separator means the record is still
+			// open, so its extent is unknown and nothing after it is promoted.
+			return nil, sawJSON
+		default:
+			// Bare prose after a complete value — `[2026] tunnel forwarding`. A
+			// record continuing across lines breaks at a structural position, not
+			// mid-word, so this is a log line: skip it and keep reading.
+		}
+		// Advance past the WHOLE decoded value, not just its first line, or the
+		// lines inside a multi-line log would be rescanned and its nested
+		// endpoint-shaped child promoted as a record of its own.
+		cursor = valueLineEnd
 	}
 	return nil, sawJSON
+}
+
+func isJSONSpace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\r' || c == '\n'
+}
+
+// hookNextLineContinues reports that the next non-empty line begins with JSON
+// structure — a separator or a closer — which means the value above it was not a
+// record of its own. A comma moved onto its own line continues the record just
+// as one left on the same line does, and a closing bracket means the value sat
+// inside a container that started earlier.
+func hookNextLineContinues(output string, from int) bool {
+	for cursor := from; cursor < len(output); {
+		lineEnd := nextHookOutputLine(output, cursor)
+		trimmed := strings.TrimLeft(strings.TrimRight(output[cursor:lineEnd], "\r\n"), " \t")
+		if trimmed == "" {
+			cursor = lineEnd
+			continue
+		}
+		switch trimmed[0] {
+		case ',', ':', '}', ']':
+			// A separator OR a closer: either way the value above was inside
+			// something that had not ended, so it is not a record of its own.
+			return true
+		}
+		return false
+	}
+	return false
+}
+
+// hookLineBracketsBalanced reports whether every object/array opened on this line
+// also closes on it, WITH A MATCHING BRACKET, ignoring brackets inside JSON
+// strings. It is the difference between a self-contained line and a record that
+// continues into the next.
+//
+// Types are tracked, not just a depth count: `{"level":]` closes nothing, and
+// counting it as balanced would treat a record that is still open as
+// self-contained, letting the next line's logged endpoint be promoted.
+//
+// An unterminated string only matters while a bracket is still open. Bracketed
+// prose with a stray quote — `[INFO] opening "config` — has already closed
+// everything it opened, and must not poison the records after it.
+func hookLineBracketsBalanced(line string) bool {
+	var open []byte
+	inString := false
+	escaped := false
+	for index := 0; index < len(line); index++ {
+		switch {
+		case escaped:
+			escaped = false
+		case line[index] == '\\' && inString:
+			escaped = true
+		case line[index] == '"':
+			inString = !inString
+		case inString:
+		case line[index] == '{' || line[index] == '[':
+			open = append(open, line[index])
+		case line[index] == '}' || line[index] == ']':
+			if len(open) == 0 {
+				return false
+			}
+			want := byte('{')
+			if line[index] == ']' {
+				want = '['
+			}
+			if open[len(open)-1] != want {
+				return false
+			}
+			open = open[:len(open)-1]
+		}
+	}
+	return len(open) == 0
+}
+
+// nextHookOutputLine returns the offset just past the next line terminator at or
+// after from, treating CRLF as one terminator.
+func nextHookOutputLine(output string, from int) int {
+	if from >= len(output) {
+		return len(output)
+	}
+	breakAt := strings.IndexAny(output[from:], "\r\n")
+	if breakAt < 0 {
+		return len(output)
+	}
+	next := from + breakAt + 1
+	if output[from+breakAt] == '\r' && next < len(output) && output[next] == '\n' {
+		next++
+	}
+	return next
 }
 
 // reap runs delete_cmd to tear down whatever launch_cmd provisioned, idempotently

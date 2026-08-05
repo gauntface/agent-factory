@@ -33,11 +33,13 @@ import (
 //     value. This catches truncated output, where a killed launch_cmd wrote the
 //     credential and then died before closing its JSON.
 
-// maxHookTokenKeyEncodedLen bounds the token-key scan. A five-character JSON key
-// is at most 32 bytes when every character uses a six-byte \u escape, including
-// the surrounding quotes. Bounding this is what keeps a malformed escape flood
-// linear while still accepting JSON-equivalent spellings and case variants.
-const maxHookTokenKeyEncodedLen = 32
+// maxHookTokenKeyEncodedLen bounds the token-key scan. A five-character key is
+// 30 bytes when every character uses a six-byte \u escape, and each further
+// serialization level doubles its backslashes: 35 bytes at depth 2, 45 at depth
+// 3. 96 covers those with room to spare while still keeping a malformed escape
+// flood linear — the earlier 32-byte bound silently gave up on a serialized
+// Unicode-escaped key and left its token in the error (Codex P2 on #2718).
+const maxHookTokenKeyEncodedLen = 96
 
 // maxHookTokenQuoteEscapeDepth is how many backslashes may precede a quote that
 // still counts as a delimiter. Depth 0 is a raw JSON object, 1 is one serialized
@@ -164,6 +166,9 @@ func redactHookJSONValue(value any) (any, bool) {
 type hookOutputRange struct {
 	start int
 	end   int
+	// complete records that the value's closing quote was found, as opposed to
+	// the scan stopping at a line break or at the end of truncated output.
+	complete bool
 }
 
 // hookTokenRedactionRanges finds `token`-keyed string values in raw bytes,
@@ -184,19 +189,87 @@ type hookOutputRange struct {
 // more.
 func hookTokenRedactionRanges(output string) []hookOutputRange {
 	ranges := scanHookTokenRanges(output)
+	for index := range ranges {
+		// Only a value the scan could not finish continues onto another line. A
+		// complete one already has its closing quote, and extending past it would
+		// eat the diagnostic that follows.
+		if ranges[index].complete {
+			continue
+		}
+		ranges[index].end = extendHookTokenValue(output, ranges[index])
+	}
+	// The joined pass exists only to find fields the raw pass could not see —
+	// ones whose KEY or colon a line break split. Where the raw pass already
+	// matched, its result is authoritative: the joined view has no line breaks, so
+	// every match in it looks continuable and would run through the diagnostic
+	// behind a complete value.
+	rawStarts := make(map[int]struct{}, len(ranges))
+	for _, raw := range ranges {
+		rawStarts[raw.start] = struct{}{}
+	}
 	if stripped, offsets := stripRawLineBreaks(output); len(offsets) > 0 {
 		for _, joined := range scanHookTokenRanges(stripped) {
 			if joined.start >= len(offsets) || joined.end <= joined.start {
 				continue
 			}
-			end := len(output)
-			if joined.end <= len(offsets) {
-				end = offsets[joined.end-1] + 1
+			start := offsets[joined.start]
+			if _, seen := rawStarts[start]; seen {
+				continue
 			}
-			ranges = append(ranges, hookOutputRange{start: offsets[joined.start], end: end})
+			ranges = append(ranges, hookOutputRange{
+				start: start,
+				end:   extendHookTokenValue(output, hookOutputRange{start: start, end: start}),
+			})
 		}
 	}
 	return mergeHookOutputRanges(ranges)
+}
+
+// extendHookTokenValue follows a token value that a raw line break interrupted.
+//
+// A logger may hard-wrap a long credential, once or several times, and a killed
+// launch_cmd may leave it wrapped AND unterminated — in every case the tail is
+// still the secret. The continuation is bounded by WHITESPACE rather than by a
+// line count: a bearer token contains none, and prose does. That is what keeps a
+// truncated token from swallowing the diagnostic behind it, which is the only
+// account a user gets of a failed provision. The cost is at most the first word
+// of a following line, which is the safe direction to err.
+func extendHookTokenValue(output string, value hookOutputRange) int {
+	end := value.end
+	if end < value.start {
+		end = value.start
+	}
+	for end < len(output) {
+		switch output[end] {
+		case '\n', '\r':
+			// Cross the break, and the INDENT behind it: a logger that hard-wraps a
+			// long value commonly indents the continuation, and that tail is still
+			// the secret. Whitespace inside a line still terminates the value, so a
+			// truncated token cannot run on through prose.
+			next := end
+			for next < len(output) && (output[next] == '\n' || output[next] == '\r' ||
+				output[next] == ' ' || output[next] == '\t') {
+				next++
+			}
+			if next >= len(output) || output[next] == '"' {
+				return end
+			}
+			end = next
+		case ' ', '\t', '"':
+			return end
+		case '\\':
+			// An ESCAPED closing quote ends a serialized value just as a bare one
+			// ends a raw value. Stepping over it would run the redaction through
+			// the diagnostic behind the token.
+			if end+1 < len(output) && output[end+1] == '"' {
+				return end
+			}
+			end += 2
+		default:
+			end++
+		}
+	}
+	return len(output)
 }
 
 // stripRawLineBreaks returns output without its raw line breaks, plus the
@@ -260,7 +333,7 @@ func scanHookTokenRanges(output string) []hookOutputRange {
 		}
 
 		valueEnd, complete := hookTokenValueEnd(output, valueStart)
-		candidate := hookOutputRange{start: valueStart + 1, end: valueEnd}
+		candidate := hookOutputRange{start: valueStart + 1, end: valueEnd, complete: complete}
 		if len(ranges) > 0 && candidate.start <= ranges[len(ranges)-1].end {
 			if candidate.end > ranges[len(ranges)-1].end {
 				ranges[len(ranges)-1].end = candidate.end
@@ -285,6 +358,14 @@ func hookTokenKeyEnd(input string, start int) (int, bool) {
 	if limit > len(input) {
 		limit = len(input)
 	}
+	// However `token` is spelled, its bytes contain a literal t/T or a \u escape.
+	// Rejecting the whole window on that once — rather than attempting a decode at
+	// each escaped quote inside it — is what keeps an escaped-quote flood cheap
+	// now that the window is wide enough for deeply escaped keys.
+	if window := input[start:limit]; !strings.ContainsAny(window, "tT") &&
+		!strings.Contains(window, `\u`) {
+		return 0, false
+	}
 	escaped := false
 	for cursor := start + 1; cursor < limit; cursor++ {
 		switch {
@@ -292,8 +373,14 @@ func hookTokenKeyEnd(input string, start int) (int, bool) {
 			escaped = false
 			if input[cursor] == '"' {
 				// An escaped quote closes a key whose delimiters are themselves
-				// escaped — `\"token\"` inside a serialized document.
-				if hookTokenKeyMatches(input[start+1 : cursor-1]) {
+				// escaped — `\"token\"` inside a serialized document. Drop the whole
+				// run of backslashes before it, not one: at depth 2 and beyond the
+				// delimiter carries several, and a leftover kept the key from matching.
+				body := input[start+1 : cursor]
+				for len(body) > 0 && body[len(body)-1] == '\\' {
+					body = body[:len(body)-1]
+				}
+				if hookTokenKeyMatches(body) {
 					return cursor + 1, true
 				}
 			}

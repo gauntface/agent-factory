@@ -109,7 +109,11 @@ const maxJSONResyncQuotes = 8
 // byte offset immediately after it. The cursor lets callers walk every value in
 // a stream without rescanning prior output.
 func extractJSONAt(output string, start int) (string, int) {
-	if value, next := scanJSONAt(output, start); value != "" {
+	return findJSONAt(output, start, true)
+}
+
+func findJSONAt(output string, start int, recover bool) (string, int) {
+	if value, next := scanJSONAt(output, start, recover); value != "" {
 		return value, next
 	}
 	quotes := 0
@@ -118,14 +122,14 @@ func extractJSONAt(output string, start int) (string, int) {
 			continue
 		}
 		quotes++
-		if value, next := scanJSONAt(output, cursor+1); value != "" {
+		if value, next := scanJSONAt(output, cursor+1, recover); value != "" {
 			return value, next
 		}
 	}
 	return "", len(output)
 }
 
-func scanJSONAt(output string, start int) (string, int) {
+func scanJSONAt(output string, start int, recover bool) (string, int) {
 	var ranges []jsonRange
 	var stack []int
 	inString := false
@@ -181,8 +185,12 @@ func scanJSONAt(output string, start int) (string, int) {
 			if len(stack) > 0 {
 				continue
 			}
-			if value, ok := firstValidJSONRange(output, ranges, top); ok {
-				return value, ranges[top].end
+			if value, end, ok := firstValidJSONRange(output, ranges, top, recover); ok {
+				// Report the recovered value's OWN end, not the wrapper's. Callers
+				// derive its start as end-len(value) to rewrite that exact span, and
+				// a wrapper end there points the rewrite at the wrong bytes (Codex P2
+				// on #2718).
+				return value, end
 			}
 			// Nothing in this tree parsed; it is prose. Drop it and keep scanning.
 			ranges = ranges[:0]
@@ -190,8 +198,8 @@ func scanJSONAt(output string, start int) (string, int) {
 	}
 	// Wrappers left open at EOF: their completed children may still be valid.
 	if len(ranges) > 0 {
-		if value, ok := firstValidJSONRange(output, ranges, 0); ok {
-			return value, len(output)
+		if value, end, ok := firstValidJSONRange(output, ranges, 0, recover); ok {
+			return value, end
 		}
 	}
 	return "", len(output)
@@ -202,28 +210,31 @@ func scanJSONAt(output string, start int) (string, int) {
 // once, and descent is bounded to children that begin after the parent's first
 // syntax error — everything before it was already covered by the parent's failed
 // parse, so total inspected bytes stay linear in the output size.
-func firstValidJSONRange(output string, ranges []jsonRange, index int) (string, bool) {
+func firstValidJSONRange(output string, ranges []jsonRange, index int, recover bool) (string, int, bool) {
 	candidate := ranges[index]
 	errorAt := candidate.start
 	if candidate.end > candidate.start {
 		valid, position, recoverable := inspectJSONRange(output, candidate)
 		if valid {
-			return output[candidate.start:candidate.end], true
+			return output[candidate.start:candidate.end], candidate.end, true
 		}
 		if !recoverable {
-			return "", false
+			return "", 0, false
 		}
 		errorAt = position
+	}
+	if !recover {
+		return "", 0, false
 	}
 	for child := candidate.firstChild; child >= 0; child = ranges[child].nextSibling {
 		if ranges[child].start < errorAt {
 			continue
 		}
-		if value, ok := firstValidJSONRange(output, ranges, child); ok {
-			return value, true
+		if value, end, ok := firstValidJSONRange(output, ranges, child, recover); ok {
+			return value, end, true
 		}
 	}
-	return "", false
+	return "", 0, false
 }
 
 // inspectJSONRange parses directly from the output string so an early syntax
