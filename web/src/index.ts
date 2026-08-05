@@ -72,6 +72,7 @@ import {
   tabToKeepOnClose,
   upsertSession,
 } from "./sessions.js";
+import type { DragPayload } from "./layout.js";
 import { SplitView } from "./split.js";
 import { canHandoff, isArchived, type RowKind } from "./status.js";
 import { isRenameableTab } from "./tablabel.js";
@@ -1127,6 +1128,13 @@ function surfaceTabError(e: unknown): void {
   // message (e.g. create failure or tab cap) or a fail-closed refusal verbatim.
   const msg = errorText(e);
   console.error("af-web: operation failed:", msg);
+  showTransientNotice(msg);
+}
+
+/** Shows `msg` in the transient toast and arms its auto-dismiss, resetting the timer
+ *  on a fresh message. Shared by the failed-operation path above and by UI notices
+ *  (ui.ts `notice`), so there is ONE toast lifecycle rather than two that drift. */
+function showTransientNotice(msg: string): void {
   if (tabErrorTimer !== null) {
     window.clearTimeout(tabErrorTimer);
   }
@@ -1135,6 +1143,12 @@ function surfaceTabError(e: unknown): void {
     tabErrorTimer = null;
     store.set({ tabError: null });
   }, TAB_ERROR_MS);
+}
+
+/** A UI condition the user needs told about that is NOT a daemon error — a gesture
+ *  this device cannot perform. Deliberately no console.error: nothing failed. */
+function surfaceNotice(message: string): void {
+  showTransientNotice(message);
 }
 
 /** Clears the tab-error toast and cancels its auto-dismiss timer (on a selection
@@ -1575,6 +1589,10 @@ const actions = {
   closeTab: closeSessionTab,
   renameTab: renameSessionTab,
   reorderTab: reorderSessionTab,
+  notice: surfaceNotice,
+  paneDropHintAt: (x: number, y: number) => splitView.showTabDropHintAt(x, y),
+  clearPaneDropHint: () => splitView.clearTabDropHint(),
+  dropTabOnPaneAt: (x: number, y: number, drag: DragPayload) => splitView.dropTabAt(x, y, drag),
   switchView,
   setConfigValue: applyConfigValue,
   openConfigAssistant: doOpenConfigAssistant,

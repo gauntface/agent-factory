@@ -2268,6 +2268,148 @@ test("#2849 mobile: a long press copies the token under the finger", REAL_FIXTUR
   }
 });
 
+test("#2899 mobile: a finger long-presses a tab and drags it to REORDER — and a tap/scroll does not", REAL_FIXTURE, async ({
+  browser,
+}) => {
+  // Reordering a tab (and dragging one onto a pane to split) were HTML5 drag-and-drop
+  // only, which does not start from a finger: every tab advertised draggable=true on a
+  // phone and the gesture was silently declined. This drives the real thing.
+  //
+  // Trusted touch through CDP, for the reason #2682 documents: a synthesized
+  // PointerEvent would prove only that our listeners ran. A real touchStart is what
+  // makes Chromium produce the pointerType "touch" pointerdown — and, just as
+  // importantly, what makes it decide whether the gesture is a scroll.
+  //
+  // The tabs are created OUT OF BAND with distinct names on purpose. tabLabel renders
+  // every Shell tab as "Terminal", so a bar built from two shell tabs cannot show a
+  // reorder at all — the label list is identical before and after, and the assertion
+  // could never pass however well the product worked (Codex on #2901). Named process
+  // tabs are the only way this test can observe the thing it claims to.
+  const afBin = process.env.AF_BIN;
+  const mockRepo = process.env.AF_MOCK_REPO;
+  test.skip(!afBin || !mockRepo, "AF_BIN/AF_MOCK_REPO are set only by web-selftest-entry.sh");
+  const { execFileSync } = await import("node:child_process");
+  const af = (...args: string[]): void => {
+    execFileSync(afBin as string, ["--repo", mockRepo as string, ...args], { stdio: "pipe" });
+  };
+  const first = "drag-2899-one";
+  const second = "drag-2899-two";
+
+  const ctx = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    deviceScaleFactor: 3,
+    hasTouch: true,
+    isMobile: true,
+  });
+  const p = await ctx.newPage();
+  const cdp = await ctx.newCDPSession(p);
+  let created = false;
+
+  /** Tab labels left to right — the order the reorder has to change. */
+  const labels = async (): Promise<string[]> =>
+    (await p.locator(".af-tabbar .af-tab .af-tab-label").allInnerTexts()).map((t) => t.trim());
+
+  /** The center of a tab, AFTER bringing it into view. At 390px the tabs plus the
+   *  new-tab control overflow the bar, so an off-screen tab's box is a coordinate no
+   *  finger could ever land on. */
+  const centerOf = async (name: string): Promise<{ x: number; y: number }> => {
+    const tab = p.locator(".af-tabbar .af-tab", { hasText: name });
+    await tab.scrollIntoViewIfNeeded();
+    const box = await tab.boundingBox();
+    expect(box, `tab ${name} must have on-screen geometry to touch`).toBeTruthy();
+    const b = box as { x: number; y: number; width: number; height: number };
+    return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+  };
+
+  try {
+    await openTokenless(p);
+    // At 390px the rail is a drawer, so a row is not clickable until it is opened
+    // (Codex on #2901). The hamburger is the same control the mobile tests use.
+    await p.locator(".af-nav-toggle").click();
+    await row(p, SESSION_B).click();
+    await resetToAgentTab(p);
+
+    af("sessions", "tab-create", SESSION_B, "--command", "bash", "--name", first);
+    af("sessions", "tab-create", SESSION_B, "--command", "bash", "--name", second);
+    created = true;
+    // Wait for the DAEMON's tabs to reach the bar: tab-create returns before the event
+    // has been published and repainted, so reading geometry any earlier can measure a
+    // bar that holds fewer tabs than the test needs (Codex on #2901).
+    await expect(p.locator(".af-tabbar .af-tab", { hasText: first })).toHaveCount(1, { timeout: 20_000 });
+    await expect(p.locator(".af-tabbar .af-tab", { hasText: second })).toHaveCount(1, { timeout: 20_000 });
+    const before = await labels();
+    expect(before.filter((l) => l === first || l === second), "both named tabs must be in the bar").toHaveLength(2);
+
+    const insert = p.locator(".af-tab-insert");
+
+    // --- the capability: a settled long press picks the tab up, dragging moves it ---
+    const from = await centerOf(second);
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: from.x, y: from.y }] });
+    // The insertion indicator appearing IS the pick-up: nothing else shows it, and it
+    // is the same indicator the mouse drag uses.
+    await expect(insert, "a settled long press must pick the tab up").toBeVisible({ timeout: 6_000 });
+    const onto = await centerOf(first);
+    for (let step = 1; step <= 8; step++) {
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: [{ x: from.x + ((onto.x - 2 - from.x) * step) / 8, y: from.y }],
+      });
+    }
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+
+    // The two named tabs must swap: distinguishable labels are what makes this
+    // observable at all.
+    await expect
+      .poll(
+        async () => (await labels()).filter((l) => l === first || l === second).join(","),
+        { message: "a long-press drag must reorder the tab, as a mouse drag does", timeout: 15_000 },
+      )
+      .toBe(`${second},${first}`);
+    const after = await labels();
+    expect(after.slice().sort(), "a reorder moves tabs, it does not add or drop any").toEqual(before.slice().sort());
+    expect(after[0], "the agent tab is pinned first through any reorder").toBe(before[0]);
+
+    // --- and the two gestures it must NOT steal -------------------------------------
+    const order = await labels();
+
+    // A TAP stays a tap: it selects the tab, and must never reorder.
+    const tapAt = await centerOf(second);
+    await touchTap(cdp, tapAt.x, tapAt.y);
+    await expect(insert, "a tap must not pick a tab up").toBeHidden({ timeout: 2_000 });
+    expect(await labels(), "a tap must not reorder").toEqual(order);
+
+    // A SCROLL stays a scroll — the bar is horizontally scrollable when tabs overflow,
+    // and a pick-up suspends that, so a false pick-up would strand it. Travel past slop
+    // and THEN hold well past the pick-up threshold: this is the exact gesture that
+    // would wrongly pick a tab up if movement did not disqualify a press for good.
+    const scrollFrom = await centerOf(second);
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: scrollFrom.x, y: scrollFrom.y }] });
+    for (let step = 1; step <= 6; step++) {
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: [{ x: scrollFrom.x - step * 8, y: scrollFrom.y }],
+      });
+    }
+    await p.waitForTimeout(900); // outlast holdMs while still down
+    await expect(insert, "a scrolling finger must never pick a tab up").toBeHidden({ timeout: 2_000 });
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    expect(await labels(), "scrolling the bar must not reorder").toEqual(order);
+  } finally {
+    if (created) {
+      for (const name of [first, second]) {
+        try {
+          af("sessions", "tab-delete", SESSION_B, "--name", name);
+        } catch {
+          // best effort: the assertions above are the subject, not the cleanup
+        }
+      }
+    }
+    await ctx.close();
+    await row(page, SESSION_A).click();
+    await expect(row(page, SESSION_A)).toHaveClass(/af-row-selected/);
+  }
+});
+
 test("the #1694 keyboard model: j/k navigate, Enter attaches, ctrl+] returns to rail", REAL_FIXTURE, async () => {
   // Attach to A HERE rather than inheriting terminal mode from the previous flow
   // (#2816). Inheriting made this test fail whenever its predecessor did: a failure
