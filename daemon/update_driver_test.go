@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -54,10 +55,12 @@ func newDriverHarness(t *testing.T) *driverHarness {
 		tag:       "v1.0.300",
 	}
 	h.driver = &updateDriver{
-		cachePath:      h.cachePath,
-		currentVersion: "1.0.200",
-		config:         func() *config.Config { return h.cfg },
-		now:            func() time.Time { return h.now },
+		cachePath:          h.cachePath,
+		currentVersion:     "1.0.200",
+		config:             func() *config.Config { return h.cfg },
+		now:                func() time.Time { return h.now },
+		executableIdentity: func() (string, error) { return "stable-identity", nil },
+		baselineExecutable: "stable-identity",
 		discover: func(channel string, _ time.Duration) (string, error) {
 			h.mu.Lock()
 			h.channels = append(h.channels, channel)
@@ -116,7 +119,7 @@ func TestUpdateDriver_NeverWritesTheSharedThrottleCache(t *testing.T) {
 			before := h.readCacheFile(t)
 			require.NotEmpty(t, before, "the cache must exist, or this proves nothing")
 
-			require.Equal(t, tc.want, h.driver.checkOnce())
+			require.Equal(t, tc.want, h.driver.checkOnce(context.Background()))
 			require.Equal(t, []string{config.UpdateChannelStable}, h.checkedChannels(),
 				"the window was open, so the driver must have made exactly one lookup")
 
@@ -132,7 +135,7 @@ func TestUpdateDriver_NeverWritesTheSharedThrottleCache(t *testing.T) {
 func TestUpdateDriver_DoesNotCreateTheThrottleCache(t *testing.T) {
 	h := newDriverHarness(t)
 
-	require.Equal(t, updateCheckAvailable, h.driver.checkOnce())
+	require.Equal(t, updateCheckAvailable, h.driver.checkOnce(context.Background()))
 	require.Len(t, h.checkedChannels(), 1)
 
 	_, err := os.Stat(h.cachePath)
@@ -146,7 +149,7 @@ func TestUpdateDriver_DefersToARecentCheckByAnotherAf(t *testing.T) {
 	h := newDriverHarness(t)
 	h.seedCache(t, config.UpdateChannelStable, h.now.Add(-1*time.Hour))
 
-	require.Equal(t, updateCheckSkipped, h.driver.checkOnce())
+	require.Equal(t, updateCheckSkipped, h.driver.checkOnce(context.Background()))
 	require.Empty(t, h.checkedChannels(), "the shared window was closed, so no lookup may happen")
 }
 
@@ -158,7 +161,7 @@ func TestUpdateDriver_FollowsAChannelSwitch(t *testing.T) {
 	h.seedCache(t, config.UpdateChannelStable, h.now.Add(-1*time.Hour))
 	h.cfg.UpdateChannel = config.UpdateChannelPreview
 
-	require.Equal(t, updateCheckAvailable, h.driver.checkOnce())
+	require.Equal(t, updateCheckAvailable, h.driver.checkOnce(context.Background()))
 	require.Equal(t, []string{config.UpdateChannelPreview}, h.checkedChannels())
 }
 
@@ -181,7 +184,7 @@ func TestUpdateDriver_ChecksAtMostOncePerCheckInterval(t *testing.T) {
 			h.tag, h.err = tc.tag, tc.err
 
 			base := h.now
-			h.driver.checkOnce()
+			h.driver.checkOnce(context.Background())
 			require.Len(t, h.checkedChannels(), 1)
 
 			// Every wake for the next six hours: no further lookup. Offsets are
@@ -192,14 +195,14 @@ func TestUpdateDriver_ChecksAtMostOncePerCheckInterval(t *testing.T) {
 				autoupdate.CheckInterval - time.Second,
 			} {
 				h.now = base.Add(elapsed)
-				require.Equal(t, updateCheckSkipped, h.driver.checkOnce(),
+				require.Equal(t, updateCheckSkipped, h.driver.checkOnce(context.Background()),
 					"a check %s after the last one must be suppressed", elapsed)
 				require.Len(t, h.checkedChannels(), 1, "a second lookup inside the interval is the retry storm the throttle exists to prevent")
 			}
 
 			// Past the interval it checks again.
 			h.now = base.Add(autoupdate.CheckInterval)
-			h.driver.checkOnce()
+			h.driver.checkOnce(context.Background())
 			require.Len(t, h.checkedChannels(), 2)
 		})
 	}
@@ -213,7 +216,7 @@ func TestUpdateDriver_OffSwitchMakesNoNetworkCall(t *testing.T) {
 		h := newDriverHarness(t)
 		h.cfg.AutoUpdate = false
 
-		require.Equal(t, updateCheckSkipped, h.driver.checkOnce())
+		require.Equal(t, updateCheckSkipped, h.driver.checkOnce(context.Background()))
 		require.Empty(t, h.checkedChannels())
 	})
 
@@ -221,7 +224,7 @@ func TestUpdateDriver_OffSwitchMakesNoNetworkCall(t *testing.T) {
 		h := newDriverHarness(t)
 		t.Setenv(autoupdate.EnvironmentVariable, "0")
 
-		require.Equal(t, updateCheckSkipped, h.driver.checkOnce())
+		require.Equal(t, updateCheckSkipped, h.driver.checkOnce(context.Background()))
 		require.Empty(t, h.checkedChannels())
 	})
 
@@ -230,7 +233,7 @@ func TestUpdateDriver_OffSwitchMakesNoNetworkCall(t *testing.T) {
 		h.cfg.AutoUpdate = false
 		t.Setenv(autoupdate.EnvironmentVariable, "1")
 
-		require.Equal(t, updateCheckAvailable, h.driver.checkOnce())
+		require.Equal(t, updateCheckAvailable, h.driver.checkOnce(context.Background()))
 		require.Len(t, h.checkedChannels(), 1)
 	})
 }
@@ -241,13 +244,13 @@ func TestUpdateDriver_OffSwitchMakesNoNetworkCall(t *testing.T) {
 func TestUpdateDriver_HonoursTheOffSwitchWithoutARestart(t *testing.T) {
 	h := newDriverHarness(t)
 
-	require.Equal(t, updateCheckAvailable, h.driver.checkOnce())
+	require.Equal(t, updateCheckAvailable, h.driver.checkOnce(context.Background()))
 	require.Len(t, h.checkedChannels(), 1)
 
 	h.cfg.AutoUpdate = false
 	h.now = h.now.Add(autoupdate.CheckInterval + time.Minute)
 
-	require.Equal(t, updateCheckSkipped, h.driver.checkOnce())
+	require.Equal(t, updateCheckSkipped, h.driver.checkOnce(context.Background()))
 	require.Len(t, h.checkedChannels(), 1, "a disabled driver must make no further lookup")
 }
 
@@ -257,7 +260,7 @@ func TestUpdateDriver_SkipsWithoutAConfig(t *testing.T) {
 	h := newDriverHarness(t)
 	h.driver.config = func() *config.Config { return nil }
 
-	require.Equal(t, updateCheckSkipped, h.driver.checkOnce())
+	require.Equal(t, updateCheckSkipped, h.driver.checkOnce(context.Background()))
 	require.Empty(t, h.checkedChannels())
 }
 
@@ -269,7 +272,7 @@ func TestUpdateDriver_NeverReportsADowngrade(t *testing.T) {
 	h.driver.currentVersion = "1.0.300-preview-4"
 	h.tag = "v1.0.299"
 
-	require.Equal(t, updateCheckUpToDate, h.driver.checkOnce())
+	require.Equal(t, updateCheckUpToDate, h.driver.checkOnce(context.Background()))
 }
 
 // A stable release outranks a preview of the same base, so a preview user is
@@ -279,7 +282,7 @@ func TestUpdateDriver_ReportsAStableReleaseOverAPreviewOfTheSameBase(t *testing.
 	h.driver.currentVersion = "1.0.300-preview-4"
 	h.tag = "v1.0.300"
 
-	require.Equal(t, updateCheckAvailable, h.driver.checkOnce())
+	require.Equal(t, updateCheckAvailable, h.driver.checkOnce(context.Background()))
 }
 
 // A lock held by another af — one mid-download on the launch path — stands the
@@ -299,7 +302,7 @@ func TestUpdateDriver_StandsDownWhileAnotherAfHoldsTheUpdateLock(t *testing.T) {
 	}()
 	<-held
 
-	require.Equal(t, updateCheckSkipped, h.driver.checkOnce())
+	require.Equal(t, updateCheckSkipped, h.driver.checkOnce(context.Background()))
 	require.Empty(t, h.checkedChannels(), "another af owns the check; the daemon must not pile on")
 	require.True(t, h.driver.nextCheckNotBefore.IsZero(),
 		"standing down for a busy lock must not burn the six-hour backoff — nothing was checked")
@@ -320,11 +323,11 @@ func TestUpdateDriver_BacksOffWhenTheSharedWindowIsUnreadable(t *testing.T) {
 	h.driver.cachePath = filepath.Join(blocked, autoupdate.CheckCacheFileName)
 
 	base := h.now
-	require.Equal(t, updateCheckSkipped, h.driver.checkOnce())
+	require.Equal(t, updateCheckSkipped, h.driver.checkOnce(context.Background()))
 	require.Empty(t, h.checkedChannels(), "an unreadable window must not be checked past")
 
 	h.now = base.Add(autoupdate.CheckInterval - time.Second)
-	require.Equal(t, updateCheckSkipped, h.driver.checkOnce())
+	require.Equal(t, updateCheckSkipped, h.driver.checkOnce(context.Background()))
 	require.False(t, h.driver.nextCheckNotBefore.IsZero(), "the failure must have armed the backoff")
 	require.True(t, h.driver.nextCheckNotBefore.After(h.now), "and it must still hold inside the interval")
 }
@@ -477,7 +480,7 @@ func TestUpdateDriver_DoesNotRecreateADeletedHome(t *testing.T) {
 	home := filepath.Dir(h.cachePath)
 	require.NoError(t, os.RemoveAll(home))
 
-	require.Equal(t, updateCheckSkipped, h.driver.checkOnce())
+	require.Equal(t, updateCheckSkipped, h.driver.checkOnce(context.Background()))
 	require.Empty(t, h.checkedChannels(), "a deleted home means stand down, not check anyway")
 
 	_, err := os.Stat(home)
@@ -541,7 +544,7 @@ func TestStartUpdateDriver_JoinsAndReleasesTheDaemonWaitGroup(t *testing.T) {
 
 	wg := &sync.WaitGroup{}
 	stopCh := make(chan struct{})
-	startUpdateDriver(manager, stopCh, wg)
+	startUpdateDriver(manager, func() {}, stopCh, wg)
 
 	waited := make(chan struct{})
 	go func() {
@@ -568,7 +571,7 @@ func TestNewUpdateDriverReadsTheLiveConfig(t *testing.T) {
 	manager := &Manager{}
 	manager.live.Store(&config.Config{AutoUpdate: false, UpdateChannel: config.UpdateChannelPreview})
 
-	driver := newUpdateDriver(manager)
+	driver := newUpdateDriver(manager, func() {})
 	require.False(t, driver.config().AutoUpdate)
 
 	manager.live.Store(&config.Config{AutoUpdate: true, UpdateChannel: config.UpdateChannelPreview})
@@ -582,7 +585,7 @@ func TestUpdateDriverReadsTheSharedCacheFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("AGENT_FACTORY_HOME", home)
 
-	driver := newUpdateDriver(&Manager{})
+	driver := newUpdateDriver(&Manager{}, func() {})
 	require.Equal(t, autoupdate.CheckCachePath(), driver.cachePath)
 	require.Equal(t, filepath.Join(home, autoupdate.CheckCacheFileName), driver.cachePath)
 
@@ -598,4 +601,360 @@ func driverCacheBytes(t *testing.T, path string) string {
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	return string(data)
+}
+
+// enableActivation opts the harness in to daemon-owned activation and gives it
+// stub staging/hand-off collaborators, returning what they recorded.
+type activationRecord struct {
+	downloadedURL string
+	candidate     []byte
+	toVersion     string
+	activateErr   error
+	downloadErr   error
+	downloads     int
+	activations   int
+}
+
+func enableActivation(h *driverHarness, enabled bool) *activationRecord {
+	rec := &activationRecord{}
+	h.driver.activationEnabled = func() bool { return enabled }
+	h.driver.download = func(_ context.Context, url string, _ time.Duration) ([]byte, error) {
+		rec.downloads++
+		rec.downloadedURL = url
+		if rec.downloadErr != nil {
+			return nil, rec.downloadErr
+		}
+		return []byte("candidate-af-binary"), nil
+	}
+	h.driver.activate = func(_ context.Context, candidate []byte, toVersion string) error {
+		rec.activations++
+		rec.candidate = candidate
+		rec.toVersion = toVersion
+		return rec.activateErr
+	}
+	return rec
+}
+
+// The conservative default, and the whole reason this slice can land before the
+// destructive integration exists: without the operator opt-in the driver reports
+// and installs nothing, exactly as it did before.
+func TestUpdateDriver_ActivationIsOffByDefault(t *testing.T) {
+	h := newDriverHarness(t)
+	rec := enableActivation(h, false)
+
+	require.Equal(t, updateCheckAvailable, h.driver.checkOnce(context.Background()))
+	require.Zero(t, rec.downloads, "a driver that cannot install must not spend bandwidth staging")
+	require.Zero(t, rec.activations)
+}
+
+// A driver with no enabler at all is off too — activation must be asked for, not
+// arrived at by a missing collaborator.
+func TestUpdateDriver_ActivationRequiresAnExplicitEnabler(t *testing.T) {
+	h := newDriverHarness(t)
+	h.driver.activationEnabled = nil
+
+	require.Equal(t, updateCheckAvailable, h.driver.checkOnce(context.Background()))
+}
+
+// Opted in: stage the release for this platform and hand it to the transactional
+// path with the version stripped of its leading v.
+func TestUpdateDriver_ActivatesWhenOptedIn(t *testing.T) {
+	h := newDriverHarness(t)
+	h.tag = "v1.0.300"
+	rec := enableActivation(h, true)
+
+	require.Equal(t, updateCheckActivated, h.driver.checkOnce(context.Background()))
+	require.Equal(t, 1, rec.downloads)
+	require.Equal(t, 1, rec.activations)
+	require.Equal(t, "1.0.300", rec.toVersion, "the trigger takes a version, not a tag")
+	require.Equal(t, []byte("candidate-af-binary"), rec.candidate)
+	require.Equal(t, autoupdate.DownloadURL("v1.0.300", updateDriverGOOS, updateDriverGOARCH), rec.downloadedURL)
+}
+
+// Activation must never close the shared throttle window. This process exits at
+// the hand-off and the supervisor decides afterwards whether to commit or roll
+// back, so "installed" is a claim the daemon is not entitled to make — and if
+// the candidate rolls back, recording would have suppressed the launch path that
+// still works.
+func TestUpdateDriver_ActivationStillNeverWritesTheThrottleCache(t *testing.T) {
+	h := newDriverHarness(t)
+	enableActivation(h, true)
+	h.seedCache(t, config.UpdateChannelStable, h.now.Add(-7*time.Hour))
+	before := h.readCacheFile(t)
+	require.NotEmpty(t, before)
+
+	require.Equal(t, updateCheckActivated, h.driver.checkOnce(context.Background()))
+	require.Equal(t, before, h.readCacheFile(t),
+		"the daemon cannot observe whether its own upgrade committed, so it must not record one")
+}
+
+// A release whose hand-off failed must not be retried every six hours forever —
+// that is the "bad release re-breaks the box" outcome the design rules out. The
+// daemon keeps serving the old version.
+func TestUpdateDriver_RejectsATagWhoseActivationFailed(t *testing.T) {
+	h := newDriverHarness(t)
+	rec := enableActivation(h, true)
+	rec.activateErr = errors.New("recovery actor never reached supervisor_ready")
+
+	base := h.now
+	require.Equal(t, updateCheckFailed, h.driver.checkOnce(context.Background()))
+	require.Equal(t, 1, rec.activations)
+
+	// Next window, same tag: reported, never retried.
+	h.now = base.Add(autoupdate.CheckInterval)
+	require.Equal(t, updateCheckAvailable, h.driver.checkOnce(context.Background()))
+	require.Equal(t, 1, rec.activations, "the same failed release must not be activated again")
+	require.Equal(t, 1, rec.downloads, "nor staged again")
+
+	// A different, newer release is still eligible — the quarantine is per tag,
+	// not a circuit breaker on the whole feature.
+	h.tag = "v1.0.400"
+	h.now = base.Add(2 * autoupdate.CheckInterval)
+	rec.activateErr = nil
+	require.Equal(t, updateCheckActivated, h.driver.checkOnce(context.Background()))
+	require.Equal(t, 2, rec.activations)
+}
+
+// A download failure is transient — a flaky link, a half-published release — so
+// it must NOT reject the tag. The six-hour window is the retry bound.
+func TestUpdateDriver_ADownloadFailureDoesNotRejectTheTag(t *testing.T) {
+	h := newDriverHarness(t)
+	rec := enableActivation(h, true)
+	rec.downloadErr = errors.New("connection reset")
+
+	base := h.now
+	require.Equal(t, updateCheckFailed, h.driver.checkOnce(context.Background()))
+	require.Zero(t, rec.activations)
+
+	rec.downloadErr = nil
+	h.now = base.Add(autoupdate.CheckInterval)
+	require.Equal(t, updateCheckActivated, h.driver.checkOnce(context.Background()),
+		"a transient staging failure must not disqualify the release")
+	require.Equal(t, 1, rec.activations)
+}
+
+// The opt-in is re-read every wake, so an operator who turns it off is honoured
+// without restarting the daemon — the same contract as the master switch.
+func TestUpdateDriver_ActivationOptInIsRereadEveryWake(t *testing.T) {
+	h := newDriverHarness(t)
+	rec := enableActivation(h, true)
+	enabled := true
+	h.driver.activationEnabled = func() bool { return enabled }
+
+	base := h.now
+	require.Equal(t, updateCheckActivated, h.driver.checkOnce(context.Background()))
+	require.Equal(t, 1, rec.activations)
+
+	enabled = false
+	h.tag = "v1.0.400"
+	h.now = base.Add(autoupdate.CheckInterval)
+	require.Equal(t, updateCheckAvailable, h.driver.checkOnce(context.Background()))
+	require.Equal(t, 1, rec.activations, "turning the opt-in off must take effect without a restart")
+}
+
+// The env switch itself: default off, the documented vocabulary honoured, and
+// anything unrecognised OFF rather than authorising a self-replacing daemon.
+func TestDaemonUpgradeActivationEnabled(t *testing.T) {
+	t.Run("unset is off", func(t *testing.T) {
+		// t.Setenv first so its cleanup restores whatever the process had;
+		// os.Unsetenv alone would leak the change into later tests.
+		t.Setenv(DaemonUpgradeEnvironmentVariable, "placeholder")
+		require.NoError(t, os.Unsetenv(DaemonUpgradeEnvironmentVariable))
+		require.False(t, daemonUpgradeActivationEnabled())
+	})
+	for _, on := range []string{"1", "true", "T", "yes", "Y", "on", " On "} {
+		t.Run("on:"+on, func(t *testing.T) {
+			t.Setenv(DaemonUpgradeEnvironmentVariable, on)
+			require.True(t, daemonUpgradeActivationEnabled())
+		})
+	}
+	for _, off := range []string{"", "0", "false", "no", "off", "maybe", "2", "yes please"} {
+		t.Run("off:"+off, func(t *testing.T) {
+			t.Setenv(DaemonUpgradeEnvironmentVariable, off)
+			require.False(t, daemonUpgradeActivationEnabled(),
+				"an unreadable value must not authorise a daemon to replace its own binary")
+		})
+	}
+}
+
+// An operator who asks the daemon to stop must not get a published transaction
+// and a started candidate instead. Staging takes minutes and RunDaemon waits on
+// this goroutine, so continuing would both upgrade unbidden and hold the stop
+// open.
+func TestUpdateDriver_ShutdownDuringStagingAbandonsTheUpgrade(t *testing.T) {
+	h := newDriverHarness(t)
+	rec := enableActivation(h, true)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	h.driver.download = func(dctx context.Context, _ string, _ time.Duration) ([]byte, error) {
+		rec.downloads++
+		cancel() // the daemon starts shutting down mid-download
+		return []byte("candidate-af-binary"), dctx.Err()
+	}
+
+	require.Equal(t, updateCheckSkipped, h.driver.checkOnce(ctx))
+	require.Zero(t, rec.activations, "a shutting-down daemon must not hand over an upgrade")
+}
+
+// Same, for a download that completes before the cancellation is noticed: the
+// hand-off is still abandoned.
+func TestUpdateDriver_ShutdownAfterStagingAbandonsTheUpgrade(t *testing.T) {
+	h := newDriverHarness(t)
+	rec := enableActivation(h, true)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	h.driver.download = func(context.Context, string, time.Duration) ([]byte, error) {
+		rec.downloads++
+		cancel()
+		return []byte("candidate-af-binary"), nil
+	}
+
+	require.Equal(t, updateCheckSkipped, h.driver.checkOnce(ctx))
+	require.Equal(t, 1, rec.downloads)
+	require.Zero(t, rec.activations)
+}
+
+// The cancellation reaches the download itself, so a shutdown does not have to
+// wait out the whole staging budget.
+func TestUpdateDriver_StagingIsCancellable(t *testing.T) {
+	h := newDriverHarness(t)
+	enableActivation(h, true)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	observed := make(chan struct{})
+	h.driver.download = func(dctx context.Context, _ string, _ time.Duration) ([]byte, error) {
+		close(observed)
+		<-dctx.Done() // would hang forever if cancellation were not threaded through
+		return nil, dctx.Err()
+	}
+
+	go func() { <-observed; cancel() }()
+	// Skipped, not failed: a cancelled transfer IS the shutdown, and calling the
+	// operator's own stop a staging failure would be the wrong report.
+	require.Equal(t, updateCheckSkipped, h.driver.checkOnce(ctx))
+}
+
+// Staging takes minutes with the shared cache lock released, so an interactive
+// `af upgrade` can legitimately install in that window — the interlock does not
+// stop it, because no transaction exists yet. Handing over afterwards would
+// install the now-stale candidate over that newer binary and preserve the newer
+// one as the rollback target.
+func TestUpdateDriver_AbandonsAStaleCandidateWhenTheExecutableChanged(t *testing.T) {
+	h := newDriverHarness(t)
+	rec := enableActivation(h, true)
+
+	identity := h.driver.baselineExecutable
+	h.driver.executableIdentity = func() (string, error) { return identity, nil }
+	h.driver.download = func(context.Context, string, time.Duration) ([]byte, error) {
+		rec.downloads++
+		identity = "someone-else-installed" // an af upgrade lands mid-staging
+		return []byte("candidate-af-binary"), nil
+	}
+
+	require.Equal(t, updateCheckSkipped, h.driver.checkOnce(context.Background()))
+	require.Equal(t, 1, rec.downloads)
+	require.Zero(t, rec.activations,
+		"a candidate staged against a binary that has since been replaced must not be activated")
+}
+
+// An unreadable executable is not a licence to hand over either — the daemon
+// cannot show the candidate is still an upgrade, so it does not act.
+func TestUpdateDriver_UnreadableExecutableBlocksActivation(t *testing.T) {
+	h := newDriverHarness(t)
+	rec := enableActivation(h, true)
+	h.driver.executableIdentity = func() (string, error) { return "", errors.New("permission denied") }
+
+	require.Equal(t, updateCheckFailed, h.driver.checkOnce(context.Background()))
+	require.Zero(t, rec.downloads, "an unverifiable executable must not even be staged against")
+	require.Zero(t, rec.activations)
+}
+
+// The identity is a real fingerprint of the running binary, and it changes when
+// the file is replaced the way an in-place install replaces it.
+func TestRunningExecutableIdentity_ChangesWhenTheBinaryIsReplaced(t *testing.T) {
+	first, err := runningExecutableIdentity()
+	require.NoError(t, err)
+	require.NotEmpty(t, first)
+
+	again, err := runningExecutableIdentity()
+	require.NoError(t, err)
+	require.Equal(t, first, again, "an unchanged binary must fingerprint the same")
+}
+
+// The case a before/after pair around the download cannot see: the executable
+// was ALREADY replaced before this wake, while this daemon kept running the old
+// binary. `af upgrade --no-restart` says it leaves the daemon alone in as many
+// words, and the launch updater reaches the same state when it installs but
+// cannot make the autostart unit restart-safe.
+//
+// Both readings around the download would agree perfectly — they describe the
+// same already-new binary — so only a baseline taken at daemon start catches it.
+// Without this, a stable-channel check installs an older tag over the newer
+// binary on disk and hands the transaction that newer binary as its rollback
+// target.
+func TestUpdateDriver_AbandonsWhenTheExecutableWasReplacedBeforeThisWake(t *testing.T) {
+	h := newDriverHarness(t)
+	rec := enableActivation(h, true)
+
+	// Stable across the whole check — nothing changes during the download — but
+	// it is not what this daemon started from.
+	h.driver.executableIdentity = func() (string, error) { return "installed-by-af-upgrade-no-restart", nil }
+
+	require.Equal(t, updateCheckSkipped, h.driver.checkOnce(context.Background()))
+	require.Zero(t, rec.downloads, "a drifted executable must be caught before spending the bandwidth")
+	require.Zero(t, rec.activations)
+}
+
+// No baseline means no way to prove the candidate is an upgrade over what is
+// actually installed, so activation fails closed rather than guessing.
+func TestUpdateDriver_NoExecutableBaselineBlocksActivation(t *testing.T) {
+	h := newDriverHarness(t)
+	rec := enableActivation(h, true)
+	h.driver.baselineErr = errors.New("could not resolve the executable at startup")
+
+	require.Equal(t, updateCheckFailed, h.driver.checkOnce(context.Background()))
+	require.Zero(t, rec.downloads)
+	require.Zero(t, rec.activations)
+}
+
+// The baseline is captured at construction, when the on-disk binary is still the
+// one this process exec'd from — later is too late.
+func TestNewUpdateDriver_CapturesTheExecutableBaselineAtStart(t *testing.T) {
+	manager := &Manager{}
+	manager.live.Store(&config.Config{AutoUpdate: true})
+
+	driver := newUpdateDriver(manager, func() {})
+	if driver.baselineErr != nil {
+		t.Skipf("no resolvable executable in this environment: %v", driver.baselineErr)
+	}
+	require.NotEmpty(t, driver.baselineExecutable)
+
+	current, err := driver.executableIdentity()
+	require.NoError(t, err)
+	require.Equal(t, driver.baselineExecutable, current,
+		"an untouched executable must still match the baseline taken at start")
+}
+
+// The fingerprint hashes the whole binary, so shutdown can land between the
+// post-download check and the hand-off. triggerUpgradeActivation enters Prepare
+// before it looks at the context, and the detached recovery-job start takes no
+// context at all — so past that point an operator's stop publishes a transaction
+// instead of exiting.
+func TestUpdateDriver_ShutdownDuringTheFingerprintAbandonsTheUpgrade(t *testing.T) {
+	h := newDriverHarness(t)
+	rec := enableActivation(h, true)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	calls := 0
+	h.driver.executableIdentity = func() (string, error) {
+		calls++
+		if calls == 2 {
+			cancel() // shutdown lands while the post-download fingerprint runs
+		}
+		return h.driver.baselineExecutable, nil
+	}
+
+	require.Equal(t, updateCheckSkipped, h.driver.checkOnce(ctx))
+	require.Equal(t, 1, rec.downloads)
+	require.Zero(t, rec.activations, "a stopping daemon must not publish a transaction")
 }
