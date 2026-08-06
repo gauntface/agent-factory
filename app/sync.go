@@ -815,6 +815,22 @@ func (m *home) reconcileSnapshotOp(inst *session.Instance, op session.InFlightOp
 		_ = inst.Transition(session.ClearOp())
 		m.adoptedSnapshotOps.forget(inst)
 		return true
+	case session.OpRespawning:
+		// Same contract for the limit-resume fence (#2997), and for the same reason:
+		// a respawn settles to running, back to limit-parked, or to lost, so keying
+		// the release on any particular liveness would strand the fence on the
+		// others. This clause is what makes adopting the op above safe — and unlike
+		// OpCreating, a missed release would not even show, since OpRespawning
+		// composes to the settled liveness rather than masking it as Loading.
+		_ = inst.Transition(session.ClearOp())
+		// Drop the provenance with the op, exactly as the three cases above do
+		// (#3005/#3006 landed after this case was written). Leaving it is benign only
+		// by accident — vetoesReconcile short-circuits on OpNone, so the stale entry is
+		// never read — but it survives pruneTo for as long as the row is live, and the
+		// next path that consults provenance without checking the op first would
+		// inherit a wrong answer.
+		m.adoptedSnapshotOps.forget(inst)
+		return true
 	}
 	return false
 }
@@ -848,6 +864,23 @@ func (m *home) adoptSnapshotOp(inst *session.Instance, op session.InFlightOp, lv
 		err = inst.Transition(session.MarkRestoring())
 	case session.OpReplacing:
 		err = inst.Transition(session.BeginHandoff())
+	case session.OpRespawning:
+		// A limit resume re-spawning the runtime (#2997). Adopted so this TUI's action
+		// gating agrees with the daemon that owns the fence. It DOES also change how
+		// the row reads, which an earlier version of this comment wrongly denied:
+		// ui/tree/render.go masks the liveness glyph for any non-None op, so a
+		// respawning row shows the blank working glyph rather than its limit diamond,
+		// and web/src/status.ts classifies it as working (project.ts counts it that
+		// way). That is consistent with every other op and with #1766 — a resume in
+		// flight IS work in flight — and the "[limit] resets …" title prefix still
+		// renders throughout, so the state is not hidden. Without adopting, this TUI's own
+		// ValidateRuntimeAction(RuntimeActionHandoff) reads OpNone and opens the
+		// picker, and the daemon then refuses the selected handoff because its
+		// authoritative instance still carries the fence — an action offered and
+		// then rejected. The settle path below must clear it; see there for why
+		// adopting is safe here in a way adopting OpCreating on an established row
+		// was not.
+		err = inst.Transition(session.BeginRespawn())
 	default:
 		return false
 	}

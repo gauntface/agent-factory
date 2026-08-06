@@ -258,7 +258,18 @@ func (m *Manager) observeTaskRunWhilePaused(repoID, key string, instance *sessio
 	before := instance.GetLiveness()
 	beforeReset, _ := instance.LimitResetAt()
 	taskRunWasActive := instance.TaskRunActive()
-	epoch := instance.StateEpoch() // see refreshInstanceStatus (#2135)
+	// Paired with the op axis, and skipped on, for the same reason as the plain poll
+	// (#2997). This is a SECOND path out of refreshInstanceStatus and it returns
+	// before that one's paired check, so it needs its own: the op skip up there ran
+	// earlier in the tick, and a fence raised since would leave this helper reading a
+	// post-fence epoch. Its observation would then look current and be APPLIED — here
+	// that means settling LiveReady from the empty snapshot of a runtime being torn
+	// down, which ends the task run early and leaves a failed respawn unretryable.
+	op, epoch := instance.InFlightOpAndEpoch()
+	if op != session.OpNone {
+		m.clearRemoteLoss(key)
+		return
+	}
 	obs, err := instance.AgentServer().Snapshot()
 	// Whatever happened, no loss episode survives an attach (see above).
 	m.clearRemoteLoss(key)
@@ -444,7 +455,19 @@ func (m *Manager) refreshInstanceStatus(repoID string, instance *session.Instanc
 	// the conclusion it draws from that capture is still about the state it
 	// observed — or whether a resume/kill/archive has moved the session on since
 	// (#2135). See resolveIdleLiveness and session/state_epoch.go.
-	epoch := instance.StateEpoch()
+	//
+	// Read together with the op axis, and re-check it here (#2997). The skip above
+	// ran earlier in this tick: a fence raised in between has already been passed,
+	// and the epoch captured after it would make this tick's observation look
+	// current and be APPLIED to a session an operation owns. Reading both at once
+	// makes the epoch necessarily older than any later fence, so the guard drops the
+	// observation instead. Clearing the episode matches every other skip above — a
+	// tick we did not observe cannot be part of a consecutive run (#1794).
+	op, epoch := instance.InFlightOpAndEpoch()
+	if op != session.OpNone {
+		m.clearRemoteLoss(key)
+		return
+	}
 	// Select the AgentServer only after capturing the epoch. A remote runtime swap
 	// replaces this handle; taking the handle first could pair the outgoing server
 	// with the incoming runtime's epoch and make a stale observation look current.

@@ -79,6 +79,23 @@ const (
 	// The status poll must not observe the close/start gap or settle a result from
 	// the outgoing pane after the incoming pane has taken its place.
 	OpReplacing
+	// OpRespawning: a limit resume is re-spawning an EXISTING session's runtime —
+	// for a remote backend, pushing the old sandbox's work and provisioning a fresh
+	// one, which outlasts a poll interval (#2997). Its only job is to be an
+	// in-flight op: refreshInstanceStatus skips a session that has one, and raising
+	// it advances the state epoch so an observation the poll already decided is
+	// dropped rather than applied.
+	//
+	// Deliberately NOT a client overlay, which is what separates it from
+	// OpCreating. A respawn acts on a session that is already established, so
+	// composeStatus lets it fall through to the settled liveness instead of masking
+	// it with Loading. Masking it would be wrong twice over: SaveInstances drops
+	// ordinary Loading rows, so a shutdown checkpoint mid-respawn would erase an
+	// established session's only on-disk record and orphan its workspace; and the
+	// TUI's reconcile clears adopted overlays per-op, so a create overlay it never
+	// expected on an established row would strand it as Loading with its lifecycle
+	// actions disabled until restart. There is nothing here for a client to mirror.
+	OpRespawning
 )
 
 // LifecycleAction is the session domain's answer to which reversible lifecycle
@@ -116,11 +133,17 @@ func opIsTeardown(op InFlightOp) bool {
 // Restore on the archived result) is precisely the mutation the fence exists to
 // refuse. A kill tombstone likewise admits no competing archive/restore action:
 // its only valid transition is finishing teardown. Resting rows restore; every
+// A respawning row (#2997) is inside the limit-resume fence for the same reason a
+// replacing one is: ArchiveSession would tear down and relocate a worktree the
+// respawn is provisioning into, and RuntimeActionResumeLimit refuses while an op is
+// in flight, so both verbs it could show would be refused on press — the #2500
+// defect above. Resting rows restore; every
 // other settled row archives. Kill addressability is intentionally independent
 // (CanKill): a retained tombstone or startup-unknown row must remain removable
 // without becoming attachable, archivable, or restorable.
 func lifecycleActionFor(id string, liveness Liveness, op InFlightOp, startupStateUnknown, userKilled bool) LifecycleAction {
-	if id == "" || op == OpCreating || op == OpReplacing || opIsTeardown(op) || startupStateUnknown || userKilled {
+	if id == "" || op == OpCreating || op == OpReplacing || op == OpRespawning ||
+		opIsTeardown(op) || startupStateUnknown || userKilled {
 		return LifecycleActionNone
 	}
 	switch liveness {
@@ -138,8 +161,23 @@ func lifecycleActionFor(id string, liveness Liveness, op InFlightOp, startupStat
 // down (OpKilling/OpArchiving) has a kill/archive in flight, so a second one is
 // the "kill already in progress" refusal the fence exists to prevent (#2500); and
 // an id-less legacy row cannot address the destructive API without guessing.
+//
+// A respawning row (#2997) is excluded for a reason the transition table alone does
+// NOT show, and reading only the table gets this backwards: tkBeginKill is
+// allowedFrom-always ("a kill supersedes any in-flight op"), which looks like Kill
+// works during any op. It does not work during THIS one, because the daemon must
+// traverse a lock to reach that transition — KillSession waits opLockTimeout (30s,
+// daemon/killbound.go) for the per-session operation lock and then returns
+// errKillBusy WITHOUT applying BeginKill (daemon/manager_sessions.go), while the
+// limit resume holds that same lock for the entire respawn (daemon/limit.go). So
+// advertising Kill here promises a supersede that is really a 30-second wait
+// followed by "try again". Hiding it is honest; making it genuinely interrupt the
+// owning operation is a separate change to the kill path, and until then a hung
+// remote provision is bounded by the backend's own deadlines rather than by a user
+// gesture. The same is already true of OpCreating/OpReplacing/teardown above.
 func canKillFor(id string, op InFlightOp) bool {
-	return id != "" && op != OpCreating && op != OpReplacing && !opIsTeardown(op)
+	return id != "" && op != OpCreating && op != OpReplacing && op != OpRespawning &&
+		!opIsTeardown(op)
 }
 
 // LifecycleAction returns the shared lifecycle verb for this instance. TUI menus
@@ -525,6 +563,35 @@ func (i *Instance) SetLimitResetAt(resetAt time.Time) {
 // daemon poll re-resolves its real state on the next tick and the [limit] badge
 // clears (#1146). A no-op when the instance is not limit-blocked, so the resume
 // action (and PR3's scheduler) can call it unconditionally.
+// ReparkLimitUnderResumeFence restores a limit window while the caller holds the
+// resume fence. It is the transaction-owned twin of SetLimitReached, in the same
+// shape as RecordHandoffSwap is to SwapAgentProgram: the plain setter refuses while
+// ANY op is in flight, which is right for every other writer and wrong for the one
+// that owns the operation.
+//
+// The resume needs it because it re-parks BEFORE delivering its prompt (#2997). With
+// the fence held across that stretch — which is what keeps the poll from settling the
+// fresh runtime Ready and ending the task run — the plain setter would no-op and this
+// episode's reset time would be lost, leaving the auto-resume scheduler nothing to
+// schedule off. Silently, too: it reports the refusal only through a bool that path
+// had no reason to read.
+//
+// Refuses unless OpRespawning is actually held, so it cannot become a back door
+// around the guard it deliberately steps past.
+func (i *Instance) ReparkLimitUnderResumeFence(resetAt time.Time) error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.inFlightOp != OpRespawning {
+		return fmt.Errorf("re-parking the limit for %q requires the resume fence (in-flight op is %s)",
+			i.Title, opLabel(i.inFlightOp))
+	}
+	lv, op, prevReset := i.lifecycleStateLocked()
+	i.liveness = LiveLimitReached
+	i.limitResetAt = resetAt
+	i.noteStateChangeLocked(lv, op, prevReset)
+	return nil
+}
+
 func (i *Instance) ClearLimitReached() {
 	i.mu.Lock()
 	defer i.mu.Unlock()

@@ -3,6 +3,8 @@ package session
 import (
 	"fmt"
 	"strings"
+
+	"github.com/sachiniyer/agent-factory/log"
 )
 
 // currentBackend snapshots the instance's backend under i.mu (#2096). The
@@ -60,9 +62,73 @@ func (i *Instance) Recover() error {
 // while blocked at a limit wall: that session is LiveLimitReached, which Recover's
 // !Lost guard rejects, but the re-spawn mechanics are identical. The caller owns
 // the precondition, enforced here before the guard-free backend core runs.
+// BeginLimitResume validates the limit-resume precondition and raises the
+// OpRespawning fence for the WHOLE resume, in one critical section. The caller owns
+// it until EndLimitResume (or until ConfirmLive clears it on success).
+//
+// It is a separate method from Respawn for the reason SwapAgentProgram and
+// RecordHandoffSwap are separate: the two legal orderings are made explicit rather
+// than folded into one re-entrant call that silently does different things.
+//
+// The fence must cover the resume's whole destructive sequence, not just the backend
+// call (#2997, and #3004 review). For an answered-dead REMOTE agent the daemon
+// probes, then pushes the sandbox's unpushed work and durably records its branch,
+// and only then re-spawns. That push is a network git operation and the longest
+// phase of the resume; run unfenced it is exactly the window the poll walks into,
+// observing the dead agent and applying LiveLost while no op is in flight. The
+// resume then loses its own precondition and refuses, so the queued prompt is never
+// delivered — the harm the fence exists to prevent, reached before the fence existed.
+//
+// Validation and the raise share i.mu because splitting them is its own race: a
+// current observation landing in the gap is not stale, so the epoch guard cannot
+// drop it, and tkBeginRespawn is keyed on the op axis alone — it would happily fence
+// a liveness that had just been clobbered. See lifecycleViewLocked, which documents
+// this as the pattern.
+func (i *Instance) BeginLimitResume() error {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if err := i.lifecycleViewLocked().ValidateRuntimeAction(RuntimeActionResumeLimit); err != nil {
+		return err
+	}
+	return i.transitionLocked(BeginRespawn())
+}
+
+// EndLimitResume lowers the fence BeginLimitResume raised. Safe to defer
+// unconditionally: it is a no-op once ConfirmLive has cleared the op on the success
+// path, and it never disturbs an op some other owner raised.
+//
+// Lowering it is not optional on the failure paths. A stranded fence leaves the
+// session permanently busy — the poll skips it forever and every runtime action and
+// lifecycle control refuses it as in-flight — which is worse than the clobber this
+// whole mechanism exists to prevent.
+// ClearOp is unconditionally legal (it only ever moves the op axis back to None and
+// leaves liveness alone), so the OpRespawning check is not about legality: it makes
+// sure a kill or archive overlay that SUPERSEDED this fence is not cleared out from
+// under its own owner.
+// Reports whether it actually lowered the fence, so a caller that must announce the
+// released state to its clients can tell an effective release from a no-op and not
+// publish a duplicate settled event on the path that already published one.
+func (i *Instance) EndLimitResume() bool {
+	if i.GetInFlightOp() != OpRespawning {
+		return false
+	}
+	if err := i.Transition(ClearOp()); err != nil {
+		log.WarningLog.Printf("limit resume: clearing the in-flight fence for %q: %v", i.Title, err)
+		return false
+	}
+	return true
+}
+
+// Respawn re-spawns this session's runtime. It REQUIRES the caller to hold the
+// limit-resume fence (BeginLimitResume): the fence has to be up before the daemon's
+// probe-and-preserve phase, which runs well before this call, so raising one here
+// would be too late to protect the sequence it belongs to.
+//
+// On success the backend ends in ConfirmLive, which is allowed from OpRespawning and
+// clears it. On failure the fence stays up and the caller's EndLimitResume lowers it.
 func (i *Instance) Respawn() error {
-	if err := i.ValidateRuntimeAction(RuntimeActionResumeLimit); err != nil {
-		return fmt.Errorf("respawn: %w", err)
+	if op := i.GetInFlightOp(); op != OpRespawning {
+		return fmt.Errorf("respawn of %q requires the limit-resume fence (in-flight op is %s)", i.Title, opLabel(op))
 	}
 	return i.currentBackend().Respawn(i)
 }

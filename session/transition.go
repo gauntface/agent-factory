@@ -59,6 +59,7 @@ const (
 	tkParkHandoff
 	tkAbortHandoff
 	tkClearOp
+	tkBeginRespawn
 	numTransitionKinds
 )
 
@@ -98,6 +99,8 @@ func (k transitionKind) String() string {
 		return "AbortHandoff"
 	case tkClearOp:
 		return "ClearOp"
+	case tkBeginRespawn:
+		return "BeginRespawn"
 	}
 	return fmt.Sprintf("transitionKind(%d)", int(k))
 }
@@ -126,6 +129,10 @@ func (ev TransitionEvent) AtEpoch(epoch uint64) TransitionEvent {
 	ev.epochScoped = true
 	return ev
 }
+
+// BeginRespawn raises the OpRespawning fence for a limit resume re-spawning an
+// established session's runtime (#2997). Liveness is preserved.
+func BeginRespawn() TransitionEvent { return TransitionEvent{kind: tkBeginRespawn} }
 
 // BeginCreate overlays OpCreating for an optimistic create (was SetStatus(Loading)).
 func BeginCreate() TransitionEvent { return TransitionEvent{kind: tkBeginCreate} }
@@ -320,6 +327,17 @@ type edgeSpec struct {
 // enforcement of I1–I4 lives here as a from-state predicate, not as a guard
 // scattered across the daemon/app call sites.
 var transitionTable = map[transitionKind]edgeSpec{
+	// A limit resume re-spawning an established session's runtime (#2997). It
+	// preserves liveness — the session is still the limit-blocked one the resume
+	// validated against, and the resume's own precondition must survive its own
+	// operation — and requires OpNone so it cannot start under a teardown.
+	tkBeginRespawn: {
+		allowedFrom: func(s stateAxes) bool { return s.op == OpNone },
+		target:      func(s stateAxes, _ TransitionEvent) stateAxes { return stateAxes{s.liveness, OpRespawning} },
+		// Re-spawning a runtime continues the session's run; it neither opens nor
+		// closes one.
+		run: runKeep,
+	},
 	tkBeginCreate: {
 		allowedFrom: func(s stateAxes) bool { return s.op == OpNone },
 		target:      func(s stateAxes, _ TransitionEvent) stateAxes { return stateAxes{s.liveness, OpCreating} },
@@ -327,8 +345,22 @@ var transitionTable = map[transitionKind]edgeSpec{
 		run: runKeep,
 	},
 	tkConfirmLive: {
-		allowedFrom:      func(s stateAxes) bool { return s.op == OpNone || s.op == OpCreating || s.op == OpRestoring },
-		target:           func(stateAxes, TransitionEvent) stateAxes { return stateAxes{LiveRunning, OpNone} },
+		allowedFrom: func(s stateAxes) bool {
+			return s.op == OpNone || s.op == OpCreating || s.op == OpRestoring || s.op == OpRespawning
+		},
+		target: func(s stateAxes, _ TransitionEvent) stateAxes {
+			if s.op == OpRespawning {
+				// A limit resume is NOT over when its runtime comes up (#2997). It still has
+				// to re-park this episode's limit window and deliver the queued prompt, and
+				// clearing the fence here would unfence exactly that stretch: the poll would
+				// see a freshly spawned, still-idle agent, settle it Ready, and END THE TASK
+				// RUN — taskRunActive only ever goes true→false — so the prompt would land on
+				// a session no longer counted against the watch-task concurrency cap. The
+				// resume's own EndLimitResume lowers it once the prompt has landed.
+				return stateAxes{LiveRunning, OpRespawning}
+			}
+			return stateAxes{LiveRunning, OpNone}
+		},
 		yieldWhenBlocked: true,
 		// A spawn completing says the agent is up, not that its work is done. It
 		// cannot REOPEN a finished run either: the marker only ever goes true→false,
@@ -496,7 +528,15 @@ func SetIllegalTransitionHook(fn func(msg string)) (restore func()) {
 func (i *Instance) Transition(ev TransitionEvent) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
+	return i.transitionLocked(ev)
+}
 
+// transitionLocked is Transition's already-locked half. Caller holds i.mu for
+// writing. It exists so a chokepoint that must validate and mutate in ONE critical
+// section can do both without releasing the lock between them — see
+// lifecycleViewLocked, and BeginLimitResume for a case where the gap was a real
+// race (#2997).
+func (i *Instance) transitionLocked(ev TransitionEvent) error {
 	if ev.epochScoped && i.stateEpoch != ev.epoch {
 		// The decision behind this event was drawn from an observation that a newer
 		// authoritative transition has since superseded. Drop it — silently and
@@ -614,6 +654,8 @@ func opLabel(op InFlightOp) string {
 		return "Restoring"
 	case OpReplacing:
 		return "Replacing"
+	case OpRespawning:
+		return "Respawning"
 	}
 	return fmt.Sprintf("InFlightOp(%d)", int(op))
 }

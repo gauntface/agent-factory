@@ -385,6 +385,30 @@ func (m *Manager) resumeFromLimitLocked(repoID, key string, instance *session.In
 	return err
 }
 
+// publishSessionSnapshot pushes this session's current projection to clients while
+// holding the repo ordering lock, the same discipline the resume's completion event
+// and every tab mutation keep: session.updated replaces a client's whole session
+// projection, so letting one race a newer tab mutation puts the client back on an
+// older roster.
+//
+// Deliberately does NOT persist. The op axis is scrubbed before disk anyway, and these
+// are transient fence transitions — the durable checkpoints stay where they were.
+func (m *Manager) publishSessionSnapshot(repoID string, instance *session.Instance) {
+	repoStartLock := m.startLockForRepo(repoID)
+	repoStartLock.Lock()
+	defer repoStartLock.Unlock()
+	// Publish INSIDE the critical section, which is the whole point of taking the lock
+	// and the part an earlier version of this helper got wrong while claiming otherwise.
+	// session.updated replaces a client's entire session projection, so snapshotting
+	// here and publishing after the unlock lets an overlapping tab create/close publish
+	// its newer whole-session payload first and this stale one last — the new tab
+	// vanishes, or the closed one comes back, until an unrelated update or a reconnect.
+	// Same ordering the tab mutations keep (daemon/manager_tabs.go) and the resume's own
+	// completion event keeps; publishEvent is non-blocking, so holding the lock across
+	// it cannot stall on a slow subscriber.
+	m.publishEvent(agentproto.EventSessionUpdated, instance.ToInstanceData())
+}
+
 func (m *Manager) resumeFromLimitLockedOutcome(repoID, key string, instance *session.Instance, requestedTitle string) (resumeFromLimitOutcome, error) {
 	// Set by the respawn arm's settlement below and reported at the very end, so a
 	// failed durable write neither aborts the resume nor disappears from it.
@@ -430,6 +454,36 @@ func (m *Manager) resumeFromLimitLockedOutcome(repoID, key string, instance *ses
 	// re-provision belongs, with its own recheck). What remains is an answered death: the
 	// sandbox answered that its agent exited while blocked — the #1786 case — and
 	// that is authoritative, so it re-spawns at once, exactly as before.
+	// Raise the resume's fence BEFORE the probe, so it covers the whole destructive
+	// sequence rather than only the re-spawn (#2997, #3004 review). The
+	// preserve-then-record phase below is a network git push and the longest part of
+	// this function; run unfenced, a status tick lands in it, observes the dead agent,
+	// and applies LiveLost while no op is in flight — after which this resume fails
+	// its own precondition and the queued prompt is never delivered.
+	//
+	// Deferred release covers every exit: it is a no-op once Respawn's ConfirmLive has
+	// cleared the op on the success path, and it is what keeps a refused or failed
+	// resume from stranding the session as permanently busy.
+	if err := instance.BeginLimitResume(); err != nil {
+		return resumeNotPerformed, fmt.Errorf("cannot resume %q: %w", requestedTitle, err)
+	}
+	// Tell the clients. The web rail is event-driven and performs no optimistic update
+	// for a resume, so without this an already-connected client keeps the PRE-fence
+	// can_kill / lifecycle / handoff / Retry controls for the whole operation — which
+	// for a remote preserve-and-provision is a long time, and for an automatic resume
+	// is a window the user never opted into. The projection gates would then be
+	// correct and invisible, and a press would land on a busy error or the 30s kill
+	// timeout they were added to prevent.
+	m.publishSessionSnapshot(repoID, instance)
+	// The deferred release publishes too, but ONLY when it actually lowered the fence:
+	// on the success path the explicit release below has already done so and the
+	// completion event carries the settled row, so a second event here would be noise.
+	defer func() {
+		if instance.EndLimitResume() {
+			m.publishSessionSnapshot(repoID, instance)
+		}
+	}()
+
 	as := instance.AgentServer()
 	switch probe := probeLiveness(instance, as); probe {
 	case probeAlive:
@@ -497,7 +551,13 @@ func (m *Manager) resumeFromLimitLockedOutcome(repoID, key string, instance *ses
 		// No hot-loop risk from re-parking: the auto-resume scheduler sets its
 		// backoff gate BEFORE firing (limitResumeAttempted), so a resume that keeps
 		// failing here backs off exponentially instead of hammering.
-		instance.SetLimitReached(resetAt)
+		// Under the resume's own fence, which is still up: ConfirmLive preserves it
+		// through prompt delivery now (#2997), and the plain SetLimitReached refuses
+		// while any op is in flight — it would no-op here and lose this episode's
+		// reset time, which the auto-resume scheduler schedules off.
+		if perr := instance.ReparkLimitUnderResumeFence(resetAt); perr != nil {
+			return resumeNotPerformed, fmt.Errorf("failed to restore the limit window for %q: %w", requestedTitle, perr)
+		}
 		// Write the respawn's durable state NOW, not at the end of the happy path
 		// (#1854). Respawn shares LocalBackend.respawn, so reaching this line can mean
 		// it rebuilt a vanished worktree — recreating the branch, flipping
@@ -550,6 +610,16 @@ func (m *Manager) resumeFromLimitLockedOutcome(repoID, key string, instance *ses
 	// The prompt landed: this is the resume's single completion point, and the only
 	// place the limit block is lifted on either arm.
 	instance.ClearLimitReached()
+	// Lower the fence HERE, before the completion payload is built (#3004 review).
+	// Every destructive phase is behind us, and the projection published below carries
+	// the op axis: on the live-stall arm nothing else lowers it — there is no Respawn
+	// and so no ConfirmLive — so the event would advertise a busy row and the deferred
+	// release would then clear it in memory with no second event to correct the
+	// clients. The web rail is event-driven, so it would keep suppressing that row's
+	// lifecycle and kill controls until an unrelated update or a reconnect. The defer
+	// above stays as the safety net for the error returns, where it is the only
+	// release; after this call it is a no-op.
+	_ = instance.EndLimitResume()
 
 	// The cleared limit is itself durable state worth a checkpoint. On the respawn
 	// arm this is the second write; that is deliberate — the first one records the
