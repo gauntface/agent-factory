@@ -81,7 +81,7 @@ func TestTeardownTabs_NeverSpawned_CompletesWithoutATombstone(t *testing.T) {
 	mode.stateByName = nil
 	inst := instanceWithTmuxTab(t, neverSpawnedSession(t, "af_2985_teardown"))
 
-	state, err := teardownKill{}.closeTab(inst.Tabs[0].tmux, "guarded", "agent")
+	state, _, err := teardownKill{}.closeTab(inst.Tabs[0].tmux, "guarded", "agent")
 
 	if state != stateKnown {
 		t.Fatal("a session that provably never created a pane came back as an unknown, so the " +
@@ -134,7 +134,7 @@ func TestTeardownKill_NotProven_StillAsksTmux(t *testing.T) {
 		t.Fatal("a session nobody proved anything about must not claim it has no pane")
 	}
 
-	state, err := teardownKill{}.closeTab(ts, "guarded", "agent")
+	state, _, err := teardownKill{}.closeTab(ts, "guarded", "agent")
 
 	if state != stateUnknown {
 		t.Fatal("the exemption fired for a session whose pane liveness was never established. " +

@@ -146,6 +146,15 @@ func (t *TmuxSession) Start(workDir string) error {
 			// before the pane process finishes flushing. Wait for that process here,
 			// and keep the outcome unknown if it outlives the bound, so LocalBackend
 			// cannot remove the fresh worktree underneath its final writes.
+			// No occupancy scan here, deliberately (#2998). This point sits ABOVE
+			// gw.Cleanup(), which is what cancels a still-running
+			// post_worktree_command — so a scan here matches AF's own provisioning
+			// hook, whose cmd.Dir is this worktree. It also cannot see whether the
+			// worktree is EXTERNAL: for an `--here` launch this is the user's own
+			// checkout, which cleanup never removes and where the invoking shell
+			// normally sits. Both produce refusals that block a legitimate cleanup.
+			// The check belongs below, where ownership is known and the hooks are
+			// already cancelled; recorded as a residual on #2998.
 			cleanupState, cleanupErr := t.CloseAndWaitForPaneExit()
 			if cleanupErr != nil {
 				timeoutErr = fmt.Errorf("%v (cleanup error: %v)", timeoutErr, cleanupErr)
