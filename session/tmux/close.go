@@ -12,6 +12,20 @@ import (
 	"github.com/sachiniyer/agent-factory/log"
 )
 
+// errPaneQueryFoundNoPane marks a pane-PID query that tmux ANSWERED with no
+// pane at all — measured: `display-message -p -t '=missing:' '#{pane_pid}'`
+// exits 0 with EMPTY output for a session that does not exist.
+//
+// Distinct from every other panePID failure on purpose. "tmux gave me output I
+// could not parse" and "tmux said there is no pane" are not the same claim, and
+// only the second is evidence of absence (Codex on #2966).
+var errPaneQueryFoundNoPane = errors.New("tmux reported no pane for this session")
+
+// ErrSessionVanishedBeforeCapture marks a pane-list read that failed because
+// tmux says the session does not exist. Whether that is a determinate EMPTY or a
+// lost ancestry depends on the caller: see captureSessionProcessTrees.
+var ErrSessionVanishedBeforeCapture = errors.New("tmux session was gone before its panes could be listed")
+
 // PaneState is what a bounded teardown could ESTABLISH about a tmux session, and
 // it is returned SEPARATELY from the error on purpose (#1917).
 //
@@ -242,56 +256,167 @@ func (t *TmuxSession) CloseAndWaitForPaneExit() (PaneState, error) {
 		// both distinctions explicit.
 		paneProcess, waitForPane, processErr = capturePaneProcess(pid)
 	}
-	state, closeErr, processes := t.close(true)
-	if pidErr != nil {
-		// A TIMED-OUT panePID is not "nothing to wait on" (#1917). It means the
-		// server never told us which process to wait for — so even if the
-		// kill-session that follows succeeds, we skip the #802 pane-exit wait and
-		// have no way to know the agent stopped writing. Returning the successful
-		// Close's KNOWN state here would tell the caller it may delete the worktree
-		// while the HUP'd agent is still flushing into it. Keep the unknown, and
-		// keep the sentinel reachable.
-		if errors.Is(pidErr, ErrTmuxTimeout) {
-			return PaneStateUnknown, errors.Join(closeErr, pidErr)
-		}
-		// Any other panePID failure means tmux ANSWERED: the session is already
-		// gone or the pane is unqueryable, so there is genuinely nothing to wait on
-		// and Close's own state stands.
-		return state, closeErr
+	closeState, closeErr, processes := t.close(true)
+
+	// ONE list of reasons the worktree may not be touched, evaluated on EVERY
+	// path (#2962). The shape this replaces returned early when panePID failed,
+	// which skipped the two process-set gates below entirely — so on that branch
+	// a list-panes that FAILED was never consulted at all, and survivors of the
+	// reap were never noticed. Three separate holes, one missing funnel.
+	//
+	// The rule each case serves: this function does not report whether tmux
+	// answered — Close does that — it reports whether the WORKTREE MAY NOW BE
+	// MUTATED. Only positive evidence that nothing is left writing licenses that,
+	// and a reason we could not obtain such evidence is not a weaker yes, it is a
+	// no. Callers gate on the state and merely LOG the error
+	// (closeTabForDestructiveTeardown), so anything short of a no here is a
+	// licence to delete.
+	// When BOTH reads say the session is absent, that is a determinate empty only
+	// if nothing it spawned outlived it. tmux can no longer enumerate the
+	// ancestry — but the AF_SESSION marker SURVIVES the session, which is the
+	// same evidence CleanupSessions uses for a vanished session (#1104).
+	//
+	// Checking it here is what makes the answer independent of earlier attempts.
+	// A teardown that refused because a pane was observed and its ancestry lost
+	// gets retried (finishUserKill), and on the retry both tmux reads report
+	// absence — so without this the second attempt would launder the first
+	// attempt's lost ancestry into a clean empty and authorize deleting the
+	// worktree under a detached descendant (Codex on #2966, round 4).
+	var vanishedSurvivors error
+	if processes.captureErr != nil && sessionGoneWithNoPaneObserved(processes.captureErr, pidErr) {
+		vanishedSurvivors = t.sweepVanishedSessionProcesses()
 	}
-	if processErr != nil {
+
+	refuse := func(why error) (PaneState, error) {
+		log.WarningLog.Printf("tmux session %s: %v; refusing worktree cleanup", t.sanitizedName, why)
+		return PaneStateUnknown, errors.Join(closeErr, why)
+	}
+	switch {
+	case closeState != PaneStateKnown || closeErr != nil:
+		// The session's fate was not established as GONE — it either could not be
+		// determined, or the kill FAILED and the probe found the session still
+		// alive. Close reports the survivor case as KNOWN on purpose: its own
+		// contract is best-effort (#478), "tmux answered, and this session is
+		// alive". That is a fine answer to Close's question and the wrong answer
+		// to this one, because a live session may still be writing to the tree the
+		// caller is about to delete. Reaping before deleting is only an invariant
+		// if the reap is verified to have COMPLETED (#2025/#2440); a kill that was
+		// merely requested proves nothing.
+		if closeErr == nil {
+			return refuse(fmt.Errorf("tmux did not establish that session %s is gone", t.sanitizedName))
+		}
+		// pidErr AND captureErr are joined, not dropped. This branch runs before
+		// the cases that would otherwise report them, so returning closeErr alone
+		// erases whichever ErrTmuxTimeout they carry — the sentinel #1917 keeps
+		// reachable through errors.Is for callers that classify on it. Both are
+		// reachable here: the pane query can time out, and so can list-panes.
+		// errors.Join ignores nils, so the ordinary case is unchanged.
+		return PaneStateUnknown, errors.Join(closeErr, pidErr, processes.captureErr)
+	case errors.Is(pidErr, ErrTmuxTimeout):
+		// A TIMED-OUT panePID is not "nothing to wait on" (#1917). The server never
+		// told us which process to wait for, so even with a successful kill we skip
+		// the #802 pane-exit wait and cannot know the agent stopped writing.
+		return PaneStateUnknown, errors.Join(closeErr, pidErr)
+	case processErr != nil:
 		// We knew which PID tmux owned, but could not establish a process identity
 		// to follow across teardown. A successful kill-session is not enough to
-		// prove that process stopped writing, so fail closed like a timed-out PID
-		// query rather than deleting the worktree on an existence guess.
+		// prove that process stopped writing.
 		return PaneStateUnknown, errors.Join(closeErr, processErr)
-	}
-	if processes.captureErr != nil {
-		// The pane leader was known, but the full process set was not. A child may
-		// already have detached/reparented and still be writing after the leader exits;
-		// leader death cannot manufacture proof about descendants we failed to see.
-		err := fmt.Errorf("could not establish the pane's complete process tree before kill-session: %w", processes.captureErr)
-		log.WarningLog.Printf("tmux session %s: %v; refusing worktree cleanup", t.sanitizedName, err)
-		return PaneStateUnknown, errors.Join(closeErr, err)
-	}
-	if len(processes.remaining) > 0 {
+	case vanishedSurvivors != nil:
+		// The session is gone, but the marker scan says something it spawned is
+		// not — or could not be checked at all.
+		return refuse(vanishedSurvivors)
+	case processes.captureErr != nil && !sessionGoneWithNoPaneObserved(processes.captureErr, pidErr):
+		// The full process set was not established. A child may already have
+		// detached/reparented and still be writing after the leader exits; leader
+		// death cannot manufacture proof about descendants we failed to see.
+		//
+		// Reached now even when panePID failed, which is the point: that branch
+		// used to return before this check, so an unreadable pane list produced a
+		// confident "safe to delete".
+		return refuse(fmt.Errorf("could not establish the pane's complete process tree before kill-session: %w",
+			processes.captureErr))
+	case len(processes.remaining) > 0:
 		pids := make([]string, 0, len(processes.remaining))
 		for _, process := range processes.remaining {
 			pids = append(pids, strconv.Itoa(process.PID))
 		}
-		err := fmt.Errorf("pane processes %s are still alive after bounded teardown", strings.Join(pids, ", "))
-		log.WarningLog.Printf("tmux session %s: %v; refusing worktree cleanup", t.sanitizedName, err)
-		return PaneStateUnknown, errors.Join(closeErr, err)
+		return refuse(fmt.Errorf("pane processes %s are still alive after bounded teardown", strings.Join(pids, ", ")))
+	case waitForPane && !waitForProcessExit(paneProcess, paneExitWait):
+		// kill-session returning establishes only that SIGHUP was sent, not that
+		// the process stopped writing.
+		return refuse(fmt.Errorf("pane process %d is still alive %v after kill-session", pid, paneExitWait))
 	}
-	if waitForPane && !waitForProcessExit(paneProcess, paneExitWait) {
-		// kill-session returning establishes only that SIGHUP was sent, not that the
-		// process stopped writing. Unknown is the only state that keeps every
-		// destructive caller from deleting/moving the worktree on that assumption.
-		err := fmt.Errorf("pane process %d is still alive %v after kill-session", pid, paneExitWait)
-		log.WarningLog.Printf("tmux session %s: %v; refusing worktree cleanup", t.sanitizedName, err)
-		return PaneStateUnknown, errors.Join(closeErr, err)
+
+	// Every gate passed: tmux established the session is gone, the pane's process
+	// set was read, and nothing from it survived the bounded reap.
+	//
+	// A non-timeout pidErr is deliberately dropped here rather than reported. It
+	// means tmux answered and could not name a pane — but the session-gone fact
+	// comes from Close, and the nothing-still-writing fact comes from the captured
+	// process set, which INCLUDES the pane leader. Neither depends on the PID
+	// query, so it has nothing left to tell the caller.
+	return PaneStateKnown, nil
+}
+
+// sessionGoneWithNoPaneObserved reports whether an unreadable pane set is
+// actually a determinate EMPTY.
+//
+// It is one only when BOTH reads agree the session is not there: tmux said so on
+// the pane list, AND the pane PID query never named a pane either. That is the
+// ordinary teardown of an already-exited agent, and refusing it would leave those
+// worktrees uncollectable forever.
+//
+// If a pane PID WAS observed, the same tmux answer means the opposite: the
+// session exited between the two reads, the ancestry list-panes would have
+// returned is lost, and descendants or SID members that outlive the leader are
+// unaccounted for. Leader death cannot prove they stopped writing (#1104/#802),
+// so that stays a blocker (Codex on #2966).
+func sessionGoneWithNoPaneObserved(captureErr, pidErr error) bool {
+	// BOTH reads must say absence, and the pane query must say it SPECIFICALLY.
+	// `pidErr != nil` was too weak: it also covers "display-message returned
+	// output I could not parse", which happens while the session EXISTS. Pairing
+	// that with a session that then vanished before list-panes would treat a lost
+	// ancestry as an empty one and authorize deleting the worktree with detached
+	// descendants never captured (Codex on #2966).
+	return errors.Is(pidErr, errPaneQueryFoundNoPane) &&
+		errors.Is(captureErr, ErrSessionVanishedBeforeCapture)
+}
+
+// sweepVanishedSessionProcesses answers "did anything this session spawned
+// outlive it?" WITHOUT asking tmux, and acts on the answer rather than merely
+// reporting it.
+//
+// It delegates to reapVanishedSessionProcesses, the flow CleanupSessions already
+// uses for exactly this situation (#1104/#2765), because the ad-hoc scan this
+// replaces got two things wrong that the shared flow has right (Codex on #2966,
+// round 5):
+//
+//   - OWNERSHIP. Matching on AF_SESSION alone counts a same-named process from
+//     ANOTHER agent-factory home — a leftover from a temp/dev install — as this
+//     session's survivor, refusing cleanup forever over something that is not
+//     ours. markedOrphanProcesses validates AF_HOME (and uid, and process
+//     identity) and silently skips a foreign home, while an UNATTRIBUTABLE
+//     process still blocks, which is the right split.
+//   - REAPING. Only reporting a genuine SIGHUP-immune descendant leaves the
+//     tombstone retried forever: each attempt rescans, finds it again, and never
+//     signals it, so the leak and the stuck worktree both persist. The shared
+//     flow reaps with the bounded TERM→KILL escalation and reports only what
+//     SURVIVES that.
+//
+// A home we cannot resolve is not evidence of absence: it means no candidate can
+// be attributed, so the sweep refuses.
+func (t *TmuxSession) sweepVanishedSessionProcesses() error {
+	ownHome, err := afHomeDir()
+	if err != nil {
+		return fmt.Errorf("tmux session %s is gone and its surviving processes cannot be attributed to this "+
+			"agent-factory home: %w", t.sanitizedName, err)
 	}
-	return state, closeErr
+	// nil candidates and nil captureErr on purpose: there is no captured tree to
+	// refresh — the marker scan IS the evidence standing in for the ancestry tmux
+	// lost, so passing the capture failure through would make it a blocker again
+	// and defeat the point.
+	return reapVanishedSessionProcesses(t.sanitizedName, ownHome, nil, nil)
 }
 
 // capturePaneProcess turns tmux's bare pane PID into a process-table identity
@@ -333,9 +458,19 @@ func (t *TmuxSession) panePID() (int, error) {
 		if ctx.Err() != nil {
 			return 0, fmt.Errorf("%w: display-message pane_pid after %s", ErrTmuxTimeout, tmuxCommandTimeout)
 		}
+		if missingTmuxSession(err, t.sanitizedName) {
+			return 0, errPaneQueryFoundNoPane
+		}
 		return 0, fmt.Errorf("failed to query pane pid: %w", err)
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(output)))
+	trimmed := strings.TrimSpace(string(output))
+	if trimmed == "" {
+		// tmux answered and named no pane. Measured: this is what a missing
+		// session produces — exit 0, empty output — so it is the one panePID
+		// failure that is evidence of ABSENCE rather than of an unreadable answer.
+		return 0, errPaneQueryFoundNoPane
+	}
+	pid, err := strconv.Atoi(trimmed)
 	if err != nil || pid <= 0 {
 		return 0, fmt.Errorf("unexpected pane pid output %q", string(output))
 	}

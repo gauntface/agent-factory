@@ -298,6 +298,7 @@ func TestStartTmuxSession(t *testing.T) {
 func TestStartTimeoutCleanupSucceeds(t *testing.T) {
 	ptyFactory := NewMockPtyFactory(t)
 
+	sessionName := toTmuxName("timeout-ok", "")
 	cmdExec := cmd_test.MockCmdExec{
 		RunFunc: func(cmd *exec.Cmd) error {
 			// Session never appears; kill-session (cleanup) succeeds.
@@ -306,10 +307,28 @@ func TestStartTimeoutCleanupSucceeds(t *testing.T) {
 			}
 			return nil
 		},
-		OutputFunc: func(cmd *exec.Cmd) ([]byte, error) { return []byte("output"), nil },
+		OutputFunc: func(cmd *exec.Cmd) ([]byte, error) {
+			// list-panes must answer consistently with has-session above: this
+			// session never appeared, so tmux reports it missing rather than
+			// returning a pane list. The generic "output" stub previously used here
+			// parses as a pane whose pid is unreadable, which since #2962 correctly
+			// refuses cleanup — a different scenario from the one this test is about.
+			if strings.Contains(cmd.String(), "list-panes") {
+				return nil, tmuxCantFindSessionError(t, sessionName)
+			}
+			if strings.Contains(cmd.String(), "display-message") {
+				// Measured: for a session that does not exist, display-message
+				// exits 0 with EMPTY output. The generic "output" stub models
+				// something else entirely — tmux answering with a pane id we
+				// cannot parse — which is NOT evidence of absence and correctly
+				// refuses cleanup since #2962 round 3.
+				return nil, nil
+			}
+			return []byte("output"), nil
+		},
 	}
 
-	session := newTmuxSession(toTmuxName("timeout-ok", ""), "claude", ptyFactory, cmdExec)
+	session := newTmuxSession(sessionName, "claude", ptyFactory, cmdExec)
 
 	err := session.Start(t.TempDir())
 	require.Error(t, err)
