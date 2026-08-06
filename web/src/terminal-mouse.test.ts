@@ -9,12 +9,14 @@ import {
   terminalMouseOverrideHeld,
   lineContentColumns,
   terminalCellAtPoint,
+  textFromCells,
   TOUCH_LONG_PRESS_MS,
   TOUCH_SCROLL_SLOP_PX,
   touchHistoryScrollPlan,
   touchPressStillHeld,
   touchScrollClaimsGesture,
   wordRangeAtColumn,
+  wrappedCellPosition,
 } from "./terminal-mouse.js";
 
 test("application-mouse escape matches xterm's platform selection modifier", () => {
@@ -168,4 +170,47 @@ test("a press and a scroll are decided by ONE threshold (#2849)", () => {
 
   // Long enough to be deliberate, short enough that a thumb does not think it failed.
   assert.ok(TOUCH_LONG_PRESS_MS >= 300 && TOUCH_LONG_PRESS_MS <= 800);
+});
+
+test("a token that soft-wraps is scanned across the rows it wraps onto (#2849)", () => {
+  // Two 8-column rows joined end to end, the way a wrapped line is scanned. The
+  // token starts on the first row and finishes on the second; stopping at the row
+  // boundary would copy "/srv/lo" and call it a path. A phone is ~40 columns wide,
+  // so a URL or a long path wraps far more often than not.
+  const cols = 8;
+  const block = [..."cd /srv/log-2849.txt"];
+  const token = wordRangeAtColumn(block, 12);
+  assert.deepEqual(token, { start: 3, length: 17 });
+
+  // …and the flat index converts back to the row/column select() expects.
+  assert.deepEqual(wrappedCellPosition(token?.start ?? 0, cols), { col: 3, row: 0 });
+  assert.deepEqual(wrappedCellPosition(8, cols), { col: 0, row: 1 });
+  assert.deepEqual(wrappedCellPosition(17, cols), { col: 1, row: 2 });
+  // The axes must not swap: index 7 is the LAST column of row 0, not row 7.
+  assert.deepEqual(wrappedCellPosition(7, cols), { col: 7, row: 0 });
+  assert.deepEqual(wrappedCellPosition(0, 0), { col: 0, row: 0 });
+});
+
+
+test("a wide glyph pushed past the wrap keeps its token whole (#2940)", () => {
+  // xterm leaves the vacated cell BLANK when a wide glyph will not fit the last
+  // column and moves it to the next row. Read as a space that blank splits a CJK or
+  // emoji token exactly at the wrap; read as the structure it is, the token survives.
+  const cols = 4;
+  const padded = ["近", "", "藤", "", /* row 2 */ "", "京", "", " "];
+  assert.deepEqual(wordRangeAtColumn(padded, 1), { start: 0, length: 7 });
+  assert.deepEqual(wordRangeAtColumn(padded, 5), { start: 0, length: 7 });
+  assert.deepEqual(wrappedCellPosition(4, cols), { col: 0, row: 1 });
+
+  // …and an ordinary blank at the boundary still separates two words.
+  const separated = ["a", "b", "c", " ", /* row 2 */ "d", "e", " ", " "];
+  assert.deepEqual(wordRangeAtColumn(separated, 0), { start: 0, length: 3 });
+  assert.deepEqual(wordRangeAtColumn(separated, 4), { start: 4, length: 2 });
+});
+
+test("the copied text comes from the snapshot, continuations and all (#2940)", () => {
+  const cells = ["近", "", "藤", "", " ", "o", "k"];
+  assert.equal(textFromCells(cells, { start: 0, length: 4 }), "近藤");
+  assert.equal(textFromCells(cells, { start: 5, length: 2 }), "ok");
+  assert.equal(textFromCells(cells, { start: 0, length: 0 }), "");
 });

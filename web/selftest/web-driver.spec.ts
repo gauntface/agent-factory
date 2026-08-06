@@ -736,9 +736,15 @@ async function touchDrag(cdp: CDPSession, x: number, fromY: number, toY: number,
  *  it. No touchmove at all: a press that wobbles past the threshold is a scroll, and
  *  that boundary is asserted separately. */
 async function touchLongPress(cdp: CDPSession, x: number, y: number, holdMs = 700): Promise<void> {
+  await touchPressAndHold(cdp, x, y, holdMs);
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+}
+
+/** The first half of a long press: down, and held past the threshold, WITHOUT the
+ *  lift — so a test can look at the world while the finger is still on the glass. */
+async function touchPressAndHold(cdp: CDPSession, x: number, y: number, holdMs = 700): Promise<void> {
   await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
   await new Promise((resolve) => setTimeout(resolve, holdMs));
-  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
 }
 
 async function touchTap(cdp: CDPSession, x: number, y: number): Promise<void> {
@@ -2396,12 +2402,34 @@ test("#2849 mobile: a long press copies the token under the finger", REAL_FIXTUR
 
     await p.evaluate(() => navigator.clipboard.writeText("af-2849-clipboard-untouched").catch(() => {}));
     inputPayloads.length = 0;
+    // Record what the browser actually DELIVERS for a long press. Which events arrive,
+    // and in what order, is the whole mechanism here — a copy wired to an event the
+    // browser never sends looks identical from the outside to one that is never wired
+    // at all, and both read as "the clipboard is untouched".
+    await p.evaluate(() => {
+      const w = window as unknown as { __afTouchLog: string[] };
+      w.__afTouchLog = [];
+      for (const type of ["touchstart", "touchmove", "touchend", "touchcancel", "contextmenu", "mousedown", "pointercancel"]) {
+        document.addEventListener(type, () => w.__afTouchLog.push(`${type}@${Math.round(performance.now())}`), true);
+      }
+    });
     await touchLongPress(cdp, x + 2, pressY);
+    const delivered = await p.evaluate(() => (window as unknown as { __afTouchLog: string[] }).__afTouchLog.join(" "));
+
+    // Staged, so a red here says WHICH half broke. A selection proves the press was
+    // recognised and resolved to a cell; the failure toast proves the copy ran and
+    // both clipboard paths refused. Without these, "the clipboard still holds the
+    // sentinel" is equally consistent with the gesture never firing at all.
+    await expect(selection, "the press must resolve to a cell and paint a selection").not.toHaveCount(0);
+    await expect(
+      p.locator("[role=alert]", { hasText: "Copy failed" }),
+      "the copy must not fall all the way through to the clipboard-unavailable toast",
+    ).toHaveCount(0);
 
     // THE assertion: a finger, no keyboard, and the token is on the system clipboard.
     await expect
       .poll(() => p.evaluate(() => navigator.clipboard.readText()), {
-        message: "a long press must put the token under the finger on the system clipboard",
+        message: `a long press must put the token under the finger on the system clipboard [delivered: ${delivered}]`,
       })
       .toContain(TOKEN);
     // …the TOKEN, not its line. That is the difference between copying what the
@@ -2424,6 +2452,64 @@ test("#2849 mobile: a long press copies the token under the finger", REAL_FIXTUR
         message: "a press past the end of a line must copy the line",
       })
       .toContain(TRAILER);
+
+    // A token WIDER THAN THE SCREEN, which on a ~40-column phone is the normal shape
+    // of the URLs and paths this gesture exists for. It soft-wraps onto a second
+    // buffer row, and a scan that stopped at the row edge would copy a fragment and
+    // look like it had worked.
+    const LONG = `/srv/af-2849/${"wrapped-".repeat(6)}end`;
+    await p.keyboard.type(`printf '%s\\n' ${LONG}`);
+    await p.keyboard.press("Enter");
+    await expect(host).toContainText("wrapped-end", { timeout: 20_000 });
+    const wrappedRow = host.locator(".xterm-rows > div", { hasText: "/srv/af-2849/wrapped-" }).last();
+    await expect(wrappedRow).toBeVisible();
+    const wrappedBox = (await wrappedRow.boundingBox()) as ElementBox;
+    await p.evaluate(() => navigator.clipboard.writeText("af-2849-clipboard-untouched").catch(() => {}));
+    await touchLongPress(cdp, wrappedBox.x + 2, wrappedBox.y + wrappedBox.height / 2);
+    await expect
+      .poll(() => p.evaluate(() => navigator.clipboard.readText()), {
+        message: "a token that wraps must be copied whole, not cut at the screen edge",
+      })
+      .toContain(LONG);
+
+    // The selection appears while the finger is still down — that is the feedback the
+    // gesture promises, and it is what the timer is for.
+    //
+    // What is deliberately NOT asserted here is that the clipboard stays untouched
+    // until the lift. The write is made from whichever trusted event the browser
+    // actually delivers, and in this browser a held touch produces a compatibility
+    // mousedown rather than a touchend; pinning the write to one of them would be
+    // asserting an implementation detail that varies by platform, and would race the
+    // very path that makes the gesture work.
+    await p.evaluate(() => navigator.clipboard.writeText("af-2849-clipboard-untouched").catch(() => {}));
+    await touchPressAndHold(cdp, x + 2, pressY);
+    await expect(selection, "the selection appears while the finger is still down").not.toHaveCount(0);
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await expect
+      .poll(() => p.evaluate(() => navigator.clipboard.readText()), { message: "the completed gesture copies the token" })
+      .toContain(TOKEN);
+
+    // A press the timer ALREADY recognised, which the finger then turns into a
+    // scroll. The copy is staged at that point, so without discarding it the lift
+    // would overwrite the clipboard with a token the user has since scrolled away
+    // from — a slow-starting scroll that silently steals the clipboard.
+    await p.evaluate(() => navigator.clipboard.writeText("af-2849-clipboard-untouched").catch(() => {}));
+    await p.evaluate(() => ((window as unknown as { __afTouchLog: string[] }).__afTouchLog = []));
+    await touchPressAndHold(cdp, x + 2, pressY);
+    await expect(selection, "the press is recognised before the finger moves").not.toHaveCount(0);
+    for (const step of [10, 40, 90]) {
+      await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: x + 2, y: pressY + step }] });
+    }
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    const scrolledAway = await p.evaluate(() => (window as unknown as { __afTouchLog: string[] }).__afTouchLog.join(" "));
+    expect(
+      await p.evaluate(() => navigator.clipboard.readText()),
+      `a press that turns into a scroll must not copy on lift [delivered: ${scrolledAway}]`,
+    ).toContain("untouched");
+    await expect(
+      selection,
+      `…and must not leave a selection promising it did [delivered: ${scrolledAway}]`,
+    ).toHaveCount(0);
 
     // …and the gesture that is NOT a press still is not one. A drag from the same
     // spot scrolls (#2682) and copies nothing, so the two cannot be confused.

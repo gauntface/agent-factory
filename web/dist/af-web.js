@@ -7110,6 +7110,15 @@ function lineContentColumns(cells) {
   }
   return end + 1;
 }
+function wrappedCellPosition(index, cols) {
+  if (cols <= 0) {
+    return { col: 0, row: 0 };
+  }
+  return { col: index % cols, row: Math.floor(index / cols) };
+}
+function textFromCells(cells, range) {
+  return cells.slice(range.start, range.start + range.length).join("");
+}
 
 // src/theme.ts
 var THEME_CHOICES = ["auto", "light", "dark"];
@@ -7234,6 +7243,7 @@ function currentXtermTheme() {
 var BACKOFF_BASE_MS = 500;
 var BACKOFF_MAX_MS = 1e4;
 var RESIZE_DEBOUNCE_MS = 120;
+var TOUCH_PRESS_MAX_ROWS = 32;
 var AttachTerminal = class {
   constructor(container, token2, endpoint, cb) {
     this.container = container;
@@ -7318,7 +7328,9 @@ var AttachTerminal = class {
     container.addEventListener("touchstart", this.onTouchStart, { capture: true, passive: true });
     container.addEventListener("touchmove", this.onTouchMove, { capture: true, passive: false });
     container.addEventListener("touchend", this.onTouchEnd, { capture: true, passive: true });
-    container.addEventListener("touchcancel", this.onTouchEnd, { capture: true, passive: true });
+    container.addEventListener("touchcancel", this.onTouchCancel, { capture: true, passive: true });
+    container.addEventListener("pointercancel", this.onTouchCancel, { capture: true, passive: true });
+    container.addEventListener("contextmenu", this.onContextMenu);
     container.addEventListener("pointerdown", this.onPointerDown, true);
     container.addEventListener("mousedown", this.onMouseDownCapture, true);
     container.addEventListener("copy", this.onCopy);
@@ -7361,10 +7373,32 @@ var AttachTerminal = class {
   touchOriginX = 0;
   touchOriginY = 0;
   touchScrollClaimed = false;
-  // The pending long press, and whether it has already copied on this gesture — a
-  // copy has to swallow the compatibility click the same touch would otherwise fire.
+  // The pending long press, and whether it has already acted on this gesture — a copy
+  // has to swallow the compatibility click the same touch would otherwise fire.
   touchLongPressTimer = null;
   touchCopyFired = false;
+  // The cell the finger went down on, resolved AT TOUCHSTART and in absolute buffer
+  // coordinates. Resolving it when the timer fires would read the viewport half a
+  // second later, and under live output the row the finger is on has scrolled by
+  // then — copying whatever slid beneath it instead of what was pressed.
+  // The press, READ WHEN THE FINGER LANDS: the whole wrapped block it fell in, and
+  // where in that block it fell. Resolving the text at touchstart instead of when the
+  // timer fires is what makes the copy immune to everything the terminal can do
+  // during the hold — a trim, an in-place rewrite by a progress bar, an
+  // alternate-screen TUI scrolling underneath, a reflow. Each of those was a separate
+  // way to copy the wrong text while looking like it worked; none of them can reach a
+  // snapshot. What is resolved late is only the HIGHLIGHT, which is cosmetic and is
+  // skipped when the live grid no longer matches.
+  touchPress = null;
+  touchPressMarker = null;
+  // One-shot, armed by a recognised press: it suppresses the menu THAT touch provokes
+  // and nothing else — a keyboard menu (Shift+F10, the Menu key, assistive tech)
+  // arrives with no pointer event to re-scope it.
+  suppressNextContextMenu = false;
+  // Text the press selected, waiting for the finger to lift. The clipboard write has
+  // to happen in the touchend handler: Safari only honours it from a trusted
+  // user-gesture task, and a setTimeout callback is not one.
+  touchCopyPending = null;
   // Whether the gesture in flight came from a finger, read off the pointer event that
   // precedes the browser's compatibility mouse events (onPointerDown).
   lastPointerWasTouch = false;
@@ -7434,18 +7468,62 @@ var AttachTerminal = class {
     this.touchOriginY = press?.clientY ?? 0;
     this.touchScrollRemainder = 0;
     this.touchScrollClaimed = false;
-    this.touchCopyFired = false;
     this.cancelTouchLongPress();
-    if (press) {
+    this.discardPendingTouchCopy();
+    this.disposeTouchPressMarker();
+    this.touchPress = press ? this.snapshotPress(press.clientX, press.clientY) : null;
+    if (this.touchPress) {
+      this.touchPressMarker = this.registerPressMarker(this.touchPress.firstRow);
       this.startTouchLongPress();
     }
   };
-  onTouchEnd = () => this.cancelTouchLongPress();
+  onTouchEnd = () => {
+    this.cancelTouchLongPress();
+    this.suppressNextContextMenu = false;
+    this.disposeTouchPressMarker();
+    this.flushTouchCopy();
+  };
+  /**
+   * The browser taking the gesture away — and the ONLY signal it gives when it does.
+   *
+   * A press that turns into a scroll is not delivered as touchmove here: recording a
+   * real one gives `touchstart` then `pointercancel`, with no move in between, so a
+   * discard wired to movement never runs and the staged copy would land on the lift
+   * of a gesture the user finished as a scroll. A cancel is therefore a takeover, and
+   * a takeover drops both the copy and the selection that promised it.
+   */
+  onTouchCancel = () => {
+    this.cancelTouchLongPress();
+    this.suppressNextContextMenu = false;
+    this.disposeTouchPressMarker();
+    this.discardPendingTouchCopy();
+  };
+  /** Writes the text a recognised press staged, once, from whichever trusted event
+   *  the browser actually delivered. */
+  flushTouchCopy() {
+    const pending = this.touchCopyPending;
+    this.touchCopyPending = null;
+    if (pending !== null) {
+      this.copyToClipboard(pending);
+    }
+  }
+  // …and the menu that cancellation was announcing is not wanted either: it would
+  // cover the selection with an OS menu whose Copy acts on a DOM selection xterm
+  // never makes (#2849). Suppressed ONLY for a press af has already acted on, so a
+  // desktop right-click keeps the browser's menu.
+  onContextMenu = (event) => {
+    if (!this.suppressNextContextMenu) {
+      return;
+    }
+    this.suppressNextContextMenu = false;
+    event.preventDefault();
+  };
   onTouchMove = (event) => {
     this.handleUserScroll("touch");
     const moved = event.touches.length !== 1 || !touchPressStillHeld(this.touchOriginX, this.touchOriginY, event.touches[0].clientX, event.touches[0].clientY);
     if (moved) {
       this.cancelTouchLongPress();
+      this.discardPendingTouchCopy();
     }
     if (this.touchScrollY === null) {
       return;
@@ -7518,6 +7596,8 @@ var AttachTerminal = class {
     if (this.lastPointerWasTouch && this.touchCopyFired) {
       event.preventDefault();
       event.stopPropagation();
+      this.suppressNextContextMenu = false;
+      this.flushTouchCopy();
       return;
     }
     if (!this.applicationOwnsMouse() || this.lastPointerWasTouch) {
@@ -7555,6 +7635,7 @@ var AttachTerminal = class {
     const plan = terminalUserScrollPlan(source, this.visibleFitFrame !== null);
     if (plan.cancelScheduledVisibleFit) {
       this.cancelTouchLongPress();
+      this.disposeTouchPressMarker();
       this.cancelVisibleFitFrame();
     }
     this.fitVisibleHost();
@@ -7589,7 +7670,9 @@ var AttachTerminal = class {
     this.container.removeEventListener("touchstart", this.onTouchStart, true);
     this.container.removeEventListener("touchmove", this.onTouchMove, true);
     this.container.removeEventListener("touchend", this.onTouchEnd, true);
-    this.container.removeEventListener("touchcancel", this.onTouchEnd, true);
+    this.container.removeEventListener("touchcancel", this.onTouchCancel, true);
+    this.container.removeEventListener("pointercancel", this.onTouchCancel, true);
+    this.container.removeEventListener("contextmenu", this.onContextMenu);
     this.container.removeEventListener("pointerdown", this.onPointerDown, true);
     this.container.removeEventListener("mousedown", this.onMouseDownCapture, true);
     this.container.removeEventListener("copy", this.onCopy);
@@ -7651,7 +7734,7 @@ var AttachTerminal = class {
   startTouchLongPress() {
     this.touchLongPressTimer = window.setTimeout(() => {
       this.touchLongPressTimer = null;
-      this.copyTouchWord(this.touchOriginX, this.touchOriginY);
+      this.selectTouchWord();
     }, TOUCH_LONG_PRESS_MS);
   }
   cancelTouchLongPress() {
@@ -7660,40 +7743,189 @@ var AttachTerminal = class {
       this.touchLongPressTimer = null;
     }
   }
-  /** Selects the token under the finger — the whole line when that cell is blank —
-   *  and copies it. Silent only when there is genuinely nothing there to take. */
-  copyTouchWord(x, y) {
-    const rowsEl = this.container.querySelector(".xterm-rows");
-    if (!rowsEl) {
+  /** Drops a copy the press had already staged, and the selection that promised it,
+   *  so the gesture leaves nothing behind claiming it copied something. */
+  discardPendingTouchCopy() {
+    if (this.touchCopyPending === null && !this.touchCopyFired) {
       return;
     }
-    const cell = terminalCellAtPoint(x, y, rowsEl.getBoundingClientRect(), this.term.cols, this.term.rows);
-    if (!cell) {
-      return;
-    }
+    this.touchCopyPending = null;
+    this.touchCopyFired = false;
+    this.term.clearSelection();
+  }
+  /** Marks the pressed row so a scrollback trim during the hold moves the anchor with
+   *  the text. Alternate buffers cannot register markers, hence the null. */
+  registerPressMarker(row) {
     const buffer = this.term.buffer.active;
-    const bufferRow = buffer.viewportY + cell.row;
-    const line = buffer.getLine(bufferRow);
-    if (!line) {
+    try {
+      return this.term.registerMarker(row - (buffer.baseY + buffer.cursorY));
+    } catch {
+      return null;
+    }
+  }
+  disposeTouchPressMarker() {
+    this.touchPressMarker?.dispose();
+    this.touchPressMarker = null;
+  }
+  /**
+   * Turns the snapshot into a selection and a staged copy.
+   *
+   * The TEXT comes from the snapshot, so it is what was under the finger when it
+   * landed. The HIGHLIGHT needs the live buffer and is therefore conditional: it is
+   * skipped, not guessed, when the grid has moved out from under the press.
+   */
+  selectTouchWord() {
+    const press = this.touchPress;
+    if (!press) {
       return;
     }
-    const cells = [];
-    for (let col = 0; col < line.length; col += 1) {
-      const buffered = line.getCell(col);
-      cells.push(buffered === void 0 ? " " : buffered.getWidth() === 0 ? "" : buffered.getChars() || " ");
-    }
-    const range = wordRangeAtColumn(cells, cell.col) ?? { start: 0, length: lineContentColumns(cells) };
+    const range = wordRangeAtColumn(press.cells, press.index) ?? { start: 0, length: lineContentColumns(press.cells) };
     if (range.length === 0) {
       return;
     }
-    this.term.select(range.start, bufferRow, range.length);
-    const text = this.term.getSelection();
+    const text = textFromCells(press.cells, range);
     if (text.trim() === "") {
-      this.term.clearSelection();
       return;
     }
+    const anchorRow = this.touchPressMarker !== null ? this.touchPressMarker.line : press.firstRow;
+    if (anchorRow >= 0 && press.bufferType === this.term.buffer.active.type && press.cols === this.term.cols) {
+      const at = wrappedCellPosition(range.start, press.cols);
+      if (this.liveTextAt(anchorRow, range, press.cols) === text) {
+        this.term.select(at.col, anchorRow + at.row, range.length);
+      } else {
+        this.term.clearSelection();
+      }
+    } else {
+      this.term.clearSelection();
+    }
     this.touchCopyFired = true;
-    this.copyToClipboard(text);
+    this.suppressNextContextMenu = true;
+    this.touchCopyPending = text;
+  }
+  /** The text the live buffer currently holds where a snapshot's range sits, or null
+   *  if that no longer resolves. Used to check the highlight before painting it. */
+  liveTextAt(firstRow, range, cols) {
+    const firstNeeded = Math.floor(range.start / cols);
+    const lastNeeded = Math.floor((range.start + range.length - 1) / cols);
+    const cells = this.flattenRows(firstRow + firstNeeded, firstRow + lastNeeded, cols);
+    if (cells === null) {
+      return null;
+    }
+    return textFromCells(cells, { start: range.start - firstNeeded * cols, length: range.length });
+  }
+  /**
+   * Reads the press: the wrapped block under the finger, flattened one entry per
+   * column, plus where in it the finger landed.
+   *
+   * Everything the copy needs is taken HERE, while the finger is still going down.
+   * The alternative — keeping coordinates and reading the buffer when the timer fires
+   * — has to survive every mutation that can happen in 500ms, and each one is its own
+   * way to copy real text from the wrong place: a full ring trimming the pressed line
+   * or the earlier rows of its wrapped block, a progress bar rewriting the line in
+   * place, an alternate-screen TUI scrolling, a peer's resize reflowing the grid. A
+   * snapshot is immune to all of them at once.
+   */
+  snapshotPress(x, y) {
+    const rowsEl = this.container.querySelector(".xterm-rows");
+    if (!rowsEl) {
+      return null;
+    }
+    const cols = this.term.cols;
+    const cell = terminalCellAtPoint(x, y, rowsEl.getBoundingClientRect(), cols, this.term.rows);
+    if (!cell) {
+      return null;
+    }
+    const buffer = this.term.buffer.active;
+    const pressedRow = buffer.viewportY + cell.row;
+    if (pressedRow < 0 || pressedRow >= buffer.length) {
+      return null;
+    }
+    let cells = this.flattenRows(pressedRow, pressedRow, cols);
+    if (cells === null) {
+      return null;
+    }
+    let first = pressedRow;
+    let last = pressedRow;
+    let index = cell.col;
+    const reaches = () => wordRangeAtColumn(cells, index);
+    if (reaches() !== null) {
+      while (first > 0 && pressedRow - first < TOUCH_PRESS_MAX_ROWS && buffer.getLine(first)?.isWrapped === true && reaches()?.start === 0) {
+        const previous = this.flattenRows(first - 1, first - 1, cols);
+        if (previous === null) {
+          return null;
+        }
+        cells = previous.concat(cells);
+        index += cols;
+        first -= 1;
+      }
+      while (last + 1 < buffer.length && last - pressedRow < TOUCH_PRESS_MAX_ROWS && buffer.getLine(last + 1)?.isWrapped === true && (() => {
+        const range2 = reaches();
+        return range2 !== null && range2.start + range2.length === cells.length;
+      })()) {
+        const next = this.flattenRows(last + 1, last + 1, cols);
+        if (next === null) {
+          return null;
+        }
+        cells = cells.concat(next);
+        last += 1;
+      }
+      const range = reaches();
+      if (range === null) {
+        return null;
+      }
+      if (range.start === 0 && first > 0 && buffer.getLine(first)?.isWrapped === true) {
+        return null;
+      }
+      if (range.start + range.length === cells.length && last + 1 < buffer.length && buffer.getLine(last + 1)?.isWrapped === true) {
+        return null;
+      }
+    } else {
+      while (first > 0 && pressedRow - first < TOUCH_PRESS_MAX_ROWS && buffer.getLine(first)?.isWrapped === true) {
+        first -= 1;
+      }
+      while (last + 1 < buffer.length && last - pressedRow < TOUCH_PRESS_MAX_ROWS && buffer.getLine(last + 1)?.isWrapped === true) {
+        last += 1;
+      }
+      if (buffer.getLine(first)?.isWrapped === true) {
+        return null;
+      }
+      if (last + 1 < buffer.length && buffer.getLine(last + 1)?.isWrapped === true) {
+        return null;
+      }
+      cells = this.flattenRows(first, last, cols);
+      if (cells === null) {
+        return null;
+      }
+      index = (pressedRow - first) * cols + cell.col;
+    }
+    return { cells, index, firstRow: first, cols, bufferType: buffer.type };
+  }
+  /**
+   * Flattens buffer rows to ONE ENTRY PER COLUMN, so an index is a column.
+   * translateToString would collapse a wide character into a single index and quietly
+   * shift every column after it.
+   *
+   * Shared by the snapshot and by the live check that guards the highlight: two
+   * copies of this drifted apart once already, and a difference between them reads as
+   * "the text changed" — which silently withholds the only feedback this gesture has.
+   */
+  flattenRows(firstRow, lastRow, cols) {
+    const buffer = this.term.buffer.active;
+    const cells = [];
+    for (let row = firstRow; row <= lastRow; row += 1) {
+      const line = buffer.getLine(row);
+      if (!line) {
+        return null;
+      }
+      for (let col = 0; col < cols; col += 1) {
+        const buffered = line.getCell(col);
+        cells.push(buffered === void 0 ? " " : buffered.getWidth() === 0 ? "" : buffered.getChars() || " ");
+      }
+      if (row + 1 < buffer.length && buffer.getLine(row + 1)?.isWrapped === true && line.getCell(cols - 1)?.getCode() === 0) {
+        cells[cells.length - 1] = "";
+      }
+    }
+    return cells;
   }
   /** The painted height of one terminal row, which turns a pixel-denominated gesture
    *  into rows. Falls back to a font-size estimate before the first row exists. */
