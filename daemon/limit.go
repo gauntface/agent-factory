@@ -427,7 +427,7 @@ func (m *Manager) resumeFromLimitLockedOutcome(repoID, key string, instance *ses
 	// blip yields probeUnknown and is refused outright; a durable outage is what
 	// the poll's debounce settles to Lost, which drops this session out of
 	// LimitReached and hands it to the Lost-restore loop (the one place remote
-	// re-provision belongs, with its own recheck). What remains is probeDead: the
+	// re-provision belongs, with its own recheck). What remains is an answered death: the
 	// sandbox answered that its agent exited while blocked — the #1786 case — and
 	// that is authoritative, so it re-spawns at once, exactly as before.
 	as := instance.AgentServer()
@@ -437,7 +437,26 @@ func (m *Manager) resumeFromLimitLockedOutcome(repoID, key string, instance *ses
 		// prompt below is all it needs.
 	case probeUnknown:
 		return resumeNotPerformed, fmt.Errorf("cannot resume %q: its agent-server did not answer the liveness probe; not re-spawning, because re-provisioning a sandbox that may still be running would orphan it and discard its unpushed work", requestedTitle)
-	case probeDead:
+	case probeAnsweredDead:
+		// It ANSWERED: the agent is gone, the sandbox is not. For a REMOTE session
+		// Respawn is recoverSandbox → reprovisionRemote, which tears the sandbox down
+		// and re-clones from origin — so this is the same destructive replacement the
+		// restore paths guard, reached through a third door (#2923). Push and durably
+		// record the branch first, and refuse rather than re-spawn if that cannot be
+		// done. A local session has no sandbox to preserve and falls through.
+		if isRemoteWorkspace(instance) {
+			// kill, not --force-reap: RestoreSession refuses a LiveLimitReached
+			// session and ResumeFromLimitRequest has no force option, so the
+			// forced-reap hatch cannot open from this door (Codex on #2967).
+			if err := m.preserveSandboxBeforeReap(repoID, key, instance, killSuggestionFor(instance)); err != nil {
+				return resumeNotPerformed, err
+			}
+			if err := requireDurableSandboxBranch(repoID, instance); err != nil {
+				return resumeNotPerformed, err
+			}
+		}
+		fallthrough
+	case probeAbsent:
 		// Capture the limit window BEFORE the re-spawn: Respawn ends in ConfirmLive,
 		// which drops both the LiveLimitReached liveness and its reset time, and
 		// LimitResetAt reports (zero, false) once that has happened. Re-applying the

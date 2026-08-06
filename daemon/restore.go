@@ -59,14 +59,14 @@ func (m *Manager) RestoreSession(req RestoreSessionRequest) (string, session.Ins
 		path, restoreErr := m.restoreArchivedInstance(instance, repoID, title)
 		return path, resolved, restoreErr
 	case session.LiveLost, session.LiveDead:
-		path, restoreErr := m.restoreLostOrDeadSession(repoID, title, instance)
+		path, restoreErr := m.restoreLostOrDeadSession(repoID, title, instance, req.ForceReap)
 		return path, resolved, restoreErr
 	default:
 		return "", session.InstanceData{}, fmt.Errorf("session %q is not archived, lost, or dead", title)
 	}
 }
 
-func (m *Manager) restoreLostOrDeadSession(repoID, title string, instance *session.Instance) (string, error) {
+func (m *Manager) restoreLostOrDeadSession(repoID, title string, instance *session.Instance, force bool) (string, error) {
 	if err := instance.ValidateRuntimeAction(session.RuntimeActionRestoreLostOrDead); err != nil {
 		return "", fmt.Errorf("cannot restore: %w", err)
 	}
@@ -133,9 +133,52 @@ func (m *Manager) restoreLostOrDeadSession(repoID, title string, instance *sessi
 		m.mu.Unlock()
 		return instance.GetWorktreePath(), nil
 	case probeUnknown:
-		return "", fmt.Errorf("cannot restore remote session %q: could not determine whether its existing sandbox is gone; refusing to re-provision while it is unreachable because that could discard unpushed work (if you know it is permanently gone, explicitly kill this session and create a replacement)", title)
-	case probeDead:
-		// The sandbox answered that its agent is gone, so replacement is safe.
+		// Unreachable is not gone. Refuse, and NAME the release — a guard that blocks
+		// without saying how to get past it is #2917. Which means honoring that
+		// release HERE: a refusal whose advertised retry lands on the same branch and
+		// refuses again is the same defect wearing a helpful message.
+		if !force {
+			return "", refuseIndeterminateReap(instance)
+		}
+		// Forced past an unanswerable probe: the sandbox may well be alive behind a
+		// broken path, so a replacement still must not land on the default branch and
+		// strand work it had already PUSHED — which is not what the flag offered to
+		// discard. Unlike probeAbsent below, "gone" was never established here.
+		if err := requireDurableSandboxBranch(repoID, instance); err != nil {
+			return "", err
+		}
+		log.WarningLog.Printf("restore of %q: --force-reap given past an indeterminate probe; af could not reach the sandbox to push it, so anything it holds unpushed is discarded", title)
+	case probeAbsent:
+		// af's own not-provisioned sentinel: nothing to preserve, so replacement is
+		// unconditional. The only arm that licenses that.
+	case probeAnsweredDead:
+		// It ANSWERED: the agent is gone, the sandbox is not. Push its work to origin
+		// before anything replaces it, and refuse outright if that push does not
+		// land — the same order and the same refusal ArchiveSandbox uses.
+		//
+		// --force-reap still ATTEMPTS the push. The flag means "a failed push must
+		// not stop you", not "do not try": the push is also the only thing that
+		// learns this session's branch from the sandbox, and skipping it would make
+		// the replacement clone the default branch and strand work the operator had
+		// already pushed — which the flag never offered to discard.
+		if force {
+			// Do NOT push. The flag's promise is that the sandbox is replaced without
+			// publishing what it holds, and archive does not merely push commits — it
+			// snapshots uncommitted files into one first. Pushing here would upload
+			// exactly the material the operator chose to discard, which is worse than
+			// the data loss the default path prevents.
+			//
+			// The branch therefore has to be known already, and the guard below is what
+			// makes that a refusal rather than a default-branch clone.
+			if err := requireDurableSandboxBranch(repoID, instance); err != nil {
+				return "", err
+			}
+			log.WarningLog.Printf("restore of %q: --force-reap given, replacing its reachable sandbox without pushing; anything it has not pushed is discarded", title)
+			break
+		}
+		if err := m.preserveSandboxBeforeReap(repoID, key, instance, forceReapSuggestionFor(instance)); err != nil {
+			return "", err
+		}
 	}
 
 	if err := instance.Recover(); err != nil {
