@@ -17,6 +17,7 @@ import (
 
 	"github.com/sachiniyer/agent-factory/cmd/cmd_test"
 	"github.com/sachiniyer/agent-factory/internal/proctree"
+	"github.com/sachiniyer/agent-factory/internal/sessionenv"
 	"github.com/sachiniyer/agent-factory/internal/testguard"
 )
 
@@ -33,11 +34,27 @@ import (
 
 // startHeldPane starts a real session on the test's private server with
 // remain-on-exit set in the same invocation (as Start does), and waits until
-// tmux reports the pane dead.
+// tmux reports the pane dead. Production writes the pane's identity bundle
+// from the pane's own launch shim (the shim IS the pane root, and it stamps
+// before it execs the pane command); the fixture records the same options
+// through the production panePidStampArgs helper — and the pane command
+// waits on a release file so the stamp and the pane-died hook always land
+// while the root is alive, exactly the ordering the shim guarantees. Without
+// the release an `exit 7` pane can die inside the ~30ms the second client
+// takes to connect, the hook never counts the death, and the fixture flakes.
+// exec then replaces the launcher image under the same pid, so the stamped
+// #{pane_pid} is still the dead root's.
 func startHeldPane(t *testing.T, name, command string) {
 	t.Helper()
-	require.NoError(t, exec.Command("tmux", "new-session", "-d", "-s", name, command,
+	dir := t.TempDir()
+	release := filepath.Join(dir, "release")
+	script := filepath.Join(dir, "run.sh")
+	require.NoError(t, os.WriteFile(script, []byte(
+		"while [ ! -f "+release+" ]; do sleep 0.01; done\nexec "+command+"\n"), 0o700))
+	require.NoError(t, exec.Command("tmux", "new-session", "-d", "-s", name, "sh "+strconv.Quote(script),
 		";", "set-option", "-w", "-t", exactTarget(name), "remain-on-exit", "on").Run())
+	require.NoError(t, exec.Command("tmux", panePidStampArgs(exactTarget(name))...).Run())
+	require.NoError(t, os.WriteFile(release, nil, 0o600))
 	t.Cleanup(func() { _ = exec.Command("tmux", "kill-session", "-t", exactTarget(name)).Run() })
 	require.Eventually(t, func() bool {
 		out, err := exec.Command("tmux", "display-message", "-p", "-t", exactTarget(name), "#{pane_dead}").Output()
@@ -207,16 +224,59 @@ func TestCloseAndWaitForPaneExit_DeadPaneWithARunningRootStopsTheRoot(t *testing
 	require.False(t, proctree.AliveSame(root), "the running root of a dead pane survived the teardown")
 }
 
+// shimStartCommand is what #{pane_start_command} answers for a pane af
+// launched through its exec shim. The fixture keeps one around only as the
+// recorded command string — freshness no longer reads launch markers out of
+// it, it just has to byte-match what the stamp pinned.
+const shimStartCommand = "/usr/bin/af " + sessionenv.ExecMarker + " sh 0 'sh -c true'"
+
+// paneState is the part of a dead pane's row the stamp's freshness is judged
+// against: the deaths counter the pane-died hook maintains, the pane's
+// reported pty name, the command the stamp pinned (@af_pane_cmd), and the
+// start command tmux records now. stampCmd == startCmd is what a commandless
+// respawn — which re-ran the shim — reports.
+type paneState struct {
+	deaths, tty, stampCmd, startCmd string
+}
+
+// freshPane is the state a shim-stamped pane reports after its first death:
+// its own exit is the counter's first increment, so the stamp's deaths field
+// is exactly one behind.
+func freshPane() paneState {
+	return paneState{deaths: "1", tty: "/dev/pts/0", stampCmd: shimStartCommand, startCmd: shimStartCommand}
+}
+
+func (s paneState) cmdMatch() string {
+	if s.stampCmd == s.startCmd {
+		return "1"
+	}
+	return "0"
+}
+
 // heldPaneExec answers every pane query as tmux would for one held dead pane:
 // it expands whatever format was asked for, so the fixture tracks the query
 // instead of a canned shape. Every command is accepted, including kill-session.
-func heldPaneExec(pid int, status, signal, deadTime string, killed *bool) cmd_test.MockCmdExec {
+func heldPaneExec(t *testing.T, pid int, status, signal, deadTime string, killed *bool) cmd_test.MockCmdExec {
+	return deadPaneExec(t, strconv.Itoa(pid), strconv.Itoa(pid)+":0:/dev/pts/0", freshPane(), status, signal, deadTime, killed)
+}
+
+// deadPaneExec is heldPaneExec with independent control over the pid fields
+// and the pane's incarnation state: panePID is what #{pane_pid} expands to —
+// "" models tmux ≥3.8's held dead pane (#5319) — stamp is what the pane's
+// @af_pane_pid bundle answers ("" for a pane that was never recorded), and
+// state carries the freshness inputs: the deaths counter, the reported pty
+// name, and the stamped/recorded commands the server-side equality reads.
+func deadPaneExec(t *testing.T, panePID, stamp string, state paneState, status, signal, deadTime string, killed *bool) cmd_test.MockCmdExec {
 	expand := strings.NewReplacer(
-		"#{pane_pid}", strconv.Itoa(pid),
+		"#{pane_pid}", panePID,
 		"#{pane_dead}", "1",
 		"#{pane_dead_status}", status,
 		"#{pane_dead_signal}", signal,
 		"#{pane_dead_time}", deadTime,
+		"#{"+PanePidMarker+"}", stamp,
+		"#{"+paneDeathsMarker+"}", state.deaths,
+		"#{pane_tty}", state.tty,
+		paneCommandMatchField, state.cmdMatch(),
 	)
 	return cmd_test.MockCmdExec{
 		RunFunc: func(c *exec.Cmd) error {
@@ -242,7 +302,7 @@ func TestCloseAndWaitForPaneExit_HeldPaneWithAnAbsentPidIsConclusive(t *testing.
 	gone := exitedProcess(t)
 	killed := false
 	s := newTmuxSession(toTmuxName("dead-pane-absent", ""), "sh", NewMockPtyFactory(t),
-		heldPaneExec(gone.PID, "7", "", "1726000000", &killed))
+		heldPaneExec(t, gone.PID, "7", "", "1726000000", &killed))
 
 	state, err := s.CloseAndWaitForPaneExit()
 	require.NoError(t, err)
@@ -257,7 +317,7 @@ func TestCloseAndWaitForPaneExit_HeldPaneNeverTouchesARecycledPid(t *testing.T) 
 	shrinkReapWaits(t)
 	stranger := startStranger(t, nil)
 	s := newTmuxSession(toTmuxName("dead-pane-recycled", ""), "sh", NewMockPtyFactory(t),
-		heldPaneExec(stranger.PID, "0", "", "1726000000", nil))
+		heldPaneExec(t, stranger.PID, "0", "", "1726000000", nil))
 
 	start := time.Now()
 	state, err := s.CloseAndWaitForPaneExit()
@@ -275,12 +335,223 @@ func TestCloseAndWaitForPaneExit_UnreapedDeadPaneSkipsAPidMarkedForAnotherSessio
 	shrinkReapWaits(t)
 	stranger := startStranger(t, []string{EnvMarkerSession + "=af_someone_else"})
 	s := newTmuxSession(toTmuxName("dead-pane-marked", ""), "sh", NewMockPtyFactory(t),
-		heldPaneExec(stranger.PID, "", "", "", nil))
+		heldPaneExec(t, stranger.PID, "", "", "", nil))
 
 	state, err := s.CloseAndWaitForPaneExit()
 	require.NoError(t, err)
 	require.Equal(t, PaneStateKnown, state)
 	require.True(t, proctree.AliveSame(stranger), "the teardown signalled another session's process")
+}
+
+// The #5319 shape on tmux ≥3.8: a held dead pane whose pane_pid is EMPTY,
+// carrying only the @af_pane_pid stamp set at spawn. The stamp names the dead
+// root, so its kernel session members are attributed exactly as they were
+// while pane_pid still reported it — the detached child gets reaped and the
+// teardown completes instead of refusing on an empty pid.
+func TestCloseAndWaitForPaneExit_StampedDeadPaneReapsItsDetachedSurvivor(t *testing.T) {
+	shrinkReapWaits(t)
+	leaderPID, child := startDeadLeaderWithSessionChild(t)
+	killed := false
+	s := newTmuxSession(toTmuxName("dead-pane-stamped", ""), "sh", NewMockPtyFactory(t),
+		deadPaneExec(t, "", strconv.Itoa(leaderPID)+":0:/dev/pts/0", freshPane(), "7", "", "1726000000", &killed))
+
+	state, err := s.CloseAndWaitForPaneExit()
+	require.NoError(t, err)
+	require.Equal(t, PaneStateKnown, state)
+	require.True(t, killed, "the stamped dead pane's session must still be killed")
+	require.False(t, proctree.AliveSame(child),
+		"the dead root's kernel-session survivor must be reaped through the stamped pid")
+}
+
+// The respawn-pane trap the stamp must not fall into (#5328 review): pane
+// options survive respawn-pane, so a pane respawned into a command af did
+// not launch still carries the OLD root's stamp — and the recorded start
+// command changes to the replacement, so even argv containing a launch
+// marker fails the pinned-command equality. The deaths counter saw the first
+// death and the respawn's, leaving the stamped count two behind.
+func TestCloseAndWaitForPaneExit_RespawnedDeadPaneDistrustsItsStaleStamp(t *testing.T) {
+	shrinkReapWaits(t)
+	leaderPID, child := startDeadLeaderWithSessionChild(t)
+	killed := false
+	stale := paneState{deaths: "2", tty: "/dev/pts/1", stampCmd: shimStartCommand,
+		startCmd: `/bin/sh -c 'echo ` + sessionenv.ExecMarker + `; sleep 5'`}
+	s := newTmuxSession(toTmuxName("dead-pane-respawned", ""), "sh", NewMockPtyFactory(t),
+		deadPaneExec(t, "", strconv.Itoa(leaderPID)+":0:/dev/pts/0", stale, "7", "", "1726000000", &killed))
+
+	state, err := s.CloseAndWaitForPaneExit()
+	require.Error(t, err)
+	require.Equal(t, PaneStateUnknown, state)
+	require.True(t, killed, "kill-session still runs — refusal is about the process tree, not the session")
+	require.Contains(t, err.Error(), "respawn",
+		"the refusal must say why the recorded stamp cannot be trusted")
+	require.True(t, proctree.AliveSame(child),
+		"an unattributed survivor must not be reaped on a stale stamp's say-so")
+}
+
+// The -k respawn shape Codex P1'd (#5328 review): `respawn-pane -k` on a live
+// pane produces NO pane-died for the kill, and the devpts index freed by the
+// kill can be handed straight back to the replacement — so a respawn that
+// never restamped can leave a row that looks fresh on every field the row
+// itself carries: deaths gap of exactly one (only the new run's exit counted),
+// the recorded command unchanged, and the very same /dev/pts/N name. No
+// post-mortem proof can see it — the pty's node is gone the moment the master
+// closes — so the guarantee lives one layer down, in the shim: a respawn
+// re-executes the launch shim, which refuses to run the command when its
+// bookkeeping write fails over an existing stamp (sessionenv). When that
+// refusal holds there is no second incarnation to hide behind the record, so
+// the row the teardown reads here is INC1's own — the only run the trusted
+// stamp can ever name, and the only session this resolution may touch.
+func TestCloseAndWaitForPaneExit_RecycledPtyNameTrustOnlyNamesTheDeadRun(t *testing.T) {
+	shrinkReapWaits(t)
+	leaderPID, child := startDeadLeaderWithSessionChild(t)
+	killed := false
+	stranger := startStranger(t, nil)
+	// deaths "1" vs the stamp's "0" — the -k kill produced no counter move —
+	// same tty NAME at a different allocation, same command: indistinguishable
+	// from a first-death row, and trusted as one. What the trust resolves is
+	// bounded to the stamped pid's session: the dead run's own survivor is
+	// reaped, a process in any other session is not touched.
+	fresh := paneState{deaths: "1", tty: "/dev/pts/0", stampCmd: shimStartCommand, startCmd: shimStartCommand}
+	s := newTmuxSession(toTmuxName("dead-pane-pty-recycled", ""), "sh", NewMockPtyFactory(t),
+		deadPaneExec(t, "", strconv.Itoa(leaderPID)+":0:/dev/pts/0", fresh, "7", "", "1726000000", &killed))
+
+	state, err := s.CloseAndWaitForPaneExit()
+	require.NoError(t, err)
+	require.Equal(t, PaneStateKnown, state)
+	require.True(t, killed)
+	require.False(t, proctree.AliveSame(child),
+		"the dead run's own kernel-session survivor must be reaped")
+	require.True(t, proctree.AliveSame(stranger),
+		"a process outside the stamped run's session must not be touched")
+}
+
+// The positive half of the same respawn: a commandless respawn re-runs af's
+// launch shim, which restamps with the NEW root's pid, the deaths count it
+// saw at birth, and the fresh pty — the second death then reads as fresh and
+// the teardown completes through the new stamp.
+func TestCloseAndWaitForPaneExit_RespawnedShimPaneStampStaysFresh(t *testing.T) {
+	shrinkReapWaits(t)
+	leaderPID, child := startDeadLeaderWithSessionChild(t)
+	killed := false
+	restamped := paneState{deaths: "2", tty: "/dev/pts/1", stampCmd: shimStartCommand, startCmd: shimStartCommand}
+	s := newTmuxSession(toTmuxName("dead-pane-respawned-fresh", ""), "sh", NewMockPtyFactory(t),
+		deadPaneExec(t, "", strconv.Itoa(leaderPID)+":1:/dev/pts/1", restamped, "7", "", "1726000000", &killed))
+
+	state, err := s.CloseAndWaitForPaneExit()
+	require.NoError(t, err)
+	require.Equal(t, PaneStateKnown, state)
+	require.True(t, killed)
+	require.False(t, proctree.AliveSame(child),
+		"a survivor of a shim-respawned pane's dead root must be reaped through the restamped pid")
+}
+
+// A held dead pane that was never stamped — created by a pre-#5319 af, or not
+// created by af at all — reports nothing usable on tmux ≥3.8: pane_pid is
+// empty and @af_pane_pid is unset. Teardown must fail closed exactly as
+// master does on any unprovable capture: kill-session still runs, but the
+// answer is an error that leaves the workspace intact and says how to finish
+// manually. There is no marker-attribution fallback for it in this PR.
+func TestCloseAndWaitForPaneExit_UnstampedDeadPaneRefuses(t *testing.T) {
+	shrinkReapWaits(t)
+	killed := false
+	s := newTmuxSession(toTmuxName("dead-pane-unstamped", ""), "sh", NewMockPtyFactory(t),
+		deadPaneExec(t, "", "", paneState{}, "7", "", "1726000000", &killed))
+
+	state, err := s.CloseAndWaitForPaneExit()
+	require.Error(t, err)
+	require.Equal(t, PaneStateUnknown, state)
+	require.True(t, killed, "kill-session still runs — refusal is about the process tree, not the session")
+	require.Contains(t, err.Error(), PanePidMarker,
+		"the refusal must name what the pane lacks")
+	require.Contains(t, err.Error(), "af sessions kill",
+		"the refusal must name the step that actually finishes cleanup — the recorded kill retries automatically, and a re-run drives it (measured on tmux 3.8: the tombstoned kill converged via the vanished-session sweep once the session was gone)")
+}
+
+// pid-bearing rows stay pane_pid's rows: the stamp is a fallback authority
+// consulted only when tmux reports none, and only while the stamp's
+// incarnation proof holds — pane options outlive respawn-pane, so a stamp on
+// a pane respawned or never properly stamped is stale.
+func TestParsePaneRowStampedPid(t *testing.T) {
+	for _, tc := range []struct {
+		field   string
+		wantPID int
+		dead    bool
+		reaped  bool
+		wantErr string
+	}{
+		{"123|0||123:0:/dev/pts/0|0|/dev/pts/0|1", 123, false, false, ""},                  // live, stamped, agrees
+		{"123|0||", 123, false, false, ""},                                                 // live, unstamped — pane_pid rules
+		{"|1|71726000000|456:0:/dev/pts/0|1|/dev/pts/0|1", 456, true, true, ""},            // 3.8 dead row: fresh stamp answers
+		{"|1|71726000000|456:0:/dev/pts/0|1|/dev/pts/0|0", 0, true, true, "respawn"},       // command pin moved
+		{"|1|71726000000|456:0:/dev/pts/0|2|/dev/pts/0|1", 0, true, true, "respawn"},       // deaths gap > 1
+		{"|1|71726000000|456:0:/dev/pts/0|1|/dev/pts/9|1", 0, true, true, "respawn"},       // pty moved
+		{"|1|71726000000|456:0:/dev/pts/0|0|/dev/pts/0|1", 0, true, true, "respawn"},       // no death counted
+		{"|1|71726000000|456:0|1|/dev/pts/0|1", 0, true, true, "respawn"},                  // two-part stamp: no pty pin
+		{"|1|71726000000|456|1|/dev/pts/0|1", 0, true, true, "respawn"},                    // pre-proof bare-pid stamp
+		{"|1|71726000000|456", 0, true, true, "respawn"},                                   // no freshness fields at all
+		{"|1|71726000000|:0:/dev/pts/0|1|/dev/pts/0|1", 0, true, true, "af sessions kill"}, // torn stamp names nobody — reads as absent
+		{"123|1|71726000000|456:0:/dev/pts/0|9|/dev/pts/9|0", 123, true, true, ""},         // populated pane_pid wins over any stamp
+		{"|1|71726000000|", 0, true, true, "af sessions kill"},
+		{"|0||", 0, false, false, "invalid pane pid"},
+		{"abc|1|71726000000|", 0, true, true, "invalid pane pid"},
+	} {
+		row, err := parsePaneRow(tc.field)
+		if tc.wantErr != "" {
+			require.ErrorContains(t, err, tc.wantErr, tc.field)
+			continue
+		}
+		require.NoError(t, err, tc.field)
+		require.Equal(t, tc.wantPID, row.pid, tc.field)
+		require.Equal(t, tc.dead, row.dead, tc.field)
+		require.Equal(t, tc.reaped, row.reaped, tc.field)
+	}
+}
+
+// The production stamp on real tmux: a held dead pane still answers
+// @af_pane_pid, the bundle's first field is exactly the pane's live root pid —
+// equal to pane_pid wherever tmux still reports it — and the freshness inputs
+// the dead row must satisfy are all present: one death counted, the pty
+// unchanged, the start command pinned.
+func TestStartHeldPaneStampsItsRootPid(t *testing.T) {
+	testguard.IsolateTmux(t)
+	name := fmt.Sprintf("af_test_dead_pane_stamp_%d", time.Now().UnixNano())
+	startHeldPane(t, name, "sh -c 'exit 7'")
+
+	out, err := exec.Command("tmux", "display-message", "-p", "-t", exactTarget(name), paneRowFormat).Output()
+	require.NoError(t, err)
+	fields := strings.Split(strings.TrimSpace(string(out)), "|")
+	require.Len(t, fields, 7)
+	require.Equal(t, "1", fields[1])
+	stampParts := strings.SplitN(fields[3], ":", 3)
+	require.Len(t, stampParts, 3, "the record must carry pid:deaths:tty, got %q", fields[3])
+	require.NotEmpty(t, stampParts[0], "the spawn chain must record %s", PanePidMarker)
+	require.Equal(t, "1", fields[4], "the pane-died hook must have counted this death")
+	require.Equal(t, fields[5], stampParts[2], "the stamped tty must be the pane's own pty")
+	require.Equal(t, "1", fields[6], "the pinned start command must be the pane's own")
+	if fields[0] != "" {
+		require.Equal(t, fields[0], stampParts[0],
+			"where tmux still reports pane_pid, the stamp must record the same pid")
+	}
+}
+
+// startDeadLeaderWithSessionChild spawns a kernel-session leader with one
+// long-lived member, then kills the leader: the child is orphaned but keeps
+// the leader's pid as its SID, which is exactly how a held dead pane's
+// backgrounded survivor still names its pane. Returns (leaderPID, child).
+func startDeadLeaderWithSessionChild(t *testing.T) (leaderPID int, child proctree.Process) {
+	t.Helper()
+	childFile := filepath.Join(t.TempDir(), "child.pid")
+	cmd := exec.Command("sh", "-c",
+		"sleep 300 & echo $! > \"$1\"; kill -9 $$", "sh", childFile)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	require.NoError(t, cmd.Start())
+	_ = cmd.Wait()
+	childPID := readPIDFile(t, childFile)
+	child = processIdentity(t, childPID)
+	require.Equal(t, cmd.Process.Pid, child.SID,
+		"the fixture must leave the survivor in the dead leader's session")
+	t.Cleanup(func() { _ = syscall.Kill(childPID, syscall.SIGKILL) })
+	return cmd.Process.Pid, child
 }
 
 // startStranger starts a process the teardown under test must leave alone.
