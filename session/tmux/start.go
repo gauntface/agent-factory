@@ -96,6 +96,8 @@ func (t *TmuxSession) Start(workDir string) error {
 	}
 	t.programMu.RLock()
 	remainOnExit := t.remainOnExit
+	account := t.account
+	accountAgent := t.accountAgent
 	t.programMu.RUnlock()
 	if remainOnExit {
 		// Atomic with new-session so even a command that exits instantly is
@@ -104,6 +106,32 @@ func (t *TmuxSession) Start(workDir string) error {
 		// (sessionenv stamps its own pid — the shim IS the pane root), so no
 		// spawn-side command is needed and nothing here races death (#5319).
 		args = append(args, ";", "set-option", "-w", "-t", exactTarget(t.sanitizedName), "remain-on-exit", "on")
+	}
+	// Mask the UNSELECTED account boundary names so a shell tab or
+	// default-command process in this account's session can never inherit
+	// another account's identity or shell-startup variable from the server's
+	// global environment — e.g. a user `set-environment -g`, an
+	// update-environment import, or a server that predates the current
+	// allowlist. The selected names are written by new-session's -e flags
+	// above; the refresh's -r half used to mask the rest on the Start path,
+	// and folding it into this same new-session queue keeps the mask without
+	// a separate bounded command: a transient set-environment failure here
+	// cannot Close() the freshly created, healthy pane, because the existence
+	// poll below confirms the pane before a failed command's exit is ever
+	// observed (review of #5347).
+	if account != "" {
+		selected := make(map[string]struct{}, len(sessionEnv))
+		for _, entry := range sessionEnv {
+			if name, _, ok := strings.Cut(entry, "="); ok {
+				selected[name] = struct{}{}
+			}
+		}
+		for _, name := range accountSessionBoundaryNames(accountAgent) {
+			if _, ok := selected[name]; ok {
+				continue
+			}
+			args = append(args, ";", "set-environment", "-r", "-t", exactTarget(t.sanitizedName), name)
+		}
 	}
 	// Bootstrap before deciding whether new-session needs a temporary
 	// update-environment override. Otherwise the no-server probe below omits
@@ -744,8 +772,23 @@ func (t *TmuxSession) reattach(workDir string, answered, confirmedFresh bool) er
 		resolvedAt = time.Now()
 		resolved, _ = t.confirmedGeneration()
 	}
-	if err := t.refreshRestoredAccountEnvironment(); err != nil {
-		return fmt.Errorf("%w: %w", ErrAccountEnvironmentRefresh, err)
+	// The refresh heals a PRE-EXISTING live session whose boundary environment
+	// predates or lost its account scope — the restore path's legitimate use
+	// (pinned by TestAccountScopedShellTabInheritsSelectedCredentials). It must
+	// NOT run when confirmedFresh: Start's new-session queue already wrote the
+	// -e session-env entries and default-command atomically in the same call, so
+	// re-deriving them here is pure redundancy whose only effect is a dozen extra
+	// bounded tmux commands — and a single transient failure there makes Start
+	// call t.Close() and destroy the freshly created, healthy pane. It must not
+	// run when the probe went unanswered either: a wedged has-session already
+	// spent a full tmuxCommandTimeout, and the refresh's first set-environment
+	// would pay the same deadline for the same non-answer — twelve times over —
+	// violating the one-bounded-has-session discipline the generation probe
+	// above and ReattachOnly's doc both promise (Codex on #4473).
+	if !confirmedFresh && answered {
+		if err := t.refreshRestoredAccountEnvironment(); err != nil {
+			return fmt.Errorf("%w: %w", ErrAccountEnvironmentRefresh, err)
+		}
 	}
 	// Teardown attribution follows the GENERATION, not the monitor slot: a
 	// resolved id matching the outgoing monitor's generation shares its mark
