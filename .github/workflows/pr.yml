@@ -2,7 +2,7 @@ name: PR Validation
 
 on:
   pull_request:
-    branches: [master]
+    branches: [main]
   # A merge queue creates a temporary gh-readonly-queue/… ref and dispatches the
   # merge_group event. The required "Lint" and "Build" checks below MUST run on
   # that event and report against the merge_group ref, or the queue never gets a

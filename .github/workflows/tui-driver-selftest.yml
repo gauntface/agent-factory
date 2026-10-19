@@ -19,7 +19,7 @@ on:
   # already merged; a native push run identifies that commit, while an Auto Gate
   # dispatch verifies whichever master tip is current when the run starts.
   push:
-    branches: [master]
+    branches: [main]
     paths:
       - 'app/**'
       - 'ui/**'

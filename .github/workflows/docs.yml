@@ -2,9 +2,9 @@ name: Docs
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
-    branches: [master]
+    branches: [main]
   workflow_dispatch:
     inputs:
       deploy_docs:
@@ -61,7 +61,7 @@ jobs:
 
       - name: Check docs deploy paths
         id: docs_changes
-        if: (github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'workflow_dispatch'
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
         shell: bash
         # Every ${{ }} value reaches the script through the environment, never by
         # substitution into the program text. verify_sha is a free-form input, so
@@ -159,7 +159,7 @@ jobs:
   # "GitHub Actions" (Settings → Pages → Build and deployment → Source).
   deploy:
     name: Deploy
-    if: github.ref == 'refs/heads/master' && needs.build.outputs.docs_changed == 'true'
+    if: github.ref == 'refs/heads/main' && needs.build.outputs.docs_changed == 'true'
     needs: build
     runs-on: ubuntu-latest
     concurrency:

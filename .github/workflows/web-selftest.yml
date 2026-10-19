@@ -25,7 +25,7 @@ on:
   # This is a signal run, not a gate: master has already merged. Its job is to name
   # the commit, so nobody inherits a bisect.
   push:
-    branches: [master]
+    branches: [main]
     paths:
       # KEEP IN SYNC with SELFTEST_PATHS in .github/scripts/web-selftest-scope.js,
       # which is the source of truth for the PR-side filter. A trigger `paths:`
