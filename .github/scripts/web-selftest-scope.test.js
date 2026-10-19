@@ -264,13 +264,13 @@ test("pr.yml calls the web selftest workflow, and it is scoped rather than uncon
   assert.match(yaml, /^ {4}if: needs\.web-selftest-scope\.outputs\.run == 'true'$/m);
 });
 
-test("web-selftest.yml is callable AND runs on master", () => {
+test("web-selftest.yml is callable AND runs on main", () => {
   const yaml = readWorkflow("web-selftest.yml");
   // Callable: the PR gate. Without this pr.yml cannot call it and nothing gates.
   assert.match(yaml, /^ {2}workflow_call:$/m, "web-selftest.yml must stay callable — pr.yml's gate depends on it");
   // Master: the signal run (#2762). Without this a regression that lands stays
   // invisible until some later PR happens to touch these paths.
-  assert.match(yaml, /^ {2}push:\n {4}branches: \[master\]$/m, "web-selftest.yml must keep its master push trigger");
+  assert.match(yaml, /^ {2}push:\n {4}branches: \[main\]$/m, "web-selftest.yml must keep its main push trigger");
   // A second `pull_request:` trigger would double every PR run — once standalone,
   // once through pr.yml — and the standalone one would gate nothing.
   assert.doesNotMatch(yaml, /^ {2}pull_request:$/m, "the PR run goes through pr.yml now, not a pull_request trigger");
