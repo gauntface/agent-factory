@@ -17,15 +17,15 @@ import (
 const (
 	// ReleaseBaseURL is the GitHub release page used to address versioned
 	// release assets.
-	ReleaseBaseURL = "https://github.com/sachiniyer/agent-factory/releases"
+	ReleaseBaseURL = "https://github.com/gauntface/agent-factory/releases"
 
 	// DefaultLatestReleaseAPIURL answers the stable channel. GitHub pins
 	// /releases/latest to the newest non-prerelease release.
-	DefaultLatestReleaseAPIURL = "https://api.github.com/repos/sachiniyer/agent-factory/releases/latest"
+	DefaultLatestReleaseAPIURL = "https://api.github.com/repos/gauntface/agent-factory/releases/latest"
 	// DefaultReleasesAPIURL answers the preview channel. One page of 100 is
 	// sufficient because releases are created in increasing version order,
 	// and the entire page is scanned for the greatest version.
-	DefaultReleasesAPIURL = "https://api.github.com/repos/sachiniyer/agent-factory/releases?per_page=100"
+	DefaultReleasesAPIURL = "https://api.github.com/repos/gauntface/agent-factory/releases?per_page=100"
 )
 
 // Release is the subset of a GitHub release needed to select an update target.

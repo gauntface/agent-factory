@@ -1141,7 +1141,7 @@ func TestAutoUpdateDownloadsByTag(t *testing.T) {
 		t.Fatalf("autoUpdate: %v", err)
 	}
 	wantURL := fmt.Sprintf(
-		"https://github.com/sachiniyer/agent-factory/releases/download/v1.0.138-preview-2/agent-factory-linux-%s.tar.gz",
+		"https://github.com/gauntface/agent-factory/releases/download/v1.0.138-preview-2/agent-factory-linux-%s.tar.gz",
 		runtime.GOARCH)
 	if gotURL != wantURL {
 		t.Fatalf("download URL = %q, want %q", gotURL, wantURL)

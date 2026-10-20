@@ -19,7 +19,7 @@ Prerequisites: **tmux**, **git**, and at least one agent CLI on your `PATH`, on
 Linux, macOS, or WSL2.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sachiniyer/agent-factory/master/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/gauntface/agent-factory/main/install.sh | sh
 ```
 
 That puts `af` in `~/.local/bin` (override with `AF_INSTALL_DIR`, pin with
