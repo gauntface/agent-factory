@@ -69,7 +69,7 @@ func (s *Store) Attach(slug, sessionID string) error {
 		return err
 	}
 	return s.withLock(func() error {
-		if err := s.requireSlug(slug); err != nil {
+		if err := s.RequireSlug(slug); err != nil {
 			return err
 		}
 		current, err := s.attachedLocked(sessionID)

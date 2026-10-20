@@ -87,8 +87,8 @@ func (s *Store) Slugs() ([]string, error) {
 	return slugs, nil
 }
 
-// requireSlug fails with the list of known slugs when slug does not exist.
-func (s *Store) requireSlug(slug string) error {
+// RequireSlug fails with the list of known slugs when slug does not exist.
+func (s *Store) RequireSlug(slug string) error {
 	if err := ValidateSlug(slug); err != nil {
 		return err
 	}
@@ -239,7 +239,7 @@ func (s *Store) AddDoc(slug, name string, by Committer) (string, error) {
 		return "", err
 	}
 	err = s.withLock(func() error {
-		if err := s.requireSlug(slug); err != nil {
+		if err := s.RequireSlug(slug); err != nil {
 			return err
 		}
 		path := filepath.Join(s.SlugPath(slug), docFile(n))
@@ -269,7 +269,7 @@ func (s *Store) docPath(slug, doc string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	if err := s.requireSlug(slug); err != nil {
+	if err := s.RequireSlug(slug); err != nil {
 		return "", "", err
 	}
 	path := filepath.Join(s.SlugPath(slug), docFile(n))
