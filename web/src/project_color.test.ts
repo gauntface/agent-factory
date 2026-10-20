@@ -8,6 +8,7 @@ import {
   FAVICON_MARK_PATH,
   PROJECT_COLOR_PALETTE,
   markInk,
+  projectAccent,
   projectColor,
   projectFaviconDataUrl,
   projectFaviconSvg,
@@ -52,4 +53,13 @@ test("the favicon SVG paints the tile in the project color", () => {
 
 test("every palette color is a lowercase #rrggbb", () => {
   for (const c of PROJECT_COLOR_PALETTE) assert.match(c, /^#[0-9a-f]{6}$/);
+});
+
+test("projectAccent keeps 4.5:1 contrast against each theme surface", () => {
+  assert.equal(projectAccent("#ff79c6", "#1f1f1f"), "#ff79c6");
+  const light = projectAccent("#f1fa8c", "#f8f9fc");
+  assert.notEqual(light, "#f1fa8c");
+  assert.match(light, /^#[0-9a-f]{6}$/);
+  assert.equal(markInk(light), "#ffffff");
+  assert.equal(markInk("#bd93f9"), "#1f1f1f");
 });
