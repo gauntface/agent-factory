@@ -42,6 +42,7 @@ import {
   archiveWarningText,
   attentionReason,
   canHandoff,
+  hasAttention,
   compareSessionsForRail,
   isArchived,
   isCreating,
@@ -1402,7 +1403,7 @@ export class AppShell {
     this.syncDocumentTitle(state);
     const color = projectColor(state.registeredProjects, state.selectedProject);
     applyProjectColor(this.el, color, () => themeColorMetaContents("system"));
-    applyProjectFavicon(color);
+    applyProjectFavicon(color, scopeToProject(state.sessions, state.selectedProject).some(hasAttention));
     const selectedForPhone = selectedSession(state);
     const tabsForPhone = selectedForPhone ? sessionTabs(selectedForPhone) : null;
     const focusedForPhone = tabsForPhone ? tabsForPhone[state.activeTab] ?? tabsForPhone[0] : null;
