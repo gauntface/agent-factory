@@ -13,22 +13,13 @@ on:
   # an easy way to silently stop the checks from running.
   merge_group:
 
-  # Auto Gate dispatches this when a head has no PR Validation run at all, so a
-  # decision cannot stall waiting for a run that will never exist: the head its
-  # own update-branch created (#3807), and any other head GitHub created no run
-  # for (#4581). A dispatch takes a REF, never a sha, so it runs at the branch
-  # tip. For #3807 that tip is the new head. For #4581 Auto Gate re-reads the tip
-  # first and skips the dispatch when it is no longer the head it evaluated.
-  #
-  # Both dispatches pass no inputs, so they get probe=false: the full run, exactly
-  # as before. probe=true is the fail-first probe (#4563, docs/dev/probe-runs.md):
+  # A dispatch with no inputs gets probe=false: the full run. probe=true is the fail-first probe (#4563, docs/dev/probe-runs.md):
   # only the Linux Test job runs, on the packages and -run regex given, and every
   # other job is skipped.
   #
   # A probe can be dispatched on a PR's head, and every job below still reports a
-  # check run there, skipped ones included. The gates read the required "Build"
-  # and "Lint" by exact name and take the newest (auto-gate.js
-  # latestRequiredState), and the ruleset counts a skipped check as passing. So a
+  # check run there, skipped ones included. The ruleset reads the required "Build"
+  # and "Lint" by exact name and counts a skipped check as passing. So a
   # probe must never report under a name a PR run uses. That is why the
   # always-running jobs carry a probe-aware `name:`. GitHub does not evaluate the
   # name of a skipped job (github.com/orgs/community/discussions/13261), so a
@@ -60,17 +51,11 @@ concurrency:
   # and cancel-in-progress would cancel the previous queue entry, stalling the
   # merge queue. Fall back to github.ref, which is the unique gh-readonly-queue/…
   # ref per merge_group entry (and refs/pull/N/merge for PRs, so PR runs never
-  # collide with queue runs either). Mirrors how auto-gate.yml keys off a fallback
-  # chain when the pull_request payload is null.
+  # collide with queue runs either).
   #
-  # A probe gets its own prefix. Otherwise a probe and Auto Gate's recovery
-  # dispatch on the same branch would share pr-refs/heads/<branch> and cancel
-  # each other, and Build, which runs always(), fails on a cancelled need.
-  # Every other event resolves to the same pr-… group as before.
-  #
-  # Auto Gate's dispatches, #3807's and #4581's, are not probes, so they land in
-  # pr-refs/heads/<branch>. Two #4581 dispatches that race on one branch
-  # therefore cancel down to one run, and a probe on that branch cancels neither.
+  # A probe gets its own prefix. Otherwise a probe and a plain dispatch on the
+  # same branch would share pr-refs/heads/<branch> and cancel each other, and
+  # Build, which runs always(), fails on a cancelled need.
   group: ${{ inputs.probe && 'probe-' || 'pr-' }}${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
@@ -216,15 +201,6 @@ jobs:
       - name: Lint CI package installs and test the installer wrapper
         run: go test ./scripts/ -run Apt -count=1
 
-      # The auto-gate helper decides what auto-merges, but nothing ran its tests
-      # in CI — they only ever ran by hand (#1907). Lives in the Lint job because
-      # Lint is a required check, so this gates from the moment it lands; a
-      # dedicated job would need a ruleset edit before it gated anything. Uses the
-      # runner's preinstalled Node and the built-in node:test — no package.json,
-      # no install step.
-      - name: Test auto-gate helper
-        run: node --test .github/scripts/auto-gate.test.js .github/scripts/codex-outage.test.js .github/scripts/go-inert.test.js
-
       # Same rationale again, one layer up: this helper decides whether the web
       # selftest RUNS, and its tests also assert the wiring that gives a red run
       # teeth — that every job in this file is in Build's `needs`, that Build still
@@ -242,9 +218,8 @@ jobs:
       - name: Test the probe-mode wiring
         run: node --test .github/scripts/pr-probe.test.js
 
-      # Same rationale as the auto-gate test above: the stale-external-pr helper
-      # decides which fork PRs to auto-close, so its pure decision logic gates
-      # here in the required Lint job. Built-in node:test, no install step.
+      # The stale-external-pr helper decides which fork PRs to auto-close, so
+      # its pure decision logic gates here in the required Lint job. Built-in node:test, no install step.
       - name: Test stale-external-pr helper
         run: node --test .github/scripts/stale-external-pr.test.js
 
@@ -747,15 +722,12 @@ jobs:
     runs-on: ubuntu-latest
     # "Build" and "Lint" are this repo's only required checks (ruleset 14851503),
     # so Build is where Test gets its teeth — a new standalone
-    # job would gate nothing until someone edited the ruleset (see the same note on
-    # the auto-gate helper test above).
+    # job would gate nothing until someone edited the ruleset.
     #
     # `needs` ALONE is not enough, and this is the trap: a failed dependency leaves
     # Build SKIPPED, and a skipped required check does not fail — GitHub's docs are
     # explicit that dependent jobs "are skipped and do not report a failure", so the
-    # required check never goes red and the merge button stays live. (auto-gate.js
-    # blocks anyway, since it demands conclusion === "success", but the native path
-    # would not.) So: run ALWAYS, and fail loudly on any unsuccessful need. Now a
+    # required check never goes red and the merge button stays live. So: run ALWAYS, and fail loudly on any unsuccessful need. Now a
     # red test job turns the REQUIRED check red instead of quietly skipping it.
     #
     # `skipped` is deliberately NOT a failure here: web-selftest and perf skip
@@ -791,51 +763,3 @@ jobs:
 
       - name: Verify compilation
         run: go build ./...
-
-  # Auto Gate's wakeup for this workflow's terminal state is the workflow_run
-  # subscription — which GitHub has intermittently dropped under load (#5179:
-  # 64 of 381 completions over Oct 1–7 had no gate run within ten minutes) —
-  # and behind it the */5 schedule, delivered every two to five hours measured.
-  # Neither is a dependable net, so the run whose completion is at risk asks
-  # for the reconciliation pass itself: a synchronous dispatch POST, not an
-  # event delivery the platform can silently drop — and a failed POST is a
-  # warning in this run's log, never a silent skip. needs:[build] lands this
-  # at run end (build requires every other job and runs always()), and a burst
-  # of completions coalesces inside the shared required-check-reconciliation
-  # concurrency group — one running pass plus one pending — so no chain or
-  # fan-out is possible; the five-minute request window in auto-gate.js is
-  # untouched. One job, no checkout, no repo scripts, and a payload with no
-  # PR-controlled fields: the pass re-derives everything from the API. A
-  # fork's pull_request token is read-only and could never POST — and neither
-  # could Dependabot's, whose same-repo runs are downgraded the same way — so
-  # the job skips both outright and workflow_run stays their wakeup.
-  gate-reconcile:
-    name: ${{ inputs.probe && 'Request Auto Gate reconciliation (skipped by probe)' || 'Request Auto Gate reconciliation' }}
-    needs: [build]
-    # forks and Dependabot never reach the runner: their tokens are read-only,
-    # so the dispatch would warn for nothing while delaying the workflow_run
-    # wakeup that is their only net. merge_group/workflow_dispatch carry no
-    # pull_request payload, so the clause short-circuits true there. actor is
-    # the trigger of THIS run — a maintainer pushing to a Dependabot branch
-    # gets a writable token and runs the job.
-    if: always() && !inputs.probe && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    # The only write permission in this workflow, and only for the dispatch
-    # POST.
-    permissions:
-      contents: write
-    steps:
-      - name: Dispatch auto-gate-reconcile
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          payload=$(printf \
-            '{"event_type":"auto-gate-reconcile","client_payload":{"source_run_id":"%s","source_event":"%s","head_sha":"%s"}}' \
-            "$GITHUB_RUN_ID" "$GITHUB_EVENT_NAME" "$HEAD_SHA")
-          if echo "$payload" | gh api "repos/$GITHUB_REPOSITORY/dispatches" --method POST --input -; then
-            echo "::notice::Requested an Auto Gate required-check reconciliation pass."
-          else
-            echo "::warning::Could not request the Auto Gate reconciliation pass; the workflow_run subscription and the schedule remain."
-          fi

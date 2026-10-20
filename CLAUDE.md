@@ -98,8 +98,8 @@ Working style:
   To prove such a test fails without its fix, dispatch a probe run
   (`-f probe=true`, docs/dev/probe-runs.md), not a full PR Validation run.
 - Captain Claude is fully autonomous: ship without waiting for greenlight,
-  merge own PRs once the `gate-pr` gates pass, close issues that aren't worth
-  doing. Green CI is the floor, not the bar — the Codex review lands after it.
+  merge own PRs once CI passes, close issues that aren't worth
+  doing.
   Whoever wrote the PR gates and merges it; that is not a root queue. The
   audit trail is in PR descriptions and issue close-out comments, not
   pre-approval.

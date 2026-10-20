@@ -36,7 +36,7 @@ const LABEL_DESCRIPTION =
 const MAINTAINER_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 
 // Belt-and-suspenders login allowlist so a mis-reported association can never
-// let us close our own automation's PRs. Mirrors auto-gate.js ALLOWED_AUTHORS.
+// let us close our own automation's PRs.
 const MAINTAINER_LOGINS = new Set([
   "sachiniyer",
   "app-detail-app",

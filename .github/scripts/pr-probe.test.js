@@ -2,9 +2,8 @@
 //
 // A probe is a workflow_dispatch of PR Validation that runs only the Linux Test
 // job. It can land on a PR's head, and every job in the file reports a check run
-// there, skipped ones included. auto-gate.js reads the required "Build" and
-// "Lint" by exact name and takes the newest, and the ruleset counts a skipped
-// check as passing. So a probe that reported under one of those names would
+// there, skipped ones included. The ruleset reads the required "Build" and
+// "Lint" by exact name and counts a skipped check as passing. So a probe that reported under one of those names would
 // either pass a PR its real run failed or block one its real run passed. These
 // tests pin the three things that prevent that: what a probe skips, what its
 // jobs are called, and how its inputs reach a shell. They also pin the probe
@@ -49,10 +48,6 @@ function jobs(yaml) {
 
 const PROBE_SKIP = "${{ !inputs.probe }}";
 const BUILD_IF = "always() && !inputs.probe";
-// gate-reconcile adds a fork/Dependabot clause to Build's shape; !inputs.probe
-// still skips it on probes (#5179).
-const GATE_RECONCILE_IF =
-  "always() && !inputs.probe && (github.event_name != 'pull_request' || (github.event.pull_request.head.repo.fork != true && github.actor != 'dependabot[bot]'))";
 const PROBE_NAME = /^\$\{\{ inputs\.probe && '([^']+)' \|\| '([^']+)' \}\}$/;
 
 /** The name a job reports on a PR run (probe unset). */
@@ -76,7 +71,6 @@ test("a normal PR reports exactly the check names it reported before probe mode"
       "Web selftest",
       "Performance and visual baselines",
       "Build",
-      "Request Auto Gate reconciliation",
     ],
   );
 });
@@ -91,7 +85,7 @@ test("a probe runs the Linux Test job and nothing else", () => {
     changed = false;
     for (const [id, job] of all) {
       if (skipped.has(id)) continue;
-      const bySelf = job.if === PROBE_SKIP || job.if === BUILD_IF || job.if === GATE_RECONCILE_IF;
+      const bySelf = job.if === PROBE_SKIP || job.if === BUILD_IF;
       const statusFunction = /\b(always|failure|cancelled|success)\(\)/.test(job.if || "");
       const byNeed = !statusFunction && job.needs.some((need) => skipped.has(need));
       if (bySelf || byNeed) {
@@ -135,8 +129,6 @@ test("dispatch inputs reach pr.yml only through names, conditions, the group and
     /^ {4}name: \$\{\{ inputs\.probe && '[^']+' \|\| '[^']+' \}\}$/,
     /^ {4}if: \$\{\{ !inputs\.probe \}\}$/,
     /^ {4}if: always\(\) && !inputs\.probe$/,
-    // gate-reconcile adds a fork/Dependabot clause to Build's condition shape (#5179).
-    /^ {4}if: always\(\) && !inputs\.probe && \(github\.event_name != 'pull_request' \|\| \(github\.event\.pull_request\.head\.repo\.fork != true && github\.actor != 'dependabot\[bot\]'\)\)$/,
     /^ {8}if: \$\{\{ !?inputs\.probe \}\}$/,
     /^ {2}group: \$\{\{ inputs\.probe && 'probe-' \|\| 'pr-' \}\}\$\{\{ github\.event\.pull_request\.number \|\| github\.ref \}\}$/,
     /^ {10}PROBE_(PACKAGES|RUN): \$\{\{ inputs\.(packages|run) \}\}$/,
@@ -150,7 +142,7 @@ test("dispatch inputs reach pr.yml only through names, conditions, the group and
 });
 
 test("a probe has its own concurrency group", () => {
-  // Sharing pr-refs/heads/<branch> with Auto Gate's recovery dispatch on the same
+  // Sharing pr-refs/heads/<branch> with a plain dispatch on the same
   // branch would let each cancel the other, and a cancelled need turns Build red.
   // Every other event keeps the pr-… group it always had.
   assert.match(
@@ -159,8 +151,7 @@ test("a probe has its own concurrency group", () => {
   );
 });
 
-test("a dispatch without inputs is still the full run Auto Gate's recovery expects", () => {
-  // auto-gate.js ensureValidationRun dispatches pr.yml with no inputs (#3807).
+test("a dispatch without inputs is still the full run", () => {
   assert.match(PR_YML, /^ {6}probe:\n(?: {8}.*\n)*? {8}type: boolean\n {8}default: false$/m);
 });
 

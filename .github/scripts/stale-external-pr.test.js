@@ -1,8 +1,7 @@
 "use strict";
 
 // Unit tests for the pure staleness decision. Run with the runner's built-in
-// node:test (no package.json, no install) — wired into CI in pr.yml alongside
-// the auto-gate helper tests:
+// node:test (no package.json, no install) — wired into CI in pr.yml:
 //   node --test .github/scripts/stale-external-pr.test.js
 
 const assert = require("node:assert/strict");
