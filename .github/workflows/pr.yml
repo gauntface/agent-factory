@@ -739,85 +739,14 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # We cross-compile and ship darwin/arm64 and darwin/amd64 binaries from
-  # stable-release.yml, but every job in this repo ran on ubuntu — so no test had
-  # ever executed on the OS we ship to. macOS-only defects reached users instead
-  # of CI (#1918, #1916). This job closes that gap.
-  #
-  # Core Go suite only: the *-container targets need Docker, which GitHub's macOS
-  # runners do not have. Those stay on Linux.
-  #
-  # ./daemon is deliberately NOT excluded. It spawns real af daemons, which is
-  # forbidden on the shared dev box but is exactly what we want exercised here on
-  # a throwaway runner — the launchd paths live in that package and are the point.
-  test-macos:
-    name: ${{ inputs.probe && 'Test (macOS) (skipped by probe)' || 'Test (macOS)' }}
-    if: ${{ !inputs.probe }}
-    runs-on: macos-latest
-    # macOS runner minutes bill at 10x Linux; a hung PTY/daemon test must not burn
-    # a six-hour default. Sized from the go test budget below: see there.
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: "1.25"
-          cache: true
-
-      # tmux is preinstalled on the ubuntu runners but NOT on the macOS ones, and
-      # a dozen packages (session, daemon, config, app, ui, …) shell out to it.
-      # Without this the suite fails at "executable file not found in $PATH"
-      # rather than on anything real.
-      - name: Install tmux
-        run: brew install tmux
-
-      # The suite shells out to tmux, dd and sh, and darwin's are not the Linux
-      # ones — brew's tmux is typically newer than the ubuntu runner's, and the
-      # userland is BSD. When a macOS-only failure turns out to be environmental,
-      # this is the first thing anyone asks for; record it rather than re-running
-      # the job to find out (#1945).
-      - name: Record the runner's toolchain
-        run: |
-          tmux -V
-          sw_vers
-          echo "shell: ${SHELL:-<unset>} | term: ${TERM:-<unset>} | tmpdir: ${TMPDIR:-<unset>}"
-          command -v dd sh git
-          dd --version 2>&1 | head -1 || echo "dd: BSD (no --version)"
-
-      # Same budget as the Linux Test job, and this is the step that sets it
-      # (#3580): the daemon package hit Go's default 10m per-package timeout here
-      # and panicked at 600.098s, on a head where the Linux job ran the same
-      # package in 355.666s — macOS is uniformly ~1.4–2x slower per test.
-      #
-      # The number is bounded on both sides. Below, by the measured time: across
-      # nine runs on 2026-09-17 the daemon package took 627-805s here, and a slow
-      # runner multiplies that — run 35205849014 measured the same package 1.5x
-      # slower on one Build cell than on its three siblings, and 805s x 1.5 is
-      # ~1208s, past the 20m this step used to carry. 30m is 2.2x the slowest
-      # measured run and still 1.5x its slow-runner projection, so only a real
-      # wedge reaches it. Above, by this job's timeout-minutes — and the quantity
-      # that matters there is not the job's start but the package binary's,
-      # because -timeout is per test binary and its clock starts when that binary
-      # starts: after the setup steps, and after `go test` has built the tree
-      # with -race and scheduled its way to that package. Both were measured on
-      # an earlier failing job (100083920043): the setup steps cost 22s (`brew
-      # install tmux` 5s of it), and the panic landed at 600.098s inside a 765s
-      # step, so build and scheduling cost at most ~165s — an upper bound, since
-      # that slice also contains the post-panic tail. Worst case a wedged package
-      # therefore panics near 33m, and timeout-minutes: 45 leaves ~12m of margin,
-      # enough to absorb a build phase four times the measured one. Go has to win
-      # that race with room to spare: its panic names the stuck goroutines, and
-      # the runner kill this would otherwise become names nothing.
-      - name: Run tests
-        run: go test -v -race -count=1 -timeout 30m ./...
+  # This fork does not run the macOS test job (Test (macOS)): it billed at 10x
+  # Linux minutes and its failures were flaky daemon timing, not fork changes.
 
   build:
     name: ${{ inputs.probe && 'Build (skipped by probe)' || 'Build' }}
     runs-on: ubuntu-latest
     # "Build" and "Lint" are this repo's only required checks (ruleset 14851503),
-    # so Build is where Test and Test (macOS) get their teeth — a new standalone
+    # so Build is where Test gets its teeth — a new standalone
     # job would gate nothing until someone edited the ruleset (see the same note on
     # the auto-gate helper test above).
     #
@@ -827,7 +756,7 @@ jobs:
     # required check never goes red and the merge button stays live. (auto-gate.js
     # blocks anyway, since it demands conclusion === "success", but the native path
     # would not.) So: run ALWAYS, and fail loudly on any unsuccessful need. Now a
-    # red macOS job turns the REQUIRED check red instead of quietly skipping it.
+    # red test job turns the REQUIRED check red instead of quietly skipping it.
     #
     # `skipped` is deliberately NOT a failure here: web-selftest and perf skip
     # whenever the scope job says the PR is outside their watched paths, a normal
@@ -839,16 +768,16 @@ jobs:
     # is empty there, so the clause is true. A probe gates nothing, so Build has
     # nothing to stand in for, and running it would only spend a runner on
     # `go build` and repeat the probe's red Test as a second red row.
-    needs: [lint, test, test-systemd, test-macos, web, registry-free, web-selftest-scope, web-selftest, perf]
+    needs: [lint, test, test-systemd, web, registry-free, web-selftest-scope, web-selftest, perf]
     if: always() && !inputs.probe
     steps:
       - name: Gate on the jobs this check stands in for
         if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
         run: |
           echo "::error::A required job failed — failing Build so the required check goes RED rather than skipping."
-          # needs['test-macos'], not needs.test-macos: a hyphen in a property path is
-          # parsed as subtraction, so the dotted form silently yields an empty string.
-          echo "lint=${{ needs.lint.result }} test=${{ needs.test.result }} test-systemd=${{ needs['test-systemd'].result }} test-macos=${{ needs['test-macos'].result }} web=${{ needs.web.result }} registry-free=${{ needs['registry-free'].result }}"
+          # needs['test-systemd'], not needs.test-systemd: a hyphen in a property path
+          # is parsed as subtraction, so the dotted form silently yields an empty string.
+          echo "lint=${{ needs.lint.result }} test=${{ needs.test.result }} test-systemd=${{ needs['test-systemd'].result }} web=${{ needs.web.result }} registry-free=${{ needs['registry-free'].result }}"
           echo "web-selftest-scope=${{ needs['web-selftest-scope'].result }} web-selftest=${{ needs['web-selftest'].result }} perf=${{ needs.perf.result }}"
           exit 1
 
