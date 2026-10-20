@@ -10243,14 +10243,14 @@ test("icons: the Lucide subset is inline, accessible, and currentColor-themed at
           // Exercise a deterministic set of live placements. Session status icons
           // legitimately come and go as the seeded agent moves between Needs you and
           // Working, so they cannot be the reason this coverage happens to exceed its
-          // floor. The default filter always exposes four checked semantic groups.
+          // floor. The default filter always exposes five checked semantic groups.
           await p.getByRole("button", { name: "Filter sessions" }).click();
           await expect(p.locator(".af-filter-menu")).toBeVisible();
           // Armed here, before the gate below rather than just before the geometry: the
           // window that went wrong in the #3681 trace is the 43 ms of round trips
           // BETWEEN this gate and the measurement, not the measurement itself.
           await armIconRebuildWatch(p);
-          await expect(p.locator(".af-filter-check .af-icon")).toHaveCount(4);
+          await expect(p.locator(".af-filter-check .af-icon")).toHaveCount(5);
 
           const projectIcon = p.locator(".af-project-glyph");
           const filterIcon = p.locator(".af-rail-filter-glyph");
@@ -10536,7 +10536,7 @@ test("#3681 a zero box over a QUIET window is reported as a product defect, nami
     await openTokenless(p);
     await p.getByRole("button", { name: "Filter sessions" }).click();
     await expect(p.locator(".af-filter-menu")).toBeVisible();
-    await expect(p.locator(".af-filter-check .af-icon")).toHaveCount(4);
+    await expect(p.locator(".af-filter-check .af-icon")).toHaveCount(5);
 
     await armIconRebuildWatch(p);
     await p.addStyleTag({
