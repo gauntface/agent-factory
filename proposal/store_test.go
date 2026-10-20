@@ -80,6 +80,13 @@ func TestCreateFromBuiltinTemplates(t *testing.T) {
 	if !slices.Equal(docs, want) {
 		t.Fatalf("docs = %v, want %v", docs, want)
 	}
+	if !slices.Equal(BuiltinTemplates, []string{"goals", "technical", "api", "ui", "future"}) {
+		t.Fatalf("BuiltinTemplates = %v, want goals, technical, api, ui, future", BuiltinTemplates)
+	}
+	future, _, err := s.Read("auth-rework", "future")
+	if err != nil || !strings.HasPrefix(future, "# auth rework: future") {
+		t.Fatalf("future.md = %q, %v; want the rendered future template", future, err)
+	}
 	text, _, err := s.Read("auth-rework", "goals")
 	if err != nil {
 		t.Fatal(err)
@@ -406,9 +413,9 @@ func TestListHelpers(t *testing.T) {
 	if _, err := os.Stat(s.Dir()); !os.IsNotExist(err) {
 		t.Fatal("listing must not create the store")
 	}
-	startAttached(t, s, "b", sessA, "notes", "ui", "goals")
+	startAttached(t, s, "b", sessA, "notes", "future", "ui", "goals")
 	docs, _ := s.Docs("b")
-	if !slices.Equal(docs, []string{"goals.md", "ui.md", "notes.md"}) {
+	if !slices.Equal(docs, []string{"goals.md", "ui.md", "future.md", "notes.md"}) {
 		t.Fatalf("docs = %v, want template order then alphabetical", docs)
 	}
 	if at, err := s.LastEdit("b"); err != nil || at.IsZero() {
