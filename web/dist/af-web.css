@@ -3243,6 +3243,15 @@ textarea[class] {
   outline-offset: calc(var(--af-space-1) / 2);
 }
 @media (max-width: 768px) {
+  .af-appbar:has(.af-appbar-more[hidden]) .af-appbar-tools-wrap {
+    display: none;
+  }
+  .af-appbar:has(.af-appbar-more[hidden]) .af-project-switch-wrap {
+    grid-column: 1 / -1;
+  }
+  .af-appbar:has(.af-appbar-more[hidden]) .af-project-menu {
+    right: 0;
+  }
   .af-task-icons {
     display: none;
   }

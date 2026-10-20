@@ -6385,7 +6385,7 @@ test("tasks view edit (#1935): the Edit form is seeded from the task, and a chan
 
   // Open the Edit form. It reuses the add-task modal in edit mode, SEEDED from the
   // task's current values — proof the form is not a blank re-entry.
-  await editedRow.locator("button", { hasText: "Edit" }).click();
+  await editedRow.getByRole("button", { name: "Edit", exact: true }).click();
   const editModal = page.locator(".af-modal-card");
   await expect(editModal).toBeVisible();
   await expect(editModal.locator(".af-modal-title")).toHaveText("Edit task");
@@ -6519,7 +6519,7 @@ test("schedule picker (#2057): a preset generates the cron, an edit re-opens as 
 
   // Re-open it: the stored cron round-trips back through ParseCron into the WEEKLY
   // preset with its cells restored — not a raw string in a text box.
-  await row.locator("button", { hasText: "Edit" }).click();
+  await row.getByRole("button", { name: "Edit", exact: true }).click();
   const editModal = page.locator(".af-modal-card");
   await expect(editModal).toBeVisible();
   await expect(editModal.locator('select[aria-label="Schedule type"]')).toHaveValue("weekly");
@@ -6551,7 +6551,7 @@ test("schedule picker (#2057): a preset generates the cron, an edit re-opens as 
   const reloadedRow = page.locator(".af-tasks .af-task-row", { hasText: named });
   await expect(reloadedRow).toBeVisible({ timeout: 30_000 });
   await expect(reloadedRow.locator(".af-task-trigger")).toContainText("0 */6 * * *");
-  await reloadedRow.locator("button", { hasText: "Edit" }).click();
+  await reloadedRow.getByRole("button", { name: "Edit", exact: true }).click();
   const reopened = page.locator(".af-modal-card");
   await expect(reopened.locator('select[aria-label="Schedule type"]')).toHaveValue("everyNHours");
   await expect(reopened.locator('input[aria-label="Interval"]')).toHaveValue("6");
