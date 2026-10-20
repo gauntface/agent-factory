@@ -58,7 +58,7 @@ The rail shows state by glyph only. Hover a row to read its state in words.
 | --- | --- |
 | Blinking yellow circle | The agent asked for you with `af sessions attention`; hover the row for its reason |
 | No glyph | The agent is idle |
-| Muted filled circle | Work is in progress |
+| Muted spinner | Work is in progress |
 | Hollow circle | The agent process is dead, or a prompt was not delivered |
 | Dashed circle | The session is lost |
 | Diamond | A usage limit has been reached |
@@ -71,8 +71,10 @@ such as `[lost]`, `[deleting]`, `[limit]`, and `[remote]` add context.
 
 Agents learn `af sessions attention --self` from the af skill, and run it when they
 stop to wait for you. The yellow circle clears when you type into the agent pane, or
-when the agent starts work again after it went idle. It is static when your system
-asks for reduced motion.
+when the agent starts work again after it went idle. While any session in the
+selected project needs attention, the browser tab's favicon also swaps its tile and
+mark colors every second, so you can see it from another tab. The spinner, the
+yellow circle and the favicon are all static when your system asks for reduced motion.
 
 The **funnel** opens state checkboxes: **Needs attention · Idle · Working · Waiting
 on a limit · Broken · Archived**. Archived sessions start hidden. The filter applies inside the

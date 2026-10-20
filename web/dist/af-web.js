@@ -7105,6 +7105,9 @@ var Link = [
   ["path", { d: "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" }]
 ];
 
+// node_modules/lucide/dist/esm/icons/loader-circle.mjs
+var LoaderCircle = [["path", { d: "M21 12a9 9 0 1 1-6.219-8.56" }]];
+
 // node_modules/lucide/dist/esm/icons/menu.mjs
 var Menu = [
   ["path", { d: "M4 5h16" }],
@@ -7192,6 +7195,7 @@ var ICONS = {
   funnel: Funnel,
   "git-branch": GitBranch,
   link: Link,
+  "loader-circle": LoaderCircle,
   menu: Menu,
   "octagon-x": OctagonX,
   panels: PanelsTopLeft,
@@ -12315,7 +12319,7 @@ var DEAD_ICON = "circle";
 var LOST_ICON = "circle-dashed";
 var ARCHIVED_ICON = "archive";
 var LIMIT_ICON = "diamond";
-var WORKING = { icon: "circle", kind: "working", label: ROW_KIND_LABELS.working };
+var WORKING = { icon: "loader-circle", kind: "working", label: ROW_KIND_LABELS.working };
 function rowStatus(s) {
   const op = s.in_flight_op ?? InFlightOp.None;
   if (op !== InFlightOp.None) {
@@ -15940,36 +15944,72 @@ function projectAccent(color, surface2) {
   }
   return hex(target);
 }
-function projectFaviconSvg(color) {
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="${color}"/><path d="${FAVICON_MARK_PATH}" fill="${markInk(color)}"/></svg>`;
+function projectFaviconSvg(color, inverted = false) {
+  const [tile, mark] = faviconColors(color, inverted);
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="${tile}"/><path d="${FAVICON_MARK_PATH}" fill="${mark}"/></svg>`;
 }
-function projectFaviconDataUrl(color) {
-  return `data:image/svg+xml,${encodeURIComponent(projectFaviconSvg(color))}`;
+function projectFaviconDataUrl(color, inverted = false) {
+  return `data:image/svg+xml,${encodeURIComponent(projectFaviconSvg(color, inverted))}`;
 }
-function projectFaviconPng(color, size) {
+function faviconColors(color, inverted) {
+  const ink = markInk(color);
+  return inverted ? [ink, color] : [color, ink];
+}
+function projectFaviconPng(color, inverted, size) {
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext("2d");
   if (!ctx || typeof Path2D === "undefined") return null;
+  const [tile, mark] = faviconColors(color, inverted);
   ctx.scale(size / 512, size / 512);
-  ctx.fillStyle = color;
+  ctx.fillStyle = tile;
   ctx.beginPath();
   ctx.roundRect(0, 0, 512, 512, 112);
   ctx.fill();
-  ctx.fillStyle = markInk(color);
+  ctx.fillStyle = mark;
   ctx.fill(new Path2D(FAVICON_MARK_PATH));
   return canvas.toDataURL("image/png");
 }
 var DEFAULT_FAVICON_COLOR = "#2f5fd8";
-var appliedFavicon = null;
-function applyProjectFavicon(color) {
-  if (appliedFavicon === color) return;
-  appliedFavicon = color;
-  const tile = color ?? DEFAULT_FAVICON_COLOR;
+var FAVICON_BLINK_MS = 1e3;
+var appliedColor = null;
+var appliedAttention = false;
+var blinkTimer = null;
+var blinkInverted = false;
+var faviconHrefs = /* @__PURE__ */ new Map();
+function applyProjectFavicon(color, attention = false) {
+  if (appliedColor === color && appliedAttention === attention) return;
+  if (appliedColor !== color) faviconHrefs.clear();
+  appliedColor = color;
+  appliedAttention = attention;
+  if (blinkTimer !== null) {
+    clearInterval(blinkTimer);
+    blinkTimer = null;
+  }
+  blinkInverted = attention;
+  if (attention && !prefersReducedMotion()) {
+    blinkTimer = setInterval(() => {
+      blinkInverted = !blinkInverted;
+      paintFavicon();
+    }, FAVICON_BLINK_MS);
+  }
+  paintFavicon();
+}
+function prefersReducedMotion() {
+  return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+function paintFavicon() {
+  const tile = appliedColor ?? DEFAULT_FAVICON_COLOR;
   for (const link of document.querySelectorAll('link[rel="icon"]')) {
     if (link.dataset.afDefaultHref === void 0) link.dataset.afDefaultHref = link.getAttribute("href") ?? "";
-    const href = link.type === "image/svg+xml" ? projectFaviconDataUrl(tile) : projectFaviconPng(tile, Number.parseInt(link.sizes.value, 10) || 32);
+    const size = Number.parseInt(link.sizes.value, 10) || 32;
+    const key = `${link.type}|${size}|${blinkInverted}`;
+    let href = faviconHrefs.get(key);
+    if (href === void 0) {
+      href = link.type === "image/svg+xml" ? projectFaviconDataUrl(tile, blinkInverted) : projectFaviconPng(tile, blinkInverted, size);
+      faviconHrefs.set(key, href);
+    }
     link.setAttribute("href", href ?? link.dataset.afDefaultHref);
   }
 }
@@ -16820,7 +16860,7 @@ var AppShell = class {
     this.syncDocumentTitle(state);
     const color = projectColor(state.registeredProjects, state.selectedProject);
     applyProjectColor(this.el, color, () => themeColorMetaContents("system"));
-    applyProjectFavicon(color);
+    applyProjectFavicon(color, scopeToProject(state.sessions, state.selectedProject).some(hasAttention));
     const selectedForPhone = selectedSession(state);
     const tabsForPhone = selectedForPhone ? sessionTabs(selectedForPhone) : null;
     const focusedForPhone = tabsForPhone ? tabsForPhone[state.activeTab] ?? tabsForPhone[0] : null;
@@ -20245,6 +20285,7 @@ lucide/dist/esm/icons/folder.mjs:
 lucide/dist/esm/icons/funnel.mjs:
 lucide/dist/esm/icons/git-branch.mjs:
 lucide/dist/esm/icons/link.mjs:
+lucide/dist/esm/icons/loader-circle.mjs:
 lucide/dist/esm/icons/menu.mjs:
 lucide/dist/esm/icons/octagon-x.mjs:
 lucide/dist/esm/icons/panels-top-left.mjs:
