@@ -51,7 +51,7 @@ func (s *Store) SlugPath(slug string) string { return filepath.Join(s.dir, slug)
 
 // withLock runs fn with the store's flock held and the repository initialized.
 func (s *Store) withLock(fn func() error) error {
-	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+	if err := config.MkdirAllUnderAFHome(s.dir, 0o755); err != nil {
 		return fmt.Errorf("create proposal store: %w", err)
 	}
 	f, err := os.OpenFile(filepath.Join(s.dir, ".lock"), os.O_CREATE|os.O_RDWR, 0o644)

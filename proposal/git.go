@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/sachiniyer/agent-factory/config"
 )
 
 const (
@@ -84,7 +86,7 @@ func (s *Store) ensureRepo() error {
 		return err
 	}
 	info := filepath.Join(s.dir, ".git", "info")
-	if err := os.MkdirAll(info, 0o755); err != nil {
+	if err := config.MkdirAllUnderAFHome(info, 0o755); err != nil {
 		return err
 	}
 	if err := os.WriteFile(filepath.Join(info, "exclude"), []byte(excludePatterns), 0o644); err != nil {
