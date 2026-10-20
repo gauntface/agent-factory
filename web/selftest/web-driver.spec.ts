@@ -1686,7 +1686,7 @@ test("status semantics (#1766, #3220): action groups are legible and only the wo
   // Error/terminal states keep distinct STATIC shapes.
   for (const title of ["probe-lost", "probe-dead", "probe-limit", "probe-broken-prompt"]) {
     expect(
-      await row(p, title).locator(".af-icon").evaluate((el) => getComputedStyle(el).animationName),
+      await row(p, title).locator(".af-dot .af-icon").evaluate((el) => getComputedStyle(el).animationName),
       `${title} glyph is static`,
     ).toBe("none");
   }
