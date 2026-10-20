@@ -18,7 +18,7 @@ No Go toolchain is required to install `af` — releases ship prebuilt binaries.
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sachiniyer/agent-factory/master/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/gauntface/agent-factory/main/install.sh | sh
 ```
 
 This installs the `af` binary (Linux/macOS, amd64/arm64) to `~/.local/bin` —

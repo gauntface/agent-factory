@@ -18,7 +18,7 @@ configuration until you do.
 A plugin cannot ship a native binary, and none of these packagings install one:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/sachiniyer/agent-factory/master/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/gauntface/agent-factory/main/install.sh | sh
 ```
 
 The plugin checks for `af` and tells you this if it is missing. It never

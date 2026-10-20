@@ -7,7 +7,7 @@
 # redirect.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/sachiniyer/agent-factory/master/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/gauntface/agent-factory/main/install.sh | sh
 #
 #   # install into a custom directory
 #   AF_INSTALL_DIR=/usr/local/bin sh install.sh
@@ -20,7 +20,7 @@
 
 set -eu
 
-REPO="sachiniyer/agent-factory"
+REPO="gauntface/agent-factory"
 INSTALL_DIR="${AF_INSTALL_DIR:-$HOME/.local/bin}"
 VERSION="${AF_VERSION:-latest}"
 

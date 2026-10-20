@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/sachiniyer/agent-factory/releases/latest"><img src="https://img.shields.io/github/v/release/sachiniyer/agent-factory?sort=semver&amp;style=flat-square&amp;label=release&amp;labelColor=494949&amp;color=3F3F3F&amp;logo=github&amp;logoColor=8CD0D3" alt="Latest release"></a>
+  <a href="https://github.com/gauntface/agent-factory/releases/latest"><img src="https://img.shields.io/github/v/release/gauntface/agent-factory?sort=semver&amp;style=flat-square&amp;label=release&amp;labelColor=494949&amp;color=3F3F3F&amp;logo=github&amp;logoColor=8CD0D3" alt="Latest release"></a>
   <a href="https://sachiniyer.github.io/agent-factory/"><img src="https://img.shields.io/badge/docs-live-3F3F3F?style=flat-square&amp;labelColor=494949&amp;logo=materialformkdocs&amp;logoColor=8CD0D3" alt="Documentation"></a>
   <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-AGPL--3.0-3F3F3F?style=flat-square&amp;labelColor=494949&amp;logo=gnu&amp;logoColor=8CD0D3" alt="AGPL v3 license"></a>
 </p>
@@ -35,7 +35,7 @@ Prerequisites: **tmux**, **git**, and at least one agent CLI on your `PATH`, on
 Linux, macOS, or WSL2. No Go toolchain needed for the prebuilt path.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sachiniyer/agent-factory/master/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/gauntface/agent-factory/main/install.sh | sh
 ```
 
 That puts `af` in `~/.local/bin` (override with `AF_INSTALL_DIR`, pin with
@@ -44,7 +44,7 @@ That puts `af` in `~/.local/bin` (override with `AF_INSTALL_DIR`, pin with
 shell profile for future terminals. Or build from source with Go 1.25+:
 
 ```bash
-git clone https://github.com/sachiniyer/agent-factory.git
+git clone https://github.com/gauntface/agent-factory.git
 cd agent-factory
 ./dev-install.sh
 ```

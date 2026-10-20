@@ -202,7 +202,7 @@ https://sachiniyer.github.io/agent-factory/remote-http-auth/`,
 		Short: "Print the version number of agent-factory",
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Printf("agent-factory version %s\n", version)
-			fmt.Printf("https://github.com/sachiniyer/agent-factory/releases/tag/v%s\n", version)
+			fmt.Printf("https://github.com/gauntface/agent-factory/releases/tag/v%s\n", version)
 		},
 	}
 
@@ -343,7 +343,7 @@ func NewRootCommand(opts Options) *cobra.Command {
 	rootCmd.Version = version
 	rootCmd.SetVersionTemplate(
 		"agent-factory version {{.Version}}\n" +
-			"https://github.com/sachiniyer/agent-factory/releases/tag/v{{.Version}}\n")
+			"https://github.com/gauntface/agent-factory/releases/tag/v{{.Version}}\n")
 	// Cobra registers the --version flag lazily inside Execute, and only on the
 	// command being executed — so `af gen-docs`, which executes a subcommand,
 	// walks a root flag set with no version flag and the generated CLI reference
