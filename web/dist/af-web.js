@@ -15929,12 +15929,22 @@ function projectColorRow(current, label, onPick) {
     swatch.addEventListener("click", pick(color));
     return swatch;
   });
-  const custom2 = h("input", { type: "color", class: "af-project-swatch-custom" });
-  custom2.value = current ?? PROJECT_COLOR_PALETTE[5];
+  const input = h("input", { type: "color", class: "af-project-color-input", tabIndex: -1 });
+  input.value = current ?? PROJECT_COLOR_PALETTE[5];
+  input.setAttribute("aria-hidden", "true");
+  input.addEventListener("click", (e) => e.stopPropagation());
+  input.addEventListener("change", () => onPick(input.value));
+  const custom2 = h("button", { type: "button", class: "af-project-swatch af-project-swatch-custom" }, "+");
   custom2.setAttribute("aria-label", `Custom color for ${label}`);
   custom2.setAttribute("title", "Custom color");
-  custom2.addEventListener("click", (e) => e.stopPropagation());
-  custom2.addEventListener("change", () => onPick(custom2.value));
+  custom2.addEventListener("click", (e) => {
+    e.stopPropagation();
+    try {
+      input.showPicker();
+    } catch {
+      input.click();
+    }
+  });
   const clear = h("button", { type: "button", class: "af-ghost af-project-color-clear" }, "No color");
   clear.disabled = current === null;
   clear.addEventListener("click", pick(""));
@@ -15944,6 +15954,7 @@ function projectColorRow(current, label, onPick) {
     h("span", { class: "af-project-color-label" }, "Color"),
     ...swatches,
     custom2,
+    input,
     clear
   );
   row.setAttribute("role", "group");

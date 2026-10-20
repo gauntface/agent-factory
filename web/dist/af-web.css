@@ -340,6 +340,7 @@ button:disabled,
   white-space: nowrap;
 }
 .af-project-color {
+  position: relative;
   margin-top: var(--af-space-2);
   display: flex;
   flex-wrap: wrap;
@@ -347,24 +348,44 @@ button:disabled,
   gap: var(--af-space-1);
 }
 .af-project-color-label {
-  margin-right: var(--af-space-1);
+  flex-basis: 100%;
   color: var(--af-ink-muted);
   font-size: var(--af-type-caption);
 }
 .af-project-swatch,
 .af-project-swatch-custom {
-  width: var(--af-space-4);
-  height: var(--af-space-4);
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  width: calc(var(--af-space-4) + var(--af-space-3) + var(--af-space-1));
+  height: calc(var(--af-space-4) + var(--af-space-3) + var(--af-space-1));
   min-width: 0;
-  padding: 0;
-  border: calc(var(--af-space-1) / 4) solid var(--af-border);
+  min-height: 0;
+  padding: var(--af-space-2);
+  border: 0;
   border-radius: 50%;
   background: var(--af-swatch);
+  background-clip: content-box;
   cursor: pointer;
+  appearance: none;
+}
+.af-project-swatch-custom {
+  background: transparent;
+  color: var(--af-ink);
+  font-weight: 600;
+  box-shadow: inset 0 0 0 calc(var(--af-space-1) / 4) var(--af-border);
+}
+.af-project-color-input {
+  position: absolute;
+  width: 0;
+  height: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 .af-project-swatch[aria-pressed=true] {
   outline: calc(var(--af-space-1) / 2) solid var(--af-ink);
-  outline-offset: calc(var(--af-space-1) / 4);
+  outline-offset: calc(var(--af-space-1) / -1);
 }
 .af-project-color-clear {
   margin-left: auto;
