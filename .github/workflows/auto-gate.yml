@@ -363,7 +363,7 @@ jobs:
             const autoGate = require(helperPath);
             const aggregateHeads = JSON.parse(process.env.AGGREGATE_HEADS || "[]");
             if (typeof autoGate.invalidateAggregateDecision !== "function") {
-              core.notice("Landing compatibility: fixed aggregate invalidation starts on master.");
+              core.notice("Landing compatibility: fixed aggregate invalidation starts on main.");
               core.setOutput("invalidated_heads", JSON.stringify(aggregateHeads));
               return;
             }
