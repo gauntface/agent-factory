@@ -186,6 +186,13 @@ var shellSiteRegistry = map[string][]classifiedSite{
 	"session/tmux/resume.go:codexExecOptionHasAttachedValue": {{
 		class: notAShell, note: "the same, in `codex exec`'s own option grammar",
 	}},
+	"proposal/git.go:<file scope>": {
+		{class: notAShell, note: "`git -c core.hooksPath=` — git's config flag, a fixed literal"},
+		{class: notAShell, note: "`git -c commit.gpgSign=false` — git's config flag, a fixed literal"},
+		{class: notAShell, note: "`git -c core.autocrlf=false` — git's config flag, a fixed literal"},
+		{class: notAShell, note: "`git -c core.quotePath=false` — git's config flag, a fixed literal"},
+		{class: notAShell, note: "`git -c init.defaultBranch=main` — git's config flag, a fixed literal"},
+	},
 }
 
 func TestShellSites_EveryShellSiteIsClassified(t *testing.T) {

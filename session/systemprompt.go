@@ -33,7 +33,7 @@ import (
 // generated plugin artifacts must never carry a verbatim copy of the "you are
 // running inside af" opening, which is false for the audience that installed
 // them.
-const afUsageReference = afUsageIntroInside + "\n\n" + afUsageDispatched + "\n\n" + afUsageBody + "\n\n" + afUsageAttentionInside + "\n\n" + afUsageOutroInside + "\n\n" + afUsageOutro
+const afUsageReference = afUsageIntroInside + "\n\n" + afUsageDispatched + "\n\n" + afUsageBody + "\n\n" + afUsageAttentionInside + "\n\n" + afUsageProposalsInside + "\n\n" + afUsageOutroInside + "\n\n" + afUsageOutro
 
 // AfPluginUsageReference is afUsageReference reframed for an agent that is NOT
 // running inside af: the same body and the same command reference, but an
@@ -131,6 +131,11 @@ Creating or prompting a session: the prompt is the entire contract, because the 
 // afUsageAttentionInside is inside-only: the user scans many sessions at once,
 // and an agent that stops to wait gives no other sign that it needs them.
 const afUsageAttentionInside = `Asking for the user: the user watches many sessions at once and cannot tell that you are waiting on them. When you stop because you need a decision, an answer, an approval, or other input from the user, run "af sessions attention --self --reason '<what you need, in one line>'" as the LAST step before you stop, after you write the question in your reply. Do not run it when you simply finished and have nothing to ask. It clears on its own when the user replies; "af sessions attention --self --clear" removes it if you no longer need them.`
+
+// afUsageProposalsInside names only the entry points; the working rules are
+// printed by af proposal start and attach, so they can change without a
+// skill update. Proposal commands need a session, so plugins do not get it.
+const afUsageProposalsInside = `Proposals: when the user asks you to make a proposal (a plan or design written as docs you edit together), run "af proposal start <slug>" with a short lowercase-dashed slug. When the user asks you to work on an existing proposal, run "af proposal list" to find it and "af proposal attach <slug>". Both print the proposal's path and a "rules" field: follow those rules for the rest of the work.`
 
 // afUsageOutroInside is the wrap-up for an agent that IS an af session: it can
 // self-archive, and doing so kills it.
