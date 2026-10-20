@@ -1,6 +1,6 @@
 name: Stable Release
 
-# Manually cuts a stable release vX.Y.Z off master. The maintainer picks the
+# Manually cuts a stable release vX.Y.Z off the default branch (main). The maintainer picks the
 # version (which digit to bump); previews then automatically rebase onto it
 # as vX.Y.(Z+1)-preview-N. See docs/dev/release-process.md (#1041).
 #
@@ -8,8 +8,8 @@ name: Stable Release
 # mutation (the main.go bump commit, then tag + release, which are created
 # together) happens in the final job only after all four artifacts exist — a
 # failed preflight or build must never leave a dangling commit or tag on
-# master, and a failure mid-publish must never leave a tag with no release
-# (#5159). All jobs pin github.sha so a master push racing the workflow cannot
+# main, and a failure mid-publish must never leave a tag with no release
+# (#5159). All jobs pin github.sha so a main push racing the workflow cannot
 # desync what was validated, what was built, and what gets tagged. The
 # artifacts are built from github.sha while the tag points at the bump commit
 # one ahead; the binaries are identical in behavior because their version
@@ -134,12 +134,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     # Full history is required: release-bump.sh rebases the bump commit onto
-    # whatever master became during the build (#1927), and a rebase has no
+    # whatever main became during the build (#1927), and a rebase has no
     # merge-base to find in a one-commit checkout.
     - uses: actions/checkout@v6
       with:
         ref: ${{ github.sha }}
         fetch-depth: 0
+        # Optional: with no RELEASE_DEPLOY_KEY secret, checkout pushes with this
+        # job's GITHUB_TOKEN (contents: write), which works while main has no
+        # branch protection that the token cannot bypass.
         ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
 
     # Fetch the artifacts before touching git so a failed download cannot
@@ -153,13 +156,14 @@ jobs:
     - name: Generate checksum manifest
       run: .github/scripts/write-sha256sums.sh dist
 
-    # Lands the bump commit on master and reports the sha that actually
+    # Lands the bump commit on main and reports the sha that actually
     # landed (the rebase-retry may rewrite it) — that sha is what the release
     # tags. Failure here leaves at most an untagged bump commit.
-    - name: Bump version and push to master
+    - name: Bump version and push to main
       id: bump
       env:
         NEW_VERSION: ${{ inputs.version }}
+        RELEASE_BRANCH: ${{ github.event.repository.default_branch }}
       run: |
         .github/scripts/release-bump.sh "$NEW_VERSION"
         echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
