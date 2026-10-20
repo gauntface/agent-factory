@@ -12250,7 +12250,8 @@ function formatTime(value, now = /* @__PURE__ */ new Date()) {
 
 // src/status.ts
 var OPERATOR_KIND_LABELS = {
-  "needs-you": "Needs you",
+  attention: "Needs attention",
+  "needs-you": "Idle",
   working: "Working",
   "waiting-limit": "Waiting on a limit",
   broken: "Broken",
@@ -12310,12 +12311,11 @@ function idleReasonLabel(reason) {
 function formatPaneChurnAge(churn, now) {
   return formatDuration(now.getTime() - churn.getTime());
 }
-var READY_ICON = "circle";
 var DEAD_ICON = "circle";
 var LOST_ICON = "circle-dashed";
 var ARCHIVED_ICON = "archive";
 var LIMIT_ICON = "diamond";
-var WORKING = { icon: null, kind: null, label: ROW_KIND_LABELS.working };
+var WORKING = { icon: "circle", kind: "working", label: ROW_KIND_LABELS.working };
 function rowStatus(s) {
   const op = s.in_flight_op ?? InFlightOp.None;
   if (op !== InFlightOp.None) {
@@ -12324,16 +12324,19 @@ function rowStatus(s) {
   return dotForLiveness(livenessOf(s));
 }
 function isWorking(s) {
-  return rowStatus(s).kind === null;
+  return rowStatus(s).kind === "working";
 }
 function isCreating(s) {
   return (s.in_flight_op ?? InFlightOp.None) === InFlightOp.Creating;
 }
 function rowKind(s) {
-  return rowStatus(s).kind ?? "working";
+  return rowStatus(s).kind;
 }
 function operatorKind(s) {
   const displayed = rowKind(s);
+  if (hasAttention(s)) {
+    return "attention";
+  }
   if (displayed === "working") {
     return "working";
   }
@@ -12347,6 +12350,33 @@ function operatorKind(s) {
     return "broken";
   }
   return "needs-you";
+}
+function hasAttention(s) {
+  if (!s.attention) {
+    return false;
+  }
+  const kind = rowKind(s);
+  return kind === "ready" || kind === "working";
+}
+function attentionReason(s) {
+  return hasAttention(s) ? (s.attention?.reason ?? "").trim() : "";
+}
+function rowDot(s) {
+  if (hasAttention(s)) {
+    return { icon: "circle", kind: "attention" };
+  }
+  const status = rowStatus(s);
+  if (status.kind !== "ready") {
+    return status.icon ? { icon: status.icon, kind: status.kind } : null;
+  }
+  switch (operatorKind(s)) {
+    case "broken":
+      return { icon: DEAD_ICON, kind: "dead" };
+    case "waiting-limit":
+      return { icon: LIMIT_ICON, kind: "limit" };
+    default:
+      return null;
+  }
 }
 function livenessOf(s) {
   const lv = s.liveness ?? Liveness.Unset;
@@ -12371,7 +12401,7 @@ function livenessOf(s) {
 function dotForLiveness(lv) {
   switch (lv) {
     case Liveness.Ready:
-      return { icon: READY_ICON, kind: "ready", label: ROW_KIND_LABELS.ready };
+      return { icon: null, kind: "ready", label: ROW_KIND_LABELS.ready };
     case Liveness.Lost:
       return { icon: LOST_ICON, kind: "lost", label: ROW_KIND_LABELS.lost };
     case Liveness.Dead:
@@ -12518,8 +12548,9 @@ function formatLimitReset(reset, now) {
 
 // src/filter.ts
 var FILTER_KEY = "af-status-filter";
-var FILTER_KINDS = ["needs-you", "working", "waiting-limit", "broken", "archived"];
+var FILTER_KINDS = ["attention", "needs-you", "working", "waiting-limit", "broken", "archived"];
 var DEFAULTS = {
+  attention: true,
   "needs-you": true,
   working: true,
   "waiting-limit": true,
@@ -12540,6 +12571,7 @@ function withKind(filter, kind, on) {
 }
 function kindCounts(list) {
   const counts = {
+    attention: 0,
     "needs-you": 0,
     working: 0,
     "waiting-limit": 0,
@@ -18242,11 +18274,9 @@ function sessionRow(s, selected, openSession, buildActions, previous) {
   const managed = actionable || killable;
   const title = h("div", { class: "af-row-title" }, rowTitle(s));
   const idleDetail = idleReasonDetail(s);
-  const branchParts = [
-    h("span", { class: "af-operator-state" }, OPERATOR_KIND_LABELS[operator])
-  ];
+  const branchParts = [];
   if (selected && idleDetail) {
-    const idle = h("span", { class: "af-idle-reason" }, ` \xB7 ${idleDetail}`);
+    const idle = h("span", { class: "af-idle-reason" }, idleDetail);
     idle.dataset.idleReason = s.idle_reason ?? "";
     if (s.last_pane_churn_at) {
       idle.dataset.paneChurnAt = s.last_pane_churn_at;
@@ -18254,8 +18284,10 @@ function sessionRow(s, selected, openSession, buildActions, previous) {
     branchParts.push(idle);
   }
   if (s.branch) {
+    if (branchParts.length > 0) {
+      branchParts.push(" \xB7 ");
+    }
     branchParts.push(
-      " \xB7 ",
       h("span", { class: "af-row-branch-name" }, icon("git-branch", "af-branch-icon"), s.branch)
     );
   }
@@ -18267,12 +18299,12 @@ function sessionRow(s, selected, openSession, buildActions, previous) {
   row.replaceChildren();
   row.onclick = null;
   row.removeAttribute("aria-disabled");
-  row.dataset.state = status.kind ?? "working";
+  row.dataset.state = status.kind;
   const statusSlot = h("span", { class: "af-row-status" });
   statusSlot.setAttribute("aria-hidden", "true");
-  if (status.kind && status.icon) {
-    const dot = h("span", { class: `af-dot af-dot-${status.kind}` }, icon(status.icon));
-    statusSlot.append(dot);
+  const dot = rowDot(s);
+  if (dot) {
+    statusSlot.append(h("span", { class: `af-dot af-dot-${dot.kind}` }, icon(dot.icon)));
   }
   row.append(statusSlot);
   row.append(main);
@@ -18289,7 +18321,8 @@ function sessionRow(s, selected, openSession, buildActions, previous) {
   const idleReason = idleDetail ? `; ${idleDetail}` : "";
   const archiveWarning = archiveWarningText(s);
   const inertReason = managed && !actionable ? `; ${inertRowReason(s)}` : "";
-  row.dataset.idleTitleBase = `${s.title} \u2014 ${OPERATOR_KIND_LABELS[operator]}`;
+  const reason = attentionReason(s);
+  row.dataset.idleTitleBase = `${s.title} \u2014 ${OPERATOR_KIND_LABELS[operator]}${reason ? `: ${reason}` : ""}`;
   row.dataset.idleTitleModel = modelChange;
   row.dataset.idleTitleArchive = archiveWarning === "" ? "" : `; ${archiveWarning}`;
   row.dataset.idleTitleInert = inertReason;
@@ -18313,7 +18346,7 @@ function refreshIdleReasonAges(root2, now = /* @__PURE__ */ new Date()) {
       },
       now
     );
-    idle.textContent = detail ? ` \xB7 ${detail}` : "";
+    idle.textContent = detail;
     const row = idle.closest(".af-row");
     if (row) {
       const reason = detail ? `; ${detail}` : "";
