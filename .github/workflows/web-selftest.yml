@@ -172,8 +172,7 @@ jobs:
 # ── How this gates ────────────────────────────────────────────────────────────
 #
 # This repo's ruleset (14851503) requires only "Lint" and "Build", so a new job
-# gates nothing unless pr.yml's Build job lists it in `needs` — the mechanism
-# documented on the auto-gate helper test. That is how this gates:
+# gates nothing unless pr.yml's Build job lists it in `needs`. That is how this gates:
 #
 #   pr.yml: web-selftest-scope ─► web-selftest (uses: this workflow) ─► Build needs
 #
