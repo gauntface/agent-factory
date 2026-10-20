@@ -324,7 +324,7 @@ test("docs-only, gate-only, empty, and similarly prefixed paths skip performance
 test("shared scope exposes both decisions and performance skips only on a known out-of-scope diff", () => {
   const yaml = readWorkflow("pr.yml");
   assert.deepEqual(jobNeeds(yaml, "perf"), ["web-selftest-scope"]);
-  const perf = yaml.slice(yaml.indexOf("\n  perf:\n"), yaml.indexOf("\n  test-macos:\n"));
+  const perf = yaml.slice(yaml.indexOf("\n  perf:\n"), yaml.indexOf("\n  build:\n"));
   assert.match(perf, /^ {4}if: needs\.web-selftest-scope\.outputs\.perf_run == 'true'$/m);
   assert.match(yaml, /perf_run: \$\{\{ steps\.scope\.outputs\.perf_run \}\}/);
   assert.match(yaml, /node \.github\/scripts\/web-selftest-scope\.js changed-paths\.txt perf >> "\$GITHUB_OUTPUT"/);
