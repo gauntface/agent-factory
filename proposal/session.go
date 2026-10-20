@@ -77,7 +77,7 @@ func (s *Store) Attach(slug, sessionID string) error {
 			return err
 		}
 		if current == slug {
-			return nil
+			return s.ensureCursor(sessionID)
 		}
 		if _, err := s.snapshot(); err != nil {
 			return err
@@ -96,6 +96,22 @@ func (s *Store) Attach(slug, sessionID string) error {
 		_, err = s.git(nil, "update-ref", cursorRefPrefix+sessionID, head)
 		return err
 	})
+}
+
+// ensureCursor creates the session's cursor at HEAD when it is missing, for
+// example after a crash between the attach and cursor ref updates.
+func (s *Store) ensureCursor(sessionID string) error {
+	if _, err := s.git(nil, "rev-parse", "--verify", "--quiet", cursorRefPrefix+sessionID+"^{commit}"); err == nil {
+		return nil
+	} else if !isExitCode(err, 1) {
+		return err
+	}
+	head, err := s.head()
+	if err != nil {
+		return err
+	}
+	_, err = s.git(nil, "update-ref", cursorRefPrefix+sessionID, head)
+	return err
 }
 
 // Detach removes the attachment and cursor of session sessionID. It returns

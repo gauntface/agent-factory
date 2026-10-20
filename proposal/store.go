@@ -197,18 +197,29 @@ func (s *Store) Create(slug string, docs []string, by Committer) error {
 		if err := os.Mkdir(dir, 0o755); err != nil {
 			return fmt.Errorf("create proposal folder: %w", err)
 		}
-		for _, n := range names {
-			text, err := renderDoc(slug, n)
-			if err != nil {
-				return err
+		if err := s.populate(slug, names, by); err != nil {
+			_, _ = s.git(nil, "reset", "-q", "--", slug)
+			if rmErr := os.RemoveAll(dir); rmErr != nil {
+				return fmt.Errorf("%w (and failed to remove %s: %v)", err, dir, rmErr)
 			}
-			if err := os.WriteFile(filepath.Join(dir, docFile(n)), []byte(text), 0o644); err != nil {
-				return err
-			}
+			return err
 		}
-		_, err := s.commitPaths("start "+slug, by.Author, by.SessionID, slug)
-		return err
+		return nil
 	})
+}
+
+func (s *Store) populate(slug string, names []string, by Committer) error {
+	for _, n := range names {
+		text, err := renderDoc(slug, n)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(s.SlugPath(slug), docFile(n)), []byte(text), 0o644); err != nil {
+			return err
+		}
+	}
+	_, err := s.commitPaths("start "+slug, by.Author, by.SessionID, slug)
+	return err
 }
 
 func normalizeDocNames(docs []string) ([]string, error) {

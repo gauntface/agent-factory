@@ -422,3 +422,43 @@ func TestListHelpers(t *testing.T) {
 		t.Fatalf("LastEdit = %v, %v", at, err)
 	}
 }
+
+func TestReattachSameSlugRepairsMissingCursor(t *testing.T) {
+	s, _ := newTestStore(t)
+	startAttached(t, s, "p", sessA)
+	if _, err := s.git(nil, "update-ref", "-d", cursorRefPrefix+sessA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Changes(sessA); err == nil {
+		t.Fatal("changes without a cursor must fail")
+	}
+	if err := s.Attach("p", sessA); err != nil {
+		t.Fatal(err)
+	}
+	if c := mustChanges(t, s, sessA); c.Slug != "p" {
+		t.Fatalf("changes after repair = %+v", c)
+	}
+}
+
+func TestCreateRemovesFolderOnFailure(t *testing.T) {
+	s, home := newTestStore(t)
+	if err := os.MkdirAll(filepath.Join(home, "templates", "proposal", "goals.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Create("broken", []string{"technical", "goals"}, agent(sessA)); err == nil {
+		t.Fatal("an unreadable template must fail Create")
+	}
+	if _, err := os.Stat(s.SlugPath("broken")); !os.IsNotExist(err) {
+		t.Fatalf("the proposal folder must be removed, stat err = %v", err)
+	}
+	if status, _ := s.git(nil, "status", "--porcelain"); status != "" {
+		t.Fatalf("a failed create left changes:\n%s", status)
+	}
+}
+
+func TestRulesAskForAttention(t *testing.T) {
+	r := Rules("p", "/x/p")
+	if !strings.Contains(r, `run "af sessions attention --self --reason '<the question>'" as the last step`) {
+		t.Fatalf("rule 4 must ask for attention:\n%s", r)
+	}
+}
