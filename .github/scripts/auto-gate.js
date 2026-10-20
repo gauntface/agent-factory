@@ -1047,8 +1047,8 @@ async function evaluatePullRequest({ github, context, core, prNumber, setOutputs
     reasons.push(`PR is ${pr.merged ? "already merged" : pr.state.toLowerCase()}, not open`);
   }
 
-  if (pr.baseRefName !== "master") {
-    reasons.push(`base branch is ${pr.baseRefName}, not master`);
+  if (pr.baseRefName !== "main") {
+    reasons.push(`base branch is ${pr.baseRefName}, not main`);
   }
 
   if (pr.isDraft) {
@@ -1127,7 +1127,7 @@ async function evaluatePullRequest({ github, context, core, prNumber, setOutputs
   const validationRef =
     pr.state === "OPEN" &&
     !pr.merged &&
-    pr.baseRefName === "master" &&
+    pr.baseRefName === "main" &&
     pr.headRepository === baseRepository &&
     pr.mergeable === "MERGEABLE" &&
     pr.mergeStateStatus !== "DIRTY" &&
@@ -1814,10 +1814,10 @@ async function evaluateMergeQueueBatch({ github, context, pr, constituents, subj
       notes.push(`constituent PR #${number} has already merged`);
       continue;
     }
-    if (constituent.state !== "OPEN" || constituent.baseRefName !== "master") {
+    if (constituent.state !== "OPEN" || constituent.baseRefName !== "main") {
       blockers.push({
         reason:
-          `merge-queue batch constituent PR #${number} is no longer an open master pull ` +
+          `merge-queue batch constituent PR #${number} is no longer an open main pull ` +
           `request (${constituent.state.toLowerCase()} into ${constituent.baseRefName})`,
         remedy: requeue,
       });
@@ -2071,10 +2071,10 @@ async function reportDecision({ github, context, core, result, manual = false })
     core.notice(`Leaving the existing Auto Gate decision unchanged for closed PR #${result.prNumber}.`);
     return { state: "closed", priorDecision: false };
   }
-  if (result.baseRefName && result.baseRefName !== "master") {
+  if (result.baseRefName && result.baseRefName !== "main") {
     core.notice(
       `Auto Gate decision was not reported for PR #${result.prNumber} because its base is ` +
-        `${result.baseRefName}, not master.`,
+        `${result.baseRefName}, not main.`,
     );
     return { state: "ineligible", priorDecision: false };
   }
@@ -2267,7 +2267,7 @@ async function invalidateAggregateDecision({ github, context, core, headSha }) {
       title: AGGREGATE_WAITING_TITLE,
       summary:
         "This fixed-name check is commit-scoped. Auto Gate is refreshing every open " +
-        "master PR and exact (PR, head) decision at this commit.",
+        "main PR and exact (PR, head) decision at this commit.",
     },
   };
   const write = await createAggregateCheck({
@@ -2691,7 +2691,7 @@ async function reportAggregateDecision({
     conclusion: aggregate.ok ? "success" : "failure",
     output: {
       title: aggregate.ok
-        ? "PASS: every open master PR at this commit passes Auto Gate"
+        ? "PASS: every open main PR at this commit passes Auto Gate"
         : `BLOCKED: ${aggregate.blockers.length} associated PR decision(s) are not passing`,
       summary: aggregate.summary,
     },
@@ -2886,7 +2886,7 @@ async function processAggregateHead({
       // the event for that change will reevaluate both affected heads.
       core.notice(
         `Keeping aggregate ${pending.headSha} non-green because PR #${prNumber} ` +
-          `now evaluates at ${result.headSha || "no open master head"}.`,
+          `now evaluates at ${result.headSha || "no open main head"}.`,
       );
       return { state: "association-changed", pending };
     }
@@ -3161,7 +3161,7 @@ async function evaluateAggregateDecision({ github, context, headSha }) {
     // Never pre-authorize a commit before a PR exists. A vacuously successful
     // aggregate could be inherited by a newly opened PR until its event run
     // makes the check non-green.
-    blockers.push("No open pull request to master currently owns this commit");
+    blockers.push("No open pull request to main currently owns this commit");
   }
   for (const pull of pulls) {
     const identity = decisionIdentity(pull.number, sha);
@@ -3203,7 +3203,7 @@ async function evaluateAggregateFresh({ github, context, core, headSha }) {
   const before = await listOpenMasterPullRequestsForHead({ github, context, headSha: sha });
   const blockers = [];
   if (before.length === 0) {
-    blockers.push("No open pull request to master currently owns this commit");
+    blockers.push("No open pull request to main currently owns this commit");
   }
   for (const pull of before) {
     const result = await evaluate({
@@ -3237,7 +3237,7 @@ async function evaluateAggregateFresh({ github, context, core, headSha }) {
   const afterNumbers = after.map((pull) => pull.number);
   if (!sameNumbers(beforeNumbers, afterNumbers)) {
     blockers.push(
-      "Open master PR associations changed during the fresh merge evaluation; run Auto Gate again",
+      "Open main PR associations changed during the fresh merge evaluation; run Auto Gate again",
     );
   }
   return {
@@ -3415,13 +3415,13 @@ function evaluationFailure(message, result) {
 function formatAggregateSummary(pullNumbers, blockers, pending) {
   const shared = pullNumbers.length > 1;
   const coupling =
-    "This fixed-name check is commit-scoped and passes only when every open master PR " +
+    "This fixed-name check is commit-scoped and passes only when every open main PR " +
     "sharing the commit has a passing exact (PR, head) Auto Gate decision.";
   const context =
     pullNumbers.length === 0
-      ? "No open master PR currently points at this commit.\n\n"
+      ? "No open main PR currently points at this commit.\n\n"
       : shared
-        ? `This commit is shared by open master PRs ${joinPullNumbers(pullNumbers)}. ` +
+        ? `This commit is shared by open main PRs ${joinPullNumbers(pullNumbers)}. ` +
           `${coupling}\n\n`
         : "";
   if (pending) {
@@ -3432,7 +3432,7 @@ function formatAggregateSummary(pullNumbers, blockers, pending) {
   }
   const recovery =
     "To decouple without merging another PR, push either branch to a distinct commit, close " +
-    "the other PR, or retarget it away from master; then run Auto Gate manually by PR number.";
+    "the other PR, or retarget it away from main; then run Auto Gate manually by PR number.";
   const recoveryHint = shared ? `\n\n${recovery}` : "";
   return `${context}Waiting on:\n- ${blockers.join("\n- ")}${recoveryHint}`;
 }
@@ -4666,7 +4666,7 @@ async function merge({
         // commit this merge just created; if a later merge has already advanced
         // it, that newer commit is the one worth verifying — verification is
         // monotonic, since the newer tree contains this one.
-        ref: "master",
+        ref: "main",
         // Publishing is NOT monotonic, and docs.yml publishes. A run raised for
         // this merge but started after a later one would diff that later
         // commit's paths, find no docs change, and never publish these docs —
@@ -4681,7 +4681,7 @@ async function merge({
       // master can in principle advance first, so the notice is what lets a
       // human correlate the run with the merge it was raised for.
       core.notice(
-        `Dispatched ${workflowId} on master to verify the PR #${prNumber} merge ` +
+        `Dispatched ${workflowId} on main to verify the PR #${prNumber} merge ` +
           `${response.data.sha}.`,
       );
     } catch (error) {
@@ -4699,8 +4699,8 @@ async function merge({
   if (gate.workflowsChanged) {
     core.warning(
       `PR #${prNumber} changed workflow definitions, and this run re-raised the set known to ` +
-        "master's pre-merge copy of the gate. If it added or renamed a workflow gated on a " +
-        "master push, that one did not run for this commit; dispatch it by hand.",
+        "main's pre-merge copy of the gate. If it added or renamed a workflow gated on a " +
+        "main push, that one did not run for this commit; dispatch it by hand.",
     );
   }
 
@@ -5439,7 +5439,7 @@ function requiredCheckReevaluationCandidates({ pulls, checkRunsByHead, statusesB
       !Number.isSafeInteger(prNumber) ||
       prNumber <= 0 ||
       state !== "open" ||
-      baseRefName !== "master"
+      baseRefName !== "main"
     ) {
       continue;
     }
@@ -5541,7 +5541,7 @@ const REQUIRED_CHECK_RECONCILIATION_QUERY = `
         first: ${REQUIRED_CHECK_RECONCILIATION_PAGE_SIZE}
         after: $after
         states: OPEN
-        baseRefName: "master"
+        baseRefName: "main"
         orderBy: {field: CREATED_AT, direction: ASC}
       ) {
         pageInfo { hasNextPage endCursor }
@@ -5914,7 +5914,7 @@ function transientBlockReevaluationCandidates({ pulls, checkRunsByHead, now }) {
       !Number.isSafeInteger(prNumber) ||
       prNumber <= 0 ||
       state !== "open" ||
-      baseRefName !== "master"
+      baseRefName !== "main"
     ) {
       continue;
     }
@@ -6316,7 +6316,7 @@ async function resolveTargets({
     }
     if (
       sourceSha &&
-      (pr.state !== "OPEN" || pr.merged || pr.baseRefName !== "master" || pr.headRefOid !== sourceSha)
+      (pr.state !== "OPEN" || pr.merged || pr.baseRefName !== "main" || pr.headRefOid !== sourceSha)
     ) {
       continue;
     }
@@ -6352,7 +6352,7 @@ async function resolveTargets({
 async function recoverSuccessorHead({
   github, context, core, number, previousHead, headPollAttempts, headPollDelayMs, sleep,
 }) {
-  const eligible = (current) => current.state === "OPEN" && !current.merged && current.baseRefName === "master";
+  const eligible = (current) => current.state === "OPEN" && !current.merged && current.baseRefName === "main";
   let observedHead = null;
   // The quiet exit below asserts every read still showed the initiating SHA —
   // a read that could not resolve a head at all (an eligible PR answering with
@@ -6439,7 +6439,7 @@ async function recoverSuccessorHead({
     );
   } catch (error) {
     const message = `Auto Gate recovery failed for PR #${number}: ${formatError(error)}. Run ` +
-      gateRecoveryCommand({ context, ref: "master", prNumber: number, previousHeadSha: previousHead });
+      gateRecoveryCommand({ context, ref: "main", prNumber: number, previousHeadSha: previousHead });
     const publicationError = await publishRecoveryFailure({
       github, context, prNumber: number, message, observedHeadSha: observedHead,
     });
@@ -6474,7 +6474,7 @@ async function listOpenMasterPullRequestsForHead({ github, context, headSha }) {
     .filter(
       (pull) =>
         pull.state === "open" &&
-        pull.base?.ref === "master" &&
+        pull.base?.ref === "main" &&
         pull.head?.sha === headSha,
     )
     .sort((left, right) => left.number - right.number);

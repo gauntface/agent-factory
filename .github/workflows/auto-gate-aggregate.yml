@@ -78,7 +78,7 @@ jobs:
             const updateCheck = github.rest.checks.update.bind(github.rest.checks);
             github.rest.checks.update = async (options) => {
               const response = await updateCheck(options);
-              if (options.output?.title === "PASS: every open master PR at this commit passes Auto Gate") {
+              if (options.output?.title === "PASS: every open main PR at this commit passes Auto Gate") {
                 ownedAggregateCheck = response.data;
               }
               return response;

@@ -189,7 +189,7 @@ test("the hand gate's step 3b recipe blocks the artifact shape that merged #3656
     created_at: "2026-07-09T01:20:00Z",
     updated_at: "2026-07-09T01:20:00Z",
     body:
-      "### 💡 Codex Review\n\nhttps://github.com/sachiniyer/agent-factory/blob/master/docs/x.md#L1\n" +
+      "### 💡 Codex Review\n\nhttps://github.com/sachiniyer/agent-factory/blob/main/docs/x.md#L1\n" +
       "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Finding**\n",
   };
   const cleanVerdict = {
@@ -1131,7 +1131,7 @@ test("a read-only fork token leaves the decision unreported without failing the 
     result: {
       prNumber: 1465,
       headSha: HEAD_SHA,
-      baseRefName: "master",
+      baseRefName: "main",
       isOpen: true,
       shouldMerge: false,
       summary: "BLOCKED: author is not an allowed maintainer/app",
@@ -1151,7 +1151,7 @@ test("a read-only fork token leaves the decision unreported without failing the 
       result: {
         prNumber: 1465,
         headSha: HEAD_SHA,
-        baseRefName: "master",
+        baseRefName: "main",
         isOpen: true,
         shouldMerge: false,
         summary: "BLOCKED: waiting",
@@ -1435,7 +1435,7 @@ test("a batch blocks on a constituent that is no longer open", async () => {
   assert.equal(result.shouldMerge, false);
   assert.match(
     result.manualMergeBlockers.map((blocker) => blocker.reason).join("\n"),
-    /constituent PR #4260 is no longer an open master pull request/,
+    /constituent PR #4260 is no longer an open main pull request/,
   );
 });
 
@@ -1480,7 +1480,7 @@ test("a batch head whose first parent is not base history is blocked", async () 
   assert.equal(result.shouldMerge, false);
   assert.match(
     result.manualMergeBlockers.map((blocker) => blocker.reason).join("\n"),
-    /first parent .* is not contained in master/,
+    /first parent .* is not contained in main/,
   );
 });
 
@@ -1614,8 +1614,8 @@ test("one batched read covers every manual PR sharing a head", async () => {
     author: "outside-contributor",
     nativeAutoMergeEnabled: true,
     associatedPullRequests: [
-      { number: 1465, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } },
-      { number: 2048, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } },
+      { number: 1465, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } },
+      { number: 2048, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } },
     ],
   });
 
@@ -1805,7 +1805,7 @@ test("ownership is re-established alongside the guard, not before it", async () 
   };
   const realUpdate = github.rest.checks.update;
   github.rest.checks.update = async (options) => {
-    if (options.output?.title?.startsWith("PASS: every open master PR")) {
+    if (options.output?.title?.startsWith("PASS: every open main PR")) {
       order.push("publish");
     }
     return realUpdate(options);
@@ -2019,10 +2019,10 @@ test("a PR that joins the head after evaluation stops the PASS", async () => {
     // 2048 as well.
     associatedPullRequestSnapshots: [
       // The transaction's own snapshot, then the aggregate's final read.
-      [{ number: 1465, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } }],
+      [{ number: 1465, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } }],
       [
-        { number: 1465, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } },
-        { number: 2048, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } },
+        { number: 1465, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } },
+        { number: 2048, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } },
       ],
     ],
   });
@@ -2063,7 +2063,7 @@ test("the publish precondition runs after the aggregate's own reads", async () =
   };
   const realUpdate = github.rest.checks.update;
   github.rest.checks.update = async (options) => {
-    if (options.output?.title?.startsWith("PASS: every open master PR")) {
+    if (options.output?.title?.startsWith("PASS: every open main PR")) {
       order.push("aggregate:publish");
     }
     return realUpdate(options);
@@ -2173,8 +2173,8 @@ test("an auto-mergeable PR never reaches the auto-merge disable path", async () 
 test("a PR cannot read another PR's decision when both share one head", async () => {
   const github = fakeGateGithub({
     associatedPullRequests: [
-      { number: 1465, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } },
-      { number: 2048, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } },
+      { number: 1465, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } },
+      { number: 2048, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } },
     ],
     pullRequestsByNumber: {
       1465: { headRefOid: HEAD_SHA },
@@ -2211,7 +2211,7 @@ test("a PR cannot read another PR's decision when both share one head", async ()
     result: {
       prNumber: "2048",
       headSha: HEAD_SHA,
-      baseRefName: "master",
+      baseRefName: "main",
       isOpen: true,
       shouldMerge: false,
       summary: "BLOCKED: 1 unresolved live Codex inline finding",
@@ -2262,8 +2262,8 @@ test("a single-PR aggregate reports only that PR's unmet requirements", async ()
 test("the fixed aggregate names a blocked PR and recovery when the head is shared", async () => {
   const github = fakeGateGithub({
     associatedPullRequests: [
-      { number: 1465, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } },
-      { number: 2048, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } },
+      { number: 1465, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } },
+      { number: 2048, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } },
     ],
     checkRuns: [
       ...happyCheckRuns(),
@@ -2291,7 +2291,7 @@ test("the fixed aggregate names a blocked PR and recovery when the head is share
   assert.equal(
     typeof autoGate.reportAggregateDecision,
     "function",
-    "master has no fixed-name aggregate enforcement for shared heads",
+    "main has no fixed-name aggregate enforcement for shared heads",
   );
   const aggregate = await autoGate.reportAggregateDecision({
     github,
@@ -2305,7 +2305,7 @@ test("the fixed aggregate names a blocked PR and recovery when the head is share
   assert.equal(github.createdChecks[0].name, "Auto Gate decision");
   assert.equal(github.createdChecks[0].external_id, aggregateExternalId(HEAD_SHA));
   assert.equal(github.createdChecks[0].conclusion, "failure");
-  assert.match(github.createdChecks[0].output.summary, /shared by open master PRs #1465 and #2048/);
+  assert.match(github.createdChecks[0].output.summary, /shared by open main PRs #1465 and #2048/);
   assert.match(
     github.createdChecks[0].output.summary,
     /PR #2048.*1 unresolved live Codex inline finding/,
@@ -2316,8 +2316,8 @@ test("the fixed aggregate names a blocked PR and recovery when the head is share
 test("the fixed aggregate passes only after every shared-head decision passes", async () => {
   const github = fakeGateGithub({
     associatedPullRequests: [
-      { number: 1465, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } },
-      { number: 2048, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } },
+      { number: 1465, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } },
+      { number: 2048, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } },
     ],
     checkRuns: [
       ...happyCheckRuns(),
@@ -2360,15 +2360,15 @@ test("the fixed aggregate cannot pre-authorize a commit before its PR exists", a
 
   assert.equal(aggregate.ok, false);
   assert.equal(github.createdChecks[0].conclusion, "failure");
-  assert.match(github.createdChecks[0].output.summary, /No open master PR currently points/);
-  assert.match(github.createdChecks[0].output.summary, /No open pull request to master.*owns this commit/);
+  assert.match(github.createdChecks[0].output.summary, /No open main PR currently points/);
+  assert.match(github.createdChecks[0].output.summary, /No open pull request to main.*owns this commit/);
 });
 
 test("a missing shared-head decision names the PR and manual recovery", async () => {
   const github = fakeGateGithub({
     associatedPullRequests: [
-      { number: 1465, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } },
-      { number: 2048, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } },
+      { number: 1465, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } },
+      { number: 2048, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } },
     ],
     checkRuns: [
       ...happyCheckRuns(),
@@ -2395,8 +2395,8 @@ test("a missing shared-head decision names the PR and manual recovery", async ()
 test("one serialized head transaction refreshes every shared PR before publishing", async () => {
   const github = fakeGateGithub({
     associatedPullRequests: [
-      { number: 1465, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } },
-      { number: 2048, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } },
+      { number: 1465, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } },
+      { number: 2048, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } },
     ],
     pullRequestsByNumber: {
       2048: { reviewComments: [codexFinding({ id: 20, line: 18 })] },
@@ -2422,11 +2422,11 @@ test("one serialized head transaction refreshes every shared PR before publishin
   assert.equal(github.mergedWith, null);
 });
 
-test("one shared-head transaction merges at most one PR before master changes", async () => {
+test("one shared-head transaction merges at most one PR before main changes", async () => {
   const github = fakeGateGithub({
     associatedPullRequests: [
-      { number: 1465, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } },
-      { number: 2048, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } },
+      { number: 1465, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } },
+      { number: 2048, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } },
     ],
   });
 
@@ -2503,7 +2503,7 @@ test("a stale aggregate PASS is made non-green before decisions refresh", async 
   assert.equal(github.updatedChecks.length, 0);
   assert.equal(github.createdChecks[0].status, "completed");
   assert.equal(github.createdChecks[0].conclusion, "failure");
-  assert.match(github.createdChecks[0].output.summary, /refreshing every open master PR/);
+  assert.match(github.createdChecks[0].output.summary, /refreshing every open main PR/);
 });
 
 test("an ambiguous aggregate create is reconciled without replaying the write", async () => {
@@ -2806,7 +2806,7 @@ test("idempotent check-run updates retry transient failures", async () => {
     result: {
       prNumber: 1465,
       headSha: HEAD_SHA,
-      baseRefName: "master",
+      baseRefName: "main",
       isOpen: true,
       shouldMerge: false,
       summary: "BLOCKED: waiting",
@@ -2842,7 +2842,7 @@ test("rate-limited check-run updates retry but ordinary forbidden writes do not"
     result: {
       prNumber: 1465,
       headSha: HEAD_SHA,
-      baseRefName: "master",
+      baseRefName: "main",
       isOpen: true,
       shouldMerge: false,
       summary: "BLOCKED: waiting",
@@ -2866,7 +2866,7 @@ test("rate-limited check-run updates retry but ordinary forbidden writes do not"
       result: {
         prNumber: 1465,
         headSha: HEAD_SHA,
-        baseRefName: "master",
+        baseRefName: "main",
         isOpen: true,
         shouldMerge: false,
         summary: "BLOCKED: waiting",
@@ -3424,7 +3424,7 @@ test("a 503 on the invalidation create still fails the run when a PASS is the ne
       ...happyCheckRuns(),
       publishedAggregate({
         conclusion: "success",
-        title: "PASS: every open master PR at this commit passes Auto Gate",
+        title: "PASS: every open main PR at this commit passes Auto Gate",
       }),
     ],
     checkCreateErrors: [serverError503()],
@@ -3510,7 +3510,7 @@ test("the pre-lane step defers an unconfirmed invalidation create to the lane af
       ...happyCheckRuns(),
       publishedAggregate({
         conclusion: "success",
-        title: "PASS: every open master PR at this commit passes Auto Gate",
+        title: "PASS: every open main PR at this commit passes Auto Gate",
       }),
     ],
     checkCreateErrors: [serverError503()],
@@ -3700,7 +3700,7 @@ test("a queued evaluation cannot overwrite PASS after the PR merges", async () =
   assert.equal(github.updatedChecks.length, 0);
 });
 
-test("a non-master PR event cannot overwrite a master decision on the same commit", async () => {
+test("a non-main PR event cannot overwrite a main decision on the same commit", async () => {
   const github = fakeGateGithub({ checkRuns: happyCheckRuns() });
 
   const report = await autoGate.reportDecision({
@@ -3713,7 +3713,7 @@ test("a non-master PR event cannot overwrite a master decision on the same commi
       baseRefName: "release",
       isOpen: true,
       shouldMerge: false,
-      summary: "BLOCKED: base branch is release, not master",
+      summary: "BLOCKED: base branch is release, not main",
     },
   });
 
@@ -4237,7 +4237,7 @@ test("a finding artifact that names no commit blocks anyway", async () => {
   // against any head is unclassified, and unknown is not clean. Without this
   // half, the next artifact shape nobody anticipated reopens the hole.
   const stripped = codexIssueCommentFinding(HEAD_SHA, {
-    ref: "master",
+    ref: "main",
     timestamp: "2026-07-09T01:20:00Z",
   });
   assert.doesNotMatch(stripped.body, /[0-9a-f]{40}/i, "the fixture must name no commit at all");
@@ -4325,7 +4325,7 @@ test("a supporting commit link does not place a finding", async () => {
   // was placed, bound to no head, and dropped: the shape #3656 merged past.
   const earlier = "9f2c1a4e77d0b3856ac21e0f4b9d6c8a13e57f20";
   const citing = codexIssueCommentFinding(HEAD_SHA, {
-    ref: "master",
+    ref: "main",
     timestamp: "2026-07-09T01:20:00Z",
     citing: earlier,
   });
@@ -4440,7 +4440,7 @@ test("an unclassifiable finding clears only by an answer that names it", async (
   // would silently clear an unbound artifact nobody read — reopening the hole
   // through its own exit.
   const stripped = codexIssueCommentFinding(HEAD_SHA, {
-    ref: "master",
+    ref: "main",
     timestamp: "2026-07-09T01:20:00Z",
   });
   const anchor = `#issuecomment-${stripped.id}`;
@@ -4502,7 +4502,7 @@ test("an answer to a longer id does not clear the artifact whose id it prefixes"
   // let an answer to `#issuecomment-1234` also clear `#issuecomment-123` — a
   // fail-open in the exit of a rule that exists to close one.
   const shortId = codexIssueCommentFinding(HEAD_SHA, {
-    ref: "master",
+    ref: "main",
     id: 123,
     timestamp: "2026-07-09T01:20:00Z",
   });
@@ -4552,7 +4552,7 @@ test("a RESOLVED answer owes a commit; ACCEPTED and gate-ack do not", async () =
   // before the fix merged the unchanged head — the premature merge
   // unpushedFixClaims already prevents for inline findings.
   const stripped = codexIssueCommentFinding(HEAD_SHA, {
-    ref: "master",
+    ref: "main",
     timestamp: "2026-07-09T01:20:00Z",
   });
   const anchor = `#issuecomment-${stripped.id}`;
@@ -4646,7 +4646,7 @@ test("an answer in the same second as the finding still answers it", async () =>
   // because an answer must name the artifact's server-generated id, which does
   // not exist until the artifact does.
   const stripped = codexIssueCommentFinding(HEAD_SHA, {
-    ref: "master",
+    ref: "main",
     timestamp: "2026-07-09T01:20:00Z",
   });
   const result = await evaluateGate({
@@ -6655,7 +6655,7 @@ test("an intermediate commit cited as finding context stays unbound across updat
   const BASE2 = "ba5e000200000000000000000000000000000000";
   const MERGE_BASE = "ba5eba5e00000000000000000000000000000000";
   const finding = codexIssueCommentFinding(HEAD_SHA, {
-    ref: "master",
+    ref: "main",
     citing: LAP1,
     id: 4239021,
     timestamp: "2026-07-09T10:44:00Z",
@@ -6957,7 +6957,7 @@ test("the content head is found through a chain of the gate's own merges", async
   const found = await updateBranchContentHead({
     github,
     context: fakeContext(),
-    baseRefName: "master",
+    baseRefName: "main",
     headSha: HEAD_SHA,
     headParents: [
       { oid: LAP2, committedDate: "2026-07-09T14:17:00Z" },
@@ -7000,7 +7000,7 @@ test("the content-head walk is bounded, even on a cycle", async () => {
   const found = await updateBranchContentHead({
     github,
     context: fakeContext(),
-    baseRefName: "master",
+    baseRefName: "main",
     headSha: HEAD_SHA,
     headParents: [{ oid: A, committedDate: "2026-07-09T13:02:00Z" }, { oid: BASE }],
     maxDepth: 5,
@@ -7027,7 +7027,7 @@ test("a push inside the chain stops the walk and anchors on it", async () => {
   const found = await updateBranchContentHead({
     github,
     context: fakeContext(),
-    baseRefName: "master",
+    baseRefName: "main",
     headSha: HEAD_SHA,
     headParents: [
       { oid: LAP1, committedDate: "2026-07-09T13:35:00Z" },
@@ -7061,10 +7061,10 @@ const updateChainBase = (lap) => `ba5e${String(lap).padStart(4, "0")}${"0".repea
 const updateChainLap = (lap, laps) => (lap === laps ? HEAD_SHA : `1a9e${String(lap).padStart(4, "0")}${"0".repeat(32)}`);
 const updateChainAt = (minute) => `2026-07-09T10:${String(minute).padStart(2, "0")}:00Z`;
 
-function updateChainText(masterLaps, { pr = true, pushed = false, hand = false } = {}) {
+function updateChainText(mainLaps, { pr = true, pushed = false, hand = false } = {}) {
   const lines = Array.from({ length: 20 }, (_, index) => `line ${index}\n`);
   if (pr) lines[1] = "pr edit\n";
-  for (let lap = 1; lap <= masterLaps; lap++) lines[UPDATE_CHAIN_MASTER_LINES[lap - 1]] = `master ${lap}\n`;
+  for (let lap = 1; lap <= mainLaps; lap++) lines[UPDATE_CHAIN_MASTER_LINES[lap - 1]] = `main ${lap}\n`;
   if (pushed) lines[19] = "authored after the approval\n";
   // A resolution nobody wrote: the kind of hand edit a conflict fix introduces.
   if (hand) lines[12] = "resolved by hand\n";
@@ -7207,10 +7207,10 @@ test("#4886: a new authored commit inside the chain invalidates both", async () 
   assert.match(result.notes.join("\n"), new RegExp(`content head ${UPDATE_CHAIN_PUSHED}`));
 });
 
-test("#4886: a second parent outside master's history invalidates both", async () => {
+test("#4886: a second parent outside main's history invalidates both", async () => {
   assertUpdateChainCarries(await evaluateGate(updateChainFixture()), 3);
   const result = await assertUpdateChainInvalidates(
-    { secondParentOffMaster: true }, "merging a non-master branch brings in unreviewed content");
+    { secondParentOffMaster: true }, "merging a non-main branch brings in unreviewed content");
   assert.doesNotMatch(result.notes.join("\n"), /content head/);
 });
 
@@ -7284,7 +7284,7 @@ test("a merge with more than two parents is not an update-branch", async () => {
   const octopus = await updateBranchContentHead({
     github: alwaysContained,
     context: fakeContext(),
-    baseRefName: "master",
+    baseRefName: "main",
     headSha: HEAD_SHA,
     headParents: [
       { oid: "71c4213400000000000000000000000000000000", committedDate: "2026-07-09T10:30:00Z" },
@@ -7301,7 +7301,7 @@ test("a merge with more than two parents is not an update-branch", async () => {
       await updateBranchContentHead({
         github: alwaysContained,
         context: fakeContext(),
-        baseRefName: "master",
+        baseRefName: "main",
         headSha: HEAD_SHA,
         headParents: parents,
       }),
@@ -7416,7 +7416,7 @@ test("a rewind does not clear an inline RESOLVED claim the head cannot contain",
 
 test("a rewind does not clear an unbound artifact's RESOLVED claim either", async () => {
   const stripped = codexIssueCommentFinding(HEAD_SHA, {
-    ref: "master",
+    ref: "main",
     timestamp: "2026-07-09T01:15:00Z",
   });
   const result = await evaluateGate({
@@ -7565,28 +7565,28 @@ test("#4204: a rebase changing only ungated and test files preserves the play-te
 // changing a gated file through parent 2 is master's change, already gated on
 // master, and carries (#4886 — before it, this case invalidated). A merge whose
 // committed gated content is neither side's is a hand resolution and does not.
-for (const { name, masterGated, committedGated, carries } of [
-  { name: "that changes only ungated master paths preserves", masterGated: "1", committedGated: "1", carries: true },
-  { name: "that brings master's own gated change preserves", masterGated: "2", committedGated: "2", carries: true },
-  { name: "whose committed gated content neither side wrote invalidates", masterGated: "2", committedGated: "3", carries: false },
+for (const { name, mainGated, committedGated, carries } of [
+  { name: "that changes only ungated main paths preserves", mainGated: "1", committedGated: "1", carries: true },
+  { name: "that brings main's own gated change preserves", mainGated: "2", committedGated: "2", carries: true },
+  { name: "whose committed gated content neither side wrote invalidates", mainGated: "2", committedGated: "3", carries: false },
 ]) {
-  test(`#4204: a master merge ${name} the play-test`, async () => {
+  test(`#4204: a main merge ${name} the play-test`, async () => {
     // The head is a gate-made merge of OTHER_SHA with a master tip. Carrying
     // evidence across it requires the merge's own tree to equal the three-way
     // derive over both parents and the merge base, so the fixture models all
     // four trees.
-    const masterTip = "b".repeat(40);
+    const mainTip = "b".repeat(40);
     const mergeBase = "ba5eba5e00000000000000000000000000000000";
-    const gated = (version) => ({ "session/tmux/envmarker.go": version.repeat(40), "docs/master.md": "2".repeat(40) });
+    const gated = (version) => ({ "session/tmux/envmarker.go": version.repeat(40), "docs/main.md": "2".repeat(40) });
     const result = await evaluateGate(playTestFixture({
       headCommittedDate: "2026-07-09T02:00:00Z",
       headParents: [{ oid: OTHER_SHA, committedDate: "2026-07-09T01:00:00Z" },
-        { oid: masterTip }],
+        { oid: mainTip }],
       issueComments: [codexVerdict(HEAD_SHA, "2026-07-09T02:20:00Z"), playTestComment(OTHER_SHA)],
       treesByOid: {
         [mergeBase]: tuiTree(PLAY_TEST_TREE),
         [OTHER_SHA]: tuiTree(PLAY_TEST_TREE),
-        [masterTip]: tuiTree(gated(masterGated)),
+        [mainTip]: tuiTree(gated(mainGated)),
         [HEAD_SHA]: tuiTree(gated(committedGated)),
       },
     }));
@@ -7746,8 +7746,8 @@ test("#4484: a per-PR evaluation failure does not abort the aggregate run", asyn
   const github = fakeGateGithub({
     labels: ["play-tested"],
     associatedPullRequests: [
-      { number: 1465, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } },
-      { number: 2400, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } },
+      { number: 1465, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } },
+      { number: 2400, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } },
     ],
     pullRequestsByNumber: {
       1465: {
@@ -7846,8 +7846,8 @@ test("#4486: an evaluation failure keeps the resolved PR identity", async () => 
 test("#4486: a manual recovery's scoped failure write stays NEVER_RAN", async () => {
   const github = fakeGateGithub({
     associatedPullRequests: [
-      { number: 1465, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } },
-      { number: 2400, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } },
+      { number: 1465, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } },
+      { number: 2400, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } },
     ],
     pullRequestsByNumber: {
       1465: { issueComments: [codexVerdict(HEAD_SHA)] },
@@ -8040,7 +8040,7 @@ test("#4477: a comment-only change to a gated file does not demand the play-test
   // The subtraction is a proof over both blobs, not a reading of the patch.
   assert.deepEqual(new Set(github.blobReads), new Set([gitBlobSha(PROSE_BEFORE), gitBlobSha(PROSE_AFTER)]));
   assert.ok(
-    github.compareRequests.some((request) => request.basehead === `master...${HEAD_SHA}`),
+    github.compareRequests.some((request) => request.basehead === `main...${HEAD_SHA}`),
     "the proof reads the merge base the patch was taken against",
   );
 });
@@ -8744,8 +8744,8 @@ test("issue-comment events resolve their pull request number", async () => {
 test("PR Validation workflow completion resolves every PR at its head", async () => {
   const github = fakeGateGithub({
     associatedPullRequests: [
-      { number: 1465, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } },
-      { number: 2048, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } },
+      { number: 1465, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } },
+      { number: 2048, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } },
     ],
     pullRequestsByNumber: {
       1465: { headRefOid: HEAD_SHA },
@@ -11368,7 +11368,7 @@ async function runFailingRecoveryResolver(github, { context } = {}) {
   return { outputs, failures, warnings, thrown };
 }
 
-const RECOVERY_RERUN = new RegExp("gh workflow run auto-gate\\.yml --repo sachiniyer/agent-factory --ref master " +
+const RECOVERY_RERUN = new RegExp("gh workflow run auto-gate\\.yml --repo sachiniyer/agent-factory --ref main " +
   `-f pr_number=1465 -f previous_head_sha=${HEAD_SHA}`);
 
 // Every read on the recovery path, in the order a parked successor reaches them.
@@ -12010,7 +12010,7 @@ test("#4209: an accepted update with a stale head read schedules the gate that a
   const scheduled = github.dispatchedWorkflows[0];
   assert.deepEqual(scheduled, {
     owner: "sachiniyer", repo: "agent-factory", workflow_id: "auto-gate.yml",
-    ref: "master", inputs: { pr_number: "1465", previous_head_sha: HEAD_SHA },
+    ref: "main", inputs: { pr_number: "1465", previous_head_sha: HEAD_SHA },
   });
   const context = { ...fakeContext(), eventName: "workflow_dispatch", payload: { inputs: scheduled.inputs } };
   const next = fakeGateGithub({ headSha: NEW_HEAD,
@@ -12061,7 +12061,7 @@ test("#4209: a failed follow-up dispatch names the manual recovery instead of cl
   await assert.rejects(() => autoGate.merge({ github, context: fakeContext(), core: fakeCore(), prNumber: 1465 }), (error) => {
     assert.match(error.message, /update was accepted/);
     assert.match(error.message, /dispatch refused/);
-    assert.match(error.message, /gh workflow run auto-gate.yml --repo sachiniyer\/agent-factory --ref master -f pr_number=1465/);
+    assert.match(error.message, /gh workflow run auto-gate.yml --repo sachiniyer\/agent-factory --ref main -f pr_number=1465/);
     return true;
   });
   assert.equal(github.workflowDispatchAttempts, 1, "a definitive dispatch refusal is not retried");
@@ -13065,7 +13065,7 @@ test("a run already in progress on the updated head is left alone", async () => 
   assert.deepEqual(github.approvedRuns, [], "nothing parked, nothing to approve");
 });
 
-test("a green PR whose head is behind master is updated instead of merged", async () => {
+test("a green PR whose head is behind main is updated instead of merged", async () => {
   const github = fakeGateGithub({ files: ["session/storage.go"], behindBy: 2 });
 
   await assert.rejects(
@@ -13074,7 +13074,7 @@ test("a green PR whose head is behind master is updated instead of merged", asyn
       // The refusal prefix is what processAggregateHead reads as ordinary
       // waiting state, and the reason after it is what a human reads.
       assert.match(error.message, /^Refusing to merge PR #1465; /);
-      assert.match(error.message, /head is behind master by 2 commits/);
+      assert.match(error.message, /head is behind main by 2 commits/);
       assert.match(
         error.message,
         /updating the branch so the required checks run against the merge that will actually land/,
@@ -13087,8 +13087,8 @@ test("a green PR whose head is behind master is updated instead of merged", asyn
   assert.equal(github.mergedWith, null);
   assert.deepEqual(
     github.compareRequests.map((request) => request.basehead),
-    [`master...${HEAD_SHA}`],
-    "the position is read against the base BRANCH, so it reflects where master is now",
+    [`main...${HEAD_SHA}`],
+    "the position is read against the base BRANCH, so it reflects where main is now",
   );
   assert.equal(github.updateBranchCalls.length, 1);
   assert.equal(github.updateBranchCalls[0].pull_number, 1465);
@@ -13099,12 +13099,12 @@ test("a green PR whose head is behind master is updated instead of merged", asyn
   // workflows, since the update did not merge the PR.
   assert.deepEqual(github.dispatchedWorkflows, [{
     owner: "sachiniyer", repo: "agent-factory", workflow_id: "auto-gate.yml",
-    ref: "master", inputs: { pr_number: "1465", previous_head_sha: HEAD_SHA },
+    ref: "main", inputs: { pr_number: "1465", previous_head_sha: HEAD_SHA },
   }]);
   assert.deepEqual(github.deletedRefs, []);
 });
 
-test("a green PR whose head already contains master still merges", async () => {
+test("a green PR whose head already contains main still merges", async () => {
   const github = fakeGateGithub({ files: ["session/storage.go"], behindBy: 0 });
 
   await autoGate.merge({
@@ -13157,7 +13157,7 @@ test("a branch update that conflicts blocks the merge and names the conflict", a
     autoGate.merge({ github, context: fakeContext(), core: fakeCore(), prNumber: 1465 }),
     (error) => {
       assert.match(error.message, /^Refusing to merge PR #1465; /);
-      assert.match(error.message, /head is behind master by 3 commits/);
+      assert.match(error.message, /head is behind main by 3 commits/);
       assert.match(error.message, /the update failed: 422 merge conflict between base and head/);
       return true;
     },
@@ -13173,7 +13173,7 @@ test("a base position that cannot be read is not treated as up to date", async (
 
   await assert.rejects(
     autoGate.merge({ github, context: fakeContext(), core: fakeCore(), prNumber: 1465 }),
-    /Could not read how far PR head .* is behind master; compare returned behind_by=null/,
+    /Could not read how far PR head .* is behind main; compare returned behind_by=null/,
   );
 
   assert.equal(github.mergeAttempts, 0);
@@ -13214,7 +13214,7 @@ test("a behind head leaves the aggregate that authorized it non-green", async ()
   assert.equal(github.mergeAttempts, 0);
   assert.equal(github.updateBranchCalls.length, 1);
   assert.ok(
-    notices.some((notice) => /head is behind master by 1 commit;/.test(notice)),
+    notices.some((notice) => /head is behind main by 1 commit;/.test(notice)),
     "the reason is recorded where a human reads the run",
   );
   assert.ok(
@@ -13319,7 +13319,7 @@ test("an auto-gate merge re-raises every gate its own push suppressed", async ()
   // A dispatch takes a branch ref, never a SHA. master is the commit the merge
   // above just created.
   for (const dispatch of github.dispatchedWorkflows) {
-    assert.equal(dispatch.ref, "master");
+    assert.equal(dispatch.ref, "main");
   }
   // Only docs.yml carries an input, and it is the merge COMMIT, never a path
   // list: docs.yml still owns which paths mean "deploy". A copy of that list
@@ -13425,7 +13425,7 @@ test("the re-raised Docs run decides deployment from its own path list", () => {
   assert.match(docs, /case "\$path" in\s+docs\/\*\|mkdocs\.yml\|README\.md/);
 });
 
-test("one unavailable master-verify workflow does not suppress the others", async () => {
+test("one unavailable main-verify workflow does not suppress the others", async () => {
   const github = fakeGateGithub({
     files: ["session/storage.go"],
     workflowDispatchErrorsByWorkflow: { "build.yml": new Error("build dispatch unavailable") },
@@ -13464,20 +13464,20 @@ test("the trigger scan asks a question no YAML spelling can hide", () => {
   // human resolves with an explicit exception, under-inclusion is a master
   // commit nothing verifies.
   const forms = [
-    "on:\n  push:\n    branches: [master]\n\njobs:\n",
-    "on:\n  push:\n    branches: [ master ]\n\njobs:\n",
-    "on:\n  push:\n    branches:\n      - master\n\njobs:\n",
-    "on:\n    push:\n      branches: [master]\n\njobs:\n",
+    "on:\n  push:\n    branches: [main]\n\njobs:\n",
+    "on:\n  push:\n    branches: [ main ]\n\njobs:\n",
+    "on:\n  push:\n    branches:\n      - main\n\njobs:\n",
+    "on:\n    push:\n      branches: [main]\n\njobs:\n",
     "on:\n  push:\n\njobs:\n",
     "on:\n  push: {}\n\njobs:\n",
     "on:\n  push: # every branch\n\njobs:\n",
     "on: # workflow events\n  push:\n\njobs:\n",
-    "on:\n  pull_request:\n# master signal\n  push:\n\njobs:\n",
+    "on:\n  pull_request:\n# main signal\n  push:\n\njobs:\n",
     "on: push\njobs:\n",
     "on: [push]\njobs:\n",
     "on: [push, pull_request]\njobs:\n",
-    'on: {"push": {"branches": ["master"]}}\njobs:\n',
-    "on:\n  push:\n    branches: [\n      master,\n    ]\n\njobs:\n",
+    'on: {"push": {"branches": ["main"]}}\njobs:\n',
+    "on:\n  push:\n    branches: [\n      main,\n    ]\n\njobs:\n",
     "on:\n  push:\n    branches: ['**']\n\njobs:\n",
   ];
   for (const form of forms) {
@@ -13491,7 +13491,7 @@ test("the trigger scan asks a question no YAML spelling can hide", () => {
   // Negatives: no push trigger at all, and a push mentioned only in a comment or
   // in a job — neither is a trigger, and comments are stripped before the scan.
   for (const form of [
-    "on:\n  pull_request:\n    branches: [master]\n\njobs:\n",
+    "on:\n  pull_request:\n    branches: [main]\n\njobs:\n",
     "on:\n  workflow_dispatch:\n\njobs:\n",
     "on:\n  # we deliberately do not run on push here\n  pull_request:\n\njobs:\n",
     "on:\n  pull_request:\n\njobs:\n  push:\n    runs-on: ubuntu-latest\n",
@@ -13555,7 +13555,7 @@ test("the dispatch contract survives the spellings that hid from the parser", ()
     false,
   );
   assert.equal(
-    admitsDispatch("(github.event_name == 'push' && github.ref == 'refs/heads/master') || github.event_name == 'workflow_dispatch'"),
+    admitsDispatch("(github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'"),
     true,
   );
   assert.equal(admitsDispatch("'workflow_dispatch' == github.event_name"), true);
@@ -13570,7 +13570,7 @@ test("the dispatch contract survives the spellings that hid from the parser", ()
   assert.equal(consultsEvent("github[\"event_name\"] == 'push'"), true);
   assert.equal(consultsEvent("github.event.head_commit != null"), true);
   assert.equal(consultsEvent("github.event_name == 'push'"), true);
-  assert.equal(consultsEvent("github.ref == 'refs/heads/master'"), false);
+  assert.equal(consultsEvent("github.ref == 'refs/heads/main'"), false);
 
   // The type comes from the DIRECT property, never from prose that contains it.
   const prose = [
@@ -13606,7 +13606,7 @@ test("the dispatch contract survives the spellings that hid from the parser", ()
   // so it is reported unreadable rather than answering "no push".
   assert.equal(usesUnresolvableYaml(onSection("on: *push_event\njobs:\n")), true);
   assert.equal(usesUnresolvableYaml(onSection("on:\n  <<: *base\n  push:\n\njobs:\n")), true);
-  assert.equal(usesUnresolvableYaml(onSection("on:\n  push:\n    branches: [master]\n\njobs:\n")), false);
+  assert.equal(usesUnresolvableYaml(onSection("on:\n  push:\n    branches: [main]\n\njobs:\n")), false);
   // A glob in a paths filter is not an alias.
   assert.equal(
     usesUnresolvableYaml(onSection("on:\n  push:\n    paths:\n      - '**.go'\n\njobs:\n")),
@@ -13642,7 +13642,7 @@ test("the dispatch contract survives the spellings that hid from the parser", ()
     assert.equal(
       exemptedByRecordedTriggers(
         "zz-probe.yml",
-        onSection("on:\n  push:\n    branches: [release, master]\n"),
+        onSection("on:\n  push:\n    branches: [release, main]\n"),
       ),
       false,
     );
@@ -13659,7 +13659,7 @@ test("the dispatch contract survives the spellings that hid from the parser", ()
   }
 });
 
-test("the master-verify list names every workflow that gates master on push", () => {
+test("the main-verify list names every workflow that gates main on push", () => {
   // The anti-rot mechanism for MASTER_PUSH_WORKFLOWS. A `push:` trigger cannot
   // be computed at runtime, so the gate carries a literal copy; this reads the
   // workflow directory and fails if that copy stops describing it — the same
@@ -13683,7 +13683,7 @@ test("the master-verify list names every workflow that gates master on push", ()
       section,
       null,
       `${name}: no \`on:\` section could be located, so this scan cannot tell whether the ` +
-        "workflow runs on a master push",
+        "workflow runs on a main push",
     );
     assert.equal(
       usesUnresolvableYaml(section),
@@ -13702,8 +13702,8 @@ test("the master-verify list names every workflow that gates master on push", ()
     [...__test.MASTER_PUSH_WORKFLOWS].sort(),
     mentionsPush,
     "a workflow with a push trigger is missing from MASTER_PUSH_WORKFLOWS (or vice versa); " +
-      "an auto-gate merge would land on master without it ever running. If its push trigger " +
-      "genuinely cannot reach master, add it to PUSH_TRIGGER_EXCEPTIONS with the reason",
+      "an auto-gate merge would land on main without it ever running. If its push trigger " +
+      "genuinely cannot reach main, add it to PUSH_TRIGGER_EXCEPTIONS with the reason",
   );
 
   for (const name of __test.MASTER_PUSH_WORKFLOWS) {
@@ -13894,8 +13894,8 @@ test("the conformance scan detects each spelling it claims to", () => {
   // and a block scalar's body is a program rather than YAML — `run: |` holds
   // shell, and shell holds colons, braces, anchors and quoted keys.
   for (const canonical of [
-    "on:\n  push:\n    branches: [master]\n  workflow_dispatch:\n",
-    "on:\n  push:\n    branches: [ master ]\n    paths:\n      - '**.go'\n      - 'go.mod'\n",
+    "on:\n  push:\n    branches: [main]\n  workflow_dispatch:\n",
+    "on:\n  push:\n    branches: [ main ]\n    paths:\n      - '**.go'\n      - 'go.mod'\n",
     "on:\n  workflow_dispatch:\n    inputs:\n      dry_run:\n        type: boolean\n        default: false\n",
     "on:\n  workflow_dispatch:\n    inputs:\n      mode:\n        options: [auto, 'true', 'false']\n",
     "on:\n  workflow_run:\n    workflows: [PR Validation]\n    types: [completed]\n",
@@ -13916,7 +13916,7 @@ test("the conformance scan detects each spelling it claims to", () => {
   assert.deepEqual(
     misplaced("on:\n  workflow_dispatch:\n    inputs:\n      mode:\n        options: [push, dry-run]\n"),
     ["options: [push, dry-run]"],
-    "a push token in an input's options keeps answering `gates master` after the trigger is removed",
+    "a push token in an input's options keeps answering `gates main` after the trigger is removed",
   );
   assert.deepEqual(misplaced("on:\n  push:\n    paths:\n      - 'scripts/push-release.sh'\n"), [
     "- 'scripts/push-release.sh'",
@@ -13929,8 +13929,8 @@ test("the conformance scan detects each spelling it claims to", () => {
   // Legitimate positions: event keys at the direct-child indent, and every
   // shorthand form of the trigger list.
   for (const canonical of [
-    "on:\n  push:\n    branches: [master]\n  workflow_dispatch:\n",
-    "on:\n    push:\n      branches: [master]\n    workflow_dispatch:\n",
+    "on:\n  push:\n    branches: [main]\n  workflow_dispatch:\n",
+    "on:\n    push:\n      branches: [main]\n    workflow_dispatch:\n",
     "on: push\njobs:\n",
     "on: 'push'\njobs:\n",
     "on: [push, pull_request]\njobs:\n",
@@ -13941,8 +13941,8 @@ test("the conformance scan detects each spelling it claims to", () => {
   }
   // A flow-style `on:` is not shorthand: it is a mapping, reported as one by the
   // rule above, and its tokens are not in a position this scan can vouch for.
-  assert.deepEqual(misplaced('on: {"push": {"branches": ["master"]}}\njobs:\n'), [
-    'on: {"push": {"branches": ["master"]}}',
+  assert.deepEqual(misplaced('on: {"push": {"branches": ["main"]}}\njobs:\n'), [
+    'on: {"push": {"branches": ["main"]}}',
   ]);
 });
 
@@ -14109,7 +14109,7 @@ test("an unreadable ruleset never becomes an absent one", async () => {
   assert.equal(github.mergedWith, null, "nothing may merge while required checks are unknown");
   assert.match(
     github.updatedChecks.at(-1).output.summary,
-    /could not read branch rules for master after 3 attempts/,
+    /could not read branch rules for main after 3 attempts/,
   );
 });
 
@@ -14333,7 +14333,7 @@ test("a base that moves between the compare and the merge waits instead of faili
 
   const { notices, error } = await runApplyGateStep({ github });
 
-  assert.equal(error, null, "a base advance must not red the master Auto Gate run");
+  assert.equal(error, null, "a base advance must not red the main Auto Gate run");
   assert.ok(
     notices.some((notice) => /base moved between the compare and the merge/i.test(notice)),
     `the wait must name the base advance; got: ${notices.join(" | ")}`,
@@ -14948,7 +14948,7 @@ test("the fake lists a check run as its updates left it", async () => {
     check_run_id: created.data.id,
     status: "completed",
     conclusion: "success",
-    output: { title: "PASS: every open master PR at this commit passes Auto Gate" },
+    output: { title: "PASS: every open main PR at this commit passes Auto Gate" },
   });
 
   const listed = await github.paginate(github.rest.checks.listForRef, {
@@ -15750,10 +15750,10 @@ test("the sweep never considers the default branch or a protected one", async ()
   // would report the default branch unprotected, so the rule list is what
   // decides, and the default branch is skipped by name on top of that.
   const github = fakeGateGithub({
-    defaultBranchName: "master",
+    defaultBranchName: "main",
     branchRefs: [
       // No rules at all on the row: only the name keeps it out.
-      sweepBranch({ name: "master", sha: HEAD_SHA, pulls: [{ number: 1465 }] }),
+      sweepBranch({ name: "main", sha: HEAD_SHA, pulls: [{ number: 1465 }] }),
       sweepBranch({
         name: "release",
         sha: HEAD_SHA,
@@ -15799,7 +15799,7 @@ test("a sweep that cannot read the default branch acts on nothing", async () => 
   const github = fakeGateGithub({
     defaultBranchName: "",
     branchRefs: [
-      sweepBranch({ name: "master", sha: HEAD_SHA, pulls: [{ number: 1465 }] }),
+      sweepBranch({ name: "main", sha: HEAD_SHA, pulls: [{ number: 1465 }] }),
       sweepBranch({ name: "siyer/fix-3603", sha: HEAD_SHA, pulls: [{ number: 1466 }] }),
     ],
   });
@@ -15819,9 +15819,9 @@ test("a sweep that cannot read the default branch acts on nothing", async () => 
   // The same fixture WITH a default branch name sweeps the ordinary branch and
   // still leaves master alone, so the refusal above is not an inert path.
   const named = fakeGateGithub({
-    defaultBranchName: "master",
+    defaultBranchName: "main",
     branchRefs: [
-      sweepBranch({ name: "master", sha: HEAD_SHA, pulls: [{ number: 1465 }] }),
+      sweepBranch({ name: "main", sha: HEAD_SHA, pulls: [{ number: 1465 }] }),
       sweepBranch({ name: "siyer/fix-3603", sha: HEAD_SHA, pulls: [{ number: 1466 }] }),
     ],
   });
@@ -16002,8 +16002,8 @@ test("the gate runs the sweep once per non-reconciliation run", () => {
 test("merge freshly refuses a shared head whose other PR is waiting", async () => {
   const github = fakeGateGithub({
     associatedPullRequests: [
-      { number: 1465, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } },
-      { number: 2048, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } },
+      { number: 1465, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } },
+      { number: 2048, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } },
     ],
     pullRequestsByNumber: {
       2048: {
@@ -16029,8 +16029,8 @@ test("merge freshly refuses a shared head whose other PR is waiting", async () =
 });
 
 test("merge refuses when exact-head PR associations change during its fresh read", async () => {
-  const pullA = { number: 1465, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } };
-  const pullB = { number: 2048, state: "open", base: { ref: "master" }, head: { sha: HEAD_SHA } };
+  const pullA = { number: 1465, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } };
+  const pullB = { number: 2048, state: "open", base: { ref: "main" }, head: { sha: HEAD_SHA } };
   const github = fakeGateGithub({
     associatedPullRequestSnapshots: [[pullA], [pullA, pullB]],
   });
@@ -16562,7 +16562,7 @@ test("a gate-ack from an unrecognized author is named on the blocker, not droppe
 // outside the allowlist — and now says so, naming the author.
 test("a linked marker reply from an unrecognized author is named on the unbound blocker", async () => {
   const stripped = codexIssueCommentFinding(HEAD_SHA, {
-    ref: "master",
+    ref: "main",
     timestamp: "2026-07-09T01:20:00Z",
   });
   const result = await evaluateGate({
@@ -16889,7 +16889,7 @@ function fakeGateGithub({
   // as the raw response body, and an Error is thrown. An unlisted SHA is a 404.
   blobsBySha = {},
   associatedPullRequests = [
-    { number: 1465, state: "open", base: { ref: "master" }, head: { sha: headSha } },
+    { number: 1465, state: "open", base: { ref: "main" }, head: { sha: headSha } },
   ],
   associatedPullRequestSnapshots = null,
   requiredChecks = [
@@ -16957,7 +16957,7 @@ function fakeGateGithub({
   // The branch enumeration the sweep reads, as sweepBranch() rows. Empty by
   // default: a fixture that never sweeps enumerates nothing.
   branchRefs = [],
-  defaultBranchName = "master",
+  defaultBranchName = "main",
   // Forces the enumeration to keep claiming another page, so the page cap is
   // reachable without a fixture of 500 branches.
   branchRefsAlwaysHaveNextPage = false,
@@ -17549,7 +17549,7 @@ function fakeGateGithub({
             title: "Gate test",
             url: "https://example.invalid/pr/1465",
             body: pullRequestOverride.body ?? body,
-            baseRefName: pullRequestOverride.baseRefName || "master",
+            baseRefName: pullRequestOverride.baseRefName || "main",
             headRefOid: pullRequestOverride.headRefOid || headSha,
             headRefName: pullRequestOverride.headRefName ?? headRefName,
             headRepository: {
@@ -18285,7 +18285,7 @@ function reconciliationPull(number, headSha) {
   return {
     number,
     state: "open",
-    base: { ref: "master" },
+    base: { ref: "main" },
     head: { sha: headSha },
   };
 }
