@@ -1,11 +1,12 @@
 #!/bin/sh
-# release-bump.sh — land the stable-release version bump on master. Called
+# release-bump.sh — land the stable-release version bump on the release
+# branch ($RELEASE_BRANCH, default main). Called
 # from stable-release.yml's "Bump and publish" job, after all four platform
 # builds have succeeded (#1041).
 #
 # The tag is deliberately NOT created here: `gh release create --target` makes
 # it atomically with the published release (#5159), so a run that dies after
-# this script at worst leaves a bump commit on master — a clean, re-runnable
+# this script at worst leaves a bump commit on the release branch — a clean, re-runnable
 # state — and never a tag with no release.
 #
 # Usage: release-bump.sh <version>    # bare semver, no leading v
@@ -16,6 +17,7 @@
 set -eu
 
 NEW_VERSION="${1:?usage: release-bump.sh <version>}"
+BRANCH="${RELEASE_BRANCH:-main}"
 
 # Extract the current value of main.go's `version` fallback string. POSIX BRE,
 # tolerant of the gofmt alignment whitespace around the `=`.
@@ -48,7 +50,7 @@ if ! git diff --cached --quiet; then
 	git commit -m "chore: release v${NEW_VERSION}"
 fi
 
-# Push the bump to master, tolerating a master that moved during the ~4-minute
+# Push the bump to the release branch, tolerating a branch that moved during the ~4-minute
 # build (#1927). The auto-gate squash-merges CI-green PRs continuously, so a
 # plain push races that traffic and dies non-fast-forward, throwing away four
 # good builds. On a rejection, rebase the one-line bump onto the new tip and
@@ -58,17 +60,17 @@ fi
 # the rebase loudly here instead of force-pushing over another release.
 MAX_ATTEMPTS="${RELEASE_PUSH_MAX_ATTEMPTS:-5}"
 attempt=1
-until git push origin HEAD:master; do
+until git push origin "HEAD:${BRANCH}"; do
 	if [ "$attempt" -ge "$MAX_ATTEMPTS" ]; then
-		echo "::error::Version bump push rejected after ${MAX_ATTEMPTS} attempts (master kept moving)"
+		echo "::error::Version bump push rejected after ${MAX_ATTEMPTS} attempts (${BRANCH} kept moving)"
 		exit 1
 	fi
-	echo "Push rejected — master advanced during the build; rebasing onto origin/master and retrying (attempt ${attempt}/${MAX_ATTEMPTS})…"
-	git fetch origin master
+	echo "Push rejected — ${BRANCH} advanced during the build; rebasing onto origin/${BRANCH} and retrying (attempt ${attempt}/${MAX_ATTEMPTS})…"
+	git fetch origin "$BRANCH"
 	git rebase FETCH_HEAD
 	attempt=$((attempt + 1))
 done
 
 # The workflow tags `git rev-parse HEAD` next: after the rebase-retry loop,
-# HEAD is exactly the commit that landed on master — the sha the release's
+# HEAD is exactly the commit that landed on the release branch — the sha the release's
 # --target must point at.

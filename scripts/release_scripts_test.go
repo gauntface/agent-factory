@@ -177,16 +177,16 @@ func TestValidateStableVersionScript(t *testing.T) {
 // --- release-bump.sh: the #1927 mid-build merge race ------------------------
 //
 // The stable-release "Bump and publish" job checks out github.sha, builds for
-// ~4 minutes, then bumps main.go and pushes to master. master advances during
+// ~4 minutes, then bumps main.go and pushes to main. main advances during
 // that window (the auto-gate squash-merges CI-green PRs continuously), so a
-// plain `git push origin HEAD:master` races that traffic and dies
+// plain `git push origin HEAD:main` races that traffic and dies
 // non-fast-forward after four good builds (#1927). These tests stand up a real
-// bare "remote" + working checkout, land a commit on master mid-window, and
+// bare "remote" + working checkout, land a commit on main mid-window, and
 // assert the release still lands the bump on the moved tip.
 //
 // The script no longer tags (#5159): `gh release create --target` creates the
 // tag atomically with the published release, so the tests assert the bump is
-// pushed and HEAD — the sha the workflow tags — sits on origin's master tip,
+// pushed and HEAD — the sha the workflow tags — sits on origin's main tip,
 // with NO tag on the remote either way.
 
 // isolatedGitEnv returns an environment that pins git to a throwaway HOME (no
@@ -228,7 +228,7 @@ func gitOutEnv(t *testing.T, dir string, env []string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// seedReleaseRemote creates a bare "origin" repo whose master carries a main.go
+// seedReleaseRemote creates a bare "origin" repo whose main carries a main.go
 // pinned to seedVersion, plus a detached "work" checkout of that tip standing
 // in for the stable-release job's `checkout ref: github.sha`. It returns the
 // bare remote path and the work-tree path.
@@ -238,14 +238,14 @@ func seedReleaseRemote(t *testing.T, base string, env []string, seedVersion stri
 	seed := filepath.Join(base, "seed")
 	work = filepath.Join(base, "work")
 
-	runGitEnv(t, base, env, "init", "--bare", "-b", "master", origin)
-	runGitEnv(t, base, env, "init", "-b", "master", seed)
+	runGitEnv(t, base, env, "init", "--bare", "-b", "main", origin)
+	runGitEnv(t, base, env, "init", "-b", "main", seed)
 	writeFile(t, filepath.Join(seed, "main.go"),
 		"package main\n\nconst (\n\tversion = \""+seedVersion+"\"\n)\n")
 	runGitEnv(t, seed, env, "add", "main.go")
 	runGitEnv(t, seed, env, "commit", "-m", "seed")
 	runGitEnv(t, seed, env, "remote", "add", "origin", origin)
-	runGitEnv(t, seed, env, "push", "origin", "master")
+	runGitEnv(t, seed, env, "push", "origin", "main")
 
 	runGitEnv(t, base, env, "clone", origin, work)
 	// The job checks out an immutable github.sha, not a tracking branch.
@@ -264,7 +264,7 @@ func writeFile(t *testing.T, path, content string) {
 }
 
 // TestReleaseBumpToleratesMidBuildMerge is the #1927 regression: a PR merges to
-// master while the release is building, and the version-bump push must land on
+// main while the release is building, and the version-bump push must land on
 // the moved tip instead of aborting non-fast-forward.
 func TestReleaseBumpToleratesMidBuildMerge(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -277,7 +277,7 @@ func TestReleaseBumpToleratesMidBuildMerge(t *testing.T) {
 
 	origin, work := seedReleaseRemote(t, base, env, "1.0.0")
 
-	// A PR squash-merges to master DURING the build window — after `work` was
+	// A PR squash-merges to main DURING the build window — after `work` was
 	// checked out. It touches a different file, so the one-line bump rebases
 	// cleanly (as any real merge would; only a rival release touches the
 	// version line).
@@ -286,7 +286,7 @@ func TestReleaseBumpToleratesMidBuildMerge(t *testing.T) {
 	writeFile(t, filepath.Join(other, "CONCURRENT.md"), "landed mid-build\n")
 	runGitEnv(t, other, env, "add", "CONCURRENT.md")
 	runGitEnv(t, other, env, "commit", "-m", "feat: merged during build")
-	runGitEnv(t, other, env, "push", "origin", "master")
+	runGitEnv(t, other, env, "push", "origin", "main")
 
 	// Run the release bump against the now-stale checkout.
 	cmd := exec.Command(script, "1.0.1")
@@ -296,28 +296,28 @@ func TestReleaseBumpToleratesMidBuildMerge(t *testing.T) {
 		t.Fatalf("release-bump.sh failed on a mid-build merge (#1927): %v\n%s", err, out)
 	}
 
-	// The bump landed on the NEW tip: master carries both commits, main.go is
+	// The bump landed on the NEW tip: main carries both commits, main.go is
 	// bumped, and the concurrent work survived.
-	masterLog := gitOutEnv(t, origin, env, "log", "--format=%s", "master")
-	if !strings.Contains(masterLog, "feat: merged during build") {
-		t.Fatalf("concurrent commit was lost from master:\n%s", masterLog)
+	mainLog := gitOutEnv(t, origin, env, "log", "--format=%s", "main")
+	if !strings.Contains(mainLog, "feat: merged during build") {
+		t.Fatalf("concurrent commit was lost from main:\n%s", mainLog)
 	}
-	if !strings.Contains(masterLog, "chore: release v1.0.1") {
-		t.Fatalf("bump commit did not land on master:\n%s", masterLog)
+	if !strings.Contains(mainLog, "chore: release v1.0.1") {
+		t.Fatalf("bump commit did not land on main:\n%s", mainLog)
 	}
-	if got := gitOutEnv(t, origin, env, "show", "master:main.go"); !strings.Contains(got, `version = "1.0.1"`) {
-		t.Fatalf("main.go on master was not bumped to 1.0.1:\n%s", got)
+	if got := gitOutEnv(t, origin, env, "show", "main:main.go"); !strings.Contains(got, `version = "1.0.1"`) {
+		t.Fatalf("main.go on main was not bumped to 1.0.1:\n%s", got)
 	}
-	if got := gitOutEnv(t, origin, env, "show", "master:CONCURRENT.md"); !strings.Contains(got, "landed mid-build") {
-		t.Fatalf("concurrent file content missing from master: %q", got)
+	if got := gitOutEnv(t, origin, env, "show", "main:CONCURRENT.md"); !strings.Contains(got, "landed mid-build") {
+		t.Fatalf("concurrent file content missing from main: %q", got)
 	}
 
-	// HEAD is exactly what landed on master — the sha the workflow passes to
+	// HEAD is exactly what landed on main — the sha the workflow passes to
 	// `gh release create --target` — and NO tag was pushed: the tag is created
 	// atomically with the release (#5159).
 	if head, tip := gitOutEnv(t, work, env, "rev-parse", "HEAD"),
-		gitOutEnv(t, origin, env, "rev-parse", "master"); head != tip {
-		t.Fatalf("HEAD (%s) does not match landed master tip (%s)", head, tip)
+		gitOutEnv(t, origin, env, "rev-parse", "main"); head != tip {
+		t.Fatalf("HEAD (%s) does not match landed main tip (%s)", head, tip)
 	}
 	if tags := gitOutEnv(t, origin, env, "tag", "-l", "v*"); tags != "" {
 		t.Fatalf("a tag was pushed — tagging moved to the release itself (#5159): %q", tags)
@@ -325,7 +325,7 @@ func TestReleaseBumpToleratesMidBuildMerge(t *testing.T) {
 }
 
 // TestReleaseBumpIdempotentWhenBumpAlreadyLanded covers re-running the job after
-// a previous run landed the bump commit on master but died before the release
+// a previous run landed the bump commit on main but died before the release
 // was published: the re-run must converge (drop its duplicate bump, report the
 // landed commit) rather than double-bump or abort.
 func TestReleaseBumpIdempotentWhenBumpAlreadyLanded(t *testing.T) {
@@ -339,7 +339,7 @@ func TestReleaseBumpIdempotentWhenBumpAlreadyLanded(t *testing.T) {
 
 	origin, work := seedReleaseRemote(t, base, env, "1.0.0")
 
-	// A previous release run already landed the bump on master (no release
+	// A previous release run already landed the bump on main (no release
 	// published — e.g. the run died between push and publish).
 	// Give it a fixed EARLIER date so its commit hash differs from the re-run's
 	// bump — otherwise both bumps collide to one object and the rebase-drop
@@ -352,7 +352,7 @@ func TestReleaseBumpIdempotentWhenBumpAlreadyLanded(t *testing.T) {
 		"GIT_AUTHOR_DATE=2020-01-01T00:00:00", "GIT_COMMITTER_DATE=2020-01-01T00:00:00")
 	runGitEnv(t, other, prevEnv, "add", "main.go")
 	runGitEnv(t, other, prevEnv, "commit", "-m", "chore: release v1.0.1")
-	runGitEnv(t, other, prevEnv, "push", "origin", "master")
+	runGitEnv(t, other, prevEnv, "push", "origin", "main")
 
 	// Re-run the job (later fixed date → distinct bump commit).
 	cmd := exec.Command(script, "1.0.1")
@@ -363,19 +363,19 @@ func TestReleaseBumpIdempotentWhenBumpAlreadyLanded(t *testing.T) {
 		t.Fatalf("release-bump.sh failed on an idempotent re-run: %v\n%s", err, out)
 	}
 
-	// Exactly one bump commit on master (no double-bump), HEAD sits on that
+	// Exactly one bump commit on main (no double-bump), HEAD sits on that
 	// landed commit, and no tag was pushed — tagging happens at release
 	// publish (#5159).
-	masterLog := gitOutEnv(t, origin, env, "log", "--format=%s", "master")
-	if n := strings.Count(masterLog, "chore: release v1.0.1"); n != 1 {
-		t.Fatalf("expected exactly one bump commit on master, got %d:\n%s", n, masterLog)
+	mainLog := gitOutEnv(t, origin, env, "log", "--format=%s", "main")
+	if n := strings.Count(mainLog, "chore: release v1.0.1"); n != 1 {
+		t.Fatalf("expected exactly one bump commit on main, got %d:\n%s", n, mainLog)
 	}
-	if got := gitOutEnv(t, origin, env, "show", "master:main.go"); !strings.Contains(got, `version = "1.0.1"`) {
-		t.Fatalf("main.go on master is not 1.0.1:\n%s", got)
+	if got := gitOutEnv(t, origin, env, "show", "main:main.go"); !strings.Contains(got, `version = "1.0.1"`) {
+		t.Fatalf("main.go on main is not 1.0.1:\n%s", got)
 	}
 	if head, tip := gitOutEnv(t, work, env, "rev-parse", "HEAD"),
-		gitOutEnv(t, origin, env, "rev-parse", "master"); head != tip {
-		t.Fatalf("HEAD (%s) does not match landed master tip (%s)", head, tip)
+		gitOutEnv(t, origin, env, "rev-parse", "main"); head != tip {
+		t.Fatalf("HEAD (%s) does not match landed main tip (%s)", head, tip)
 	}
 	if tags := gitOutEnv(t, origin, env, "tag", "-l", "v*"); tags != "" {
 		t.Fatalf("a tag was pushed — tagging moved to the release itself (#5159): %q", tags)
@@ -399,9 +399,9 @@ func runReleaseScript(t *testing.T, dir string, env []string, version string) (o
 }
 
 // TestReleaseBumpBoundsRetriesOnPersistentReject locks the retry BOUND: with a
-// remote that rejects every push to master (a racer that never lets the push
+// remote that rejects every push to main (a racer that never lets the push
 // through) and RELEASE_PUSH_MAX_ATTEMPTS=1, the script must give up non-zero —
-// not spin forever — and must leave the remote pristine (no bump on master, no
+// not spin forever — and must leave the remote pristine (no bump on main, no
 // tag). This fails CI if a future edit drops the MAX_ATTEMPTS guard and
 // reintroduces an unbounded loop (the run would hang and hit the timeout).
 func TestReleaseBumpBoundsRetriesOnPersistentReject(t *testing.T) {
@@ -415,10 +415,10 @@ func TestReleaseBumpBoundsRetriesOnPersistentReject(t *testing.T) {
 	origin, work := seedReleaseRemote(t, base, env, "1.0.0")
 
 	// A pre-receive hook that declines every push stands in for a racer that
-	// keeps the master push rejecting no matter how often we rebase and retry.
+	// keeps the main push rejecting no matter how often we rebase and retry.
 	writeExecutable(t, filepath.Join(origin, "hooks", "pre-receive"),
 		"#!/bin/sh\necho 'push rejected by test (persistent racer)' >&2\nexit 1\n")
-	masterBefore := gitOutEnv(t, origin, env, "rev-parse", "master")
+	mainBefore := gitOutEnv(t, origin, env, "rev-parse", "main")
 
 	out, timedOut, err := runReleaseScript(t, work,
 		isolatedGitEnv(home, "RELEASE_PUSH_MAX_ATTEMPTS=1"), "1.0.1")
@@ -429,12 +429,12 @@ func TestReleaseBumpBoundsRetriesOnPersistentReject(t *testing.T) {
 		t.Fatalf("expected non-zero exit when the push keeps rejecting; got success\n%s", out)
 	}
 
-	// The remote stayed pristine: master unmoved, no bump commit, no tag.
-	if tip := gitOutEnv(t, origin, env, "rev-parse", "master"); tip != masterBefore {
-		t.Fatalf("master moved (%s → %s) despite every push being rejected", masterBefore, tip)
+	// The remote stayed pristine: main unmoved, no bump commit, no tag.
+	if tip := gitOutEnv(t, origin, env, "rev-parse", "main"); tip != mainBefore {
+		t.Fatalf("main moved (%s → %s) despite every push being rejected", mainBefore, tip)
 	}
-	if log := gitOutEnv(t, origin, env, "log", "--format=%s", "master"); strings.Contains(log, "chore: release") {
-		t.Fatalf("a bump commit reached master despite exhaustion:\n%s", log)
+	if log := gitOutEnv(t, origin, env, "log", "--format=%s", "main"); strings.Contains(log, "chore: release") {
+		t.Fatalf("a bump commit reached main despite exhaustion:\n%s", log)
 	}
 	if tags := gitOutEnv(t, origin, env, "tag", "-l", "v*"); tags != "" {
 		t.Fatalf("a tag was pushed despite the push never landing: %q", tags)
@@ -457,7 +457,7 @@ func TestReleaseBumpFailsLoudlyOnGenuineConflict(t *testing.T) {
 
 	origin, work := seedReleaseRemote(t, base, env, "1.0.0")
 
-	// A rival release lands on master mid-build and rewrites the SAME version
+	// A rival release lands on main mid-build and rewrites the SAME version
 	// line to a different value, so our bump's rebase must conflict.
 	rival := filepath.Join(base, "rival")
 	runGitEnv(t, base, env, "clone", origin, rival)
@@ -465,8 +465,8 @@ func TestReleaseBumpFailsLoudlyOnGenuineConflict(t *testing.T) {
 		"package main\n\nconst (\n\tversion = \"2.0.0\"\n)\n")
 	runGitEnv(t, rival, env, "add", "main.go")
 	runGitEnv(t, rival, env, "commit", "-m", "chore: release v2.0.0")
-	runGitEnv(t, rival, env, "push", "origin", "master")
-	rivalTip := gitOutEnv(t, origin, env, "rev-parse", "master")
+	runGitEnv(t, rival, env, "push", "origin", "main")
+	rivalTip := gitOutEnv(t, origin, env, "rev-parse", "main")
 
 	out, timedOut, err := runReleaseScript(t, work, env, "1.0.1")
 	if timedOut {
@@ -476,16 +476,16 @@ func TestReleaseBumpFailsLoudlyOnGenuineConflict(t *testing.T) {
 		t.Fatalf("expected non-zero exit on a genuine version-line conflict; got success\n%s", out)
 	}
 
-	// The rival was preserved — master was neither overwritten nor advanced by
+	// The rival was preserved — main was neither overwritten nor advanced by
 	// our bump, and no tag was pushed.
-	if tip := gitOutEnv(t, origin, env, "rev-parse", "master"); tip != rivalTip {
-		t.Fatalf("master was force-overwritten: %s (rival tip was %s)", tip, rivalTip)
+	if tip := gitOutEnv(t, origin, env, "rev-parse", "main"); tip != rivalTip {
+		t.Fatalf("main was force-overwritten: %s (rival tip was %s)", tip, rivalTip)
 	}
-	if got := gitOutEnv(t, origin, env, "show", "master:main.go"); !strings.Contains(got, `version = "2.0.0"`) {
+	if got := gitOutEnv(t, origin, env, "show", "main:main.go"); !strings.Contains(got, `version = "2.0.0"`) {
 		t.Fatalf("rival's version was clobbered:\n%s", got)
 	}
-	if log := gitOutEnv(t, origin, env, "log", "--format=%s", "master"); strings.Contains(log, "chore: release v1.0.1") {
-		t.Fatalf("our bump commit reached master despite the conflict:\n%s", log)
+	if log := gitOutEnv(t, origin, env, "log", "--format=%s", "main"); strings.Contains(log, "chore: release v1.0.1") {
+		t.Fatalf("our bump commit reached main despite the conflict:\n%s", log)
 	}
 	if tags := gitOutEnv(t, origin, env, "tag", "-l", "v*"); tags != "" {
 		t.Fatalf("a tag was pushed despite the conflict: %q", tags)

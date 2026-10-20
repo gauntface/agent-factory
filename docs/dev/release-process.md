@@ -62,12 +62,18 @@ runs the same preflight, and builds all four artifacts **before mutating
 anything**; only then does it commit and push the version bump to `main.go`
 and publish the release marked **latest** — creating the tag at the bump
 commit in the same call. A failed preflight or build therefore never leaves a
-dangling commit or tag on `master`, and a failure mid-publish leaves at most
+dangling commit or tag on `main`, and a failure mid-publish leaves at most
 an untagged bump commit, never a tag with no release (#5159).
 
 Releasing the current preview base as-is (e.g. `1.0.138` while
 `1.0.138-preview-9` exists) is supported — it "promotes" what the preview
 channel has been testing, and subsequent previews move to `1.0.139-preview-1`.
+
+On this fork the workflow pushes the bump to the repository's default branch
+(`main`; `release-bump.sh` reads it as `RELEASE_BRANCH`). It pushes with the
+job's `GITHUB_TOKEN` unless a `RELEASE_DEPLOY_KEY` secret is set. If you add
+branch protection to `main`, add a deploy key that may bypass it, or the push
+is refused after the builds finish.
 
 ## How updates flow to users
 
