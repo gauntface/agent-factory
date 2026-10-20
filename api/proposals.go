@@ -228,7 +228,7 @@ var proposalAddDocCmd = &cobra.Command{
 			if err != nil {
 				return nil, err
 			}
-			file, err := c.store.AddDoc(args[0], args[1], c.committer())
+			file, _, err := c.store.AddDoc(args[0], args[1], c.committer())
 			if err != nil {
 				return nil, err
 			}
