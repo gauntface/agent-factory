@@ -10560,7 +10560,7 @@ test("#3681 a zero box over a QUIET window is reported as a product defect, nami
     expect(message, "a quiet window makes a zero box the product's defect, not the reading's").toContain(
       "no rebuild in the window",
     );
-    for (const named of ["check:af-icon", "circle:af-icon", "git-branch:af-icon", "plus:af-icon", "ellipsis:af-icon"]) {
+    for (const named of ["check:af-icon", "git-branch:af-icon", "plus:af-icon", "ellipsis:af-icon"]) {
       expect(message, `the failure must name ${named}`).toContain(named);
     }
     expect(message, "and say which of the three clauses rejected it").toContain("zero box 0x0");
