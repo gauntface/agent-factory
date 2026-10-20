@@ -7,8 +7,9 @@ agent's chat output. You cannot edit it in place. When you want a change, you
 describe the edit in a prompt and the agent writes the whole plan again.
 
 A plan is usually a small set of focused documents: high-level goals, a
-technical design, an API design, and a UI design. You want to read and edit
-these documents next to the agent, and you want the agent to see your edits.
+technical design, an API design, a UI design, and notes on future work. You
+want to read and edit these documents next to the agent, and you want the agent
+to see your edits.
 
 The VS Code tab can do this, but it is slow to open and it is not good for
 reading markdown.
@@ -61,4 +62,4 @@ Agents and users use a small set of callouts in the documents:
 3. **Push.** Auto-send after 10 s without edits while the agent is idle, the
    Hold chip, callout styles, and the open-question count.
 
-See `technical.md`, `api.md` and `ui.md`.
+See `technical.md`, `api.md`, `ui.md` and `future.md`.
