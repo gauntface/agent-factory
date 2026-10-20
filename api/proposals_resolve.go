@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/sachiniyer/agent-factory/apiclient"
 	"github.com/sachiniyer/agent-factory/config"
@@ -38,8 +39,9 @@ func proposalPreflight() error {
 }
 
 // proposalSessionFromFlagOrSelf resolves --session, or else the calling
-// session. found is false when there is no --session and the caller is not
-// in an af session.
+// session. found is false only when there is no --session and the caller is
+// not inside tmux; inside tmux a failed lookup is an error, so a broken af
+// pane never falls back to an external commit.
 func proposalSessionFromFlagOrSelf() (data *session.InstanceData, found bool, err error) {
 	if proposalSessionFlag != "" {
 		repoID, err := resolveRepoID()
@@ -52,9 +54,12 @@ func proposalSessionFromFlagOrSelf() (data *session.InstanceData, found bool, er
 		}
 		return data, true, nil
 	}
+	if os.Getenv("TMUX") == "" {
+		return nil, false, nil
+	}
 	data, err = resolveSelfSession()
 	if err != nil {
-		return nil, false, nil
+		return nil, false, fmt.Errorf("cannot resolve the calling af session (pass --session <title> to name one): %w", err)
 	}
 	return data, true, nil
 }

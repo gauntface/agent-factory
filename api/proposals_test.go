@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/sachiniyer/agent-factory/daemon"
 	"github.com/sachiniyer/agent-factory/proposal"
 	"github.com/sachiniyer/agent-factory/session"
@@ -18,6 +20,7 @@ const proposalTestSessionID = "33333333-3333-4333-8333-333333333333"
 func stubProposalSelf(t *testing.T) {
 	t.Helper()
 	root := repoFlag
+	t.Setenv("TMUX", "/tmp/tmux-test/default,1,0")
 	stubCurrentTmuxName(t, func() (string, error) { return "af_me_agent", nil })
 	stubSnapshot(t, func(daemon.SnapshotRequest) ([]session.InstanceData, error) {
 		return []session.InstanceData{{
@@ -31,6 +34,7 @@ func stubProposalSelf(t *testing.T) {
 
 func TestProposalChangesOutsideSessionErrors(t *testing.T) {
 	setupRepoForCmd(t)
+	t.Setenv("TMUX", "")
 	stubCurrentTmuxName(t, func() (string, error) {
 		return "", errors.New("not running inside a tmux session")
 	})
@@ -99,5 +103,26 @@ func TestProposalStartAttachesSelfAndPrintsRules(t *testing.T) {
 	if _, err := runCmdCaptureStdout(t, proposalAttachCmd, []string{"missing"}); err == nil ||
 		!strings.Contains(err.Error(), "auth-rework") {
 		t.Fatalf("attach of an unknown slug = %v, want the existing slugs listed", err)
+	}
+}
+
+func TestProposalInsideTmuxSurfacesLookupFailure(t *testing.T) {
+	setupRepoForCmd(t)
+	t.Setenv("TMUX", "/tmp/tmux-test/default,1,0")
+	stubCurrentTmuxName(t, func() (string, error) {
+		return "", errors.New(`AF_SESSION "a" does not match tmux pane session "b"`)
+	})
+	for _, tc := range []struct {
+		cmd  *cobra.Command
+		args []string
+	}{
+		{proposalChangesCmd, nil},
+		{proposalWriteCmd, []string{"p", "goals"}},
+		{proposalAddDocCmd, []string{"p", "notes"}},
+	} {
+		_, err := runCmdCaptureStdout(t, tc.cmd, tc.args)
+		if err == nil || !strings.Contains(err.Error(), "AF_SESSION") || strings.Contains(err.Error(), "needs a session") {
+			t.Errorf("%s: error = %v, want the lookup failure", tc.cmd.Name(), err)
+		}
 	}
 }
