@@ -16,6 +16,8 @@ All commands print JSON, the same as the other `af` commands.
 | `af proposal checkpoint` | yes | Commits this session's edits and moves its cursor. |
 | `af proposal cat <slug> <doc>` | no | Prints a doc. This is for agents that cannot read the host disk. |
 | `af proposal write <slug> <doc>` | no | Replaces a doc with stdin and commits as `agent` when there is a session, or as `external` when there is no session. |
+| `af proposal push-mode auto\|manual` | yes | Sets this session's push mode (see Push) and prints the push status. |
+| `af proposal send` | yes | Sends this session its unsent edits now and prints the push status. |
 
 Common flags: `--repo <path>`, and `--session <title>` for the commands that
 need a session.
@@ -253,7 +255,7 @@ and has a Docs tab for it.
 |---|---|
 | `idle` | Nothing is pending: no unsent edits, or edits that no human save started a push for, or manual mode. |
 | `countdown` | Auto mode. The push sends at `due_at`, 10 s after the last human save, if the agent is `Ready` then. |
-| `waiting_agent` | A push is due (or **Send now** was clicked), but the agent is not `Ready`, or the last delivery is not confirmed yet. |
+| `waiting_agent` | A push is due (or **Send now** was clicked), but the agent is not `Ready`, a TUI is attached full-screen, or the last delivery is not confirmed yet. |
 | `held` | The user clicked **Hold**. |
 | `sent` | The last push was delivered and nothing is unsent. |
 
@@ -288,7 +290,9 @@ these are true:
 2. The session's liveness is `Ready`.
 3. `unsent` is more than 0.
 4. The push is not held.
-5. No earlier push to the session is unconfirmed. A delivery is unconfirmed
+5. No TUI is attached full-screen to the session, so a push does not submit
+   what the user is typing in the pane.
+6. No earlier push to the session is unconfirmed. A delivery is unconfirmed
    while it runs, and after it returns `sent-unverified` or
    `could-not-confirm` until the daemon sees the agent busy, or for at most
    60 s.
@@ -315,10 +319,10 @@ line tells the agent to read the changed files at the proposal path, because
 
 ### CLI
 
-| Command | Needs a session | What it does |
-|---|---|---|
-| `af proposal push-mode auto\|manual` | yes | Sets the push mode and prints the push status. |
-| `af proposal send` | yes | Sends the unsent edits now (**Send now**) and prints the push status. |
+`af proposal push-mode auto|manual` calls `SetProposalPushMode`, and
+`af proposal send` calls `SendProposalChanges`. Both need a session. Hold has
+no CLI verb: it only means something to the Docs tab whose save started the
+countdown, and the next save releases it.
 
 ## Tab kind (step 2)
 
