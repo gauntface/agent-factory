@@ -29,7 +29,11 @@ The web UI only gets this tab, in step 2 and step 3.
   - If no pane shows the Agent tab, a single pane splits to the right and keeps
     its tab. A layout of more than one pane that has no Agent pane does not
     change.
-  - At phone width (768px or less), the Docs tab stays a tab.
+  - At phone width (768px or less), the Docs tab stays a tab. While a
+    terminal tab shows, the tab bar is in the app ⋯ menu, so the session
+    header shows a Docs button for each Docs tab, beside the new-tab buttons.
+    One tap opens the Docs tab, and its tab bar then shows the Agent tab. The
+    code is `web/src/docs_shortcut.ts`.
   - The layout is not persisted, and the daemon is not involved.
 - **Doc strip:** one sub-tab for each file, in template order and then
   alphabetical order. The **+** menu lists the templates that are not used
@@ -87,7 +91,11 @@ attached to this proposal), the slot is empty.
   in the chip until the next status.
 - A `GetProposal` reply is applied only when no push status arrived after the
   request went out, so a slow reply cannot replace a newer event.
-- At phone width, the header tools wrap to their own row.
+- The header stays on one row at split width (a 540px pane). The doc strip
+  shrinks first, because it scrolls. Then the save status shrinks, then the
+  chip text. Both texts end with `…` and show the full text on hover.
+- In a pane 440px wide or less, and at phone width, the header tools wrap to
+  their own row.
 - The code is `web/src/docs_push.ts` (the pure state machine and its timer,
   tested in `docs_push.test.ts`) and the header slot in `docs_pane.ts`.
 

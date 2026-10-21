@@ -461,6 +461,7 @@ export class DocsPane {
     }
     this.push.dataset.state = view.state;
     this.chipText.textContent = view.text;
+    this.chipText.title = view.text;
     this.chipText.hidden = view.text === "";
     this.chipAction.hidden = view.action === null;
     this.chipAction.disabled = !view.actionEnabled;
@@ -542,6 +543,7 @@ export class DocsPane {
 
   private setStatus(status: SyncStatus, detail = ""): void {
     this.status.textContent = statusText(status, detail);
+    this.status.title = this.status.textContent;
     this.status.dataset.state = status;
     if (status === "conflict") {
       this.showBanner();
@@ -560,6 +562,7 @@ export class DocsPane {
         run().catch((e: unknown) => {
           for (const b of this.banner.querySelectorAll("button")) b.disabled = false;
           this.status.textContent = `Not saved · ${errorText(e)}`;
+          this.status.title = this.status.textContent;
         });
       });
       return btn;
