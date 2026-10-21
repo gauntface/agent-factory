@@ -91,7 +91,11 @@ attached to this proposal), the slot is empty.
   in the chip until the next status.
 - A `GetProposal` reply is applied only when no push status arrived after the
   request went out, so a slow reply cannot replace a newer event.
-- At phone width, the header tools wrap to their own row.
+- The header stays on one row at split width (a 540px pane). The doc strip
+  shrinks first, because it scrolls. Then the save status shrinks, then the
+  chip text. Both texts end with `…` and show the full text on hover.
+- In a pane 440px wide or less, and at phone width, the header tools wrap to
+  their own row.
 - The code is `web/src/docs_push.ts` (the pure state machine and its timer,
   tested in `docs_push.test.ts`) and the header slot in `docs_pane.ts`.
 

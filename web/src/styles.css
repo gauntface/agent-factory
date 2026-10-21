@@ -3689,10 +3689,17 @@ button[class], input[class], select[class], textarea[class] { font-size: var(--a
   color: var(--af-ink);
 }
 
+/* One row at split width. The strip shrinks first (it scrolls), then the save
+ * status, then the push text; both texts ellipsize. Only a very narrow pane moves
+ * the tools to their own row. */
+.af-docs {
+  container-type: inline-size;
+}
+
 .af-docs-head {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: var(--af-space-1) var(--af-space-2);
   padding: var(--af-space-1) var(--af-space-2);
   border-bottom: calc(var(--af-space-1) * 0.25) solid var(--af-border);
@@ -3702,8 +3709,8 @@ button[class], input[class], select[class], textarea[class] { font-size: var(--a
 .af-docs-stripwrap {
   display: flex;
   align-items: center;
-  flex: 1 1 auto;
-  min-width: 0;
+  flex: 1 8 auto;
+  min-width: calc(var(--af-space-3) * 7);
   gap: var(--af-space-1);
 }
 
@@ -3829,7 +3836,8 @@ button[class], input[class], select[class], textarea[class] { font-size: var(--a
 .af-docs-tools {
   display: flex;
   align-items: center;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
   gap: var(--af-space-2);
   margin-left: auto;
 }
@@ -3843,7 +3851,7 @@ button[class], input[class], select[class], textarea[class] { font-size: var(--a
 .af-docs-push {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex: 0 1 auto;
   gap: var(--af-space-1) var(--af-space-2);
   min-width: 0;
 }
@@ -3857,6 +3865,7 @@ button[class], input[class], select[class], textarea[class] { font-size: var(--a
 
 .af-docs-pushmode {
   display: inline-flex;
+  flex: none;
 }
 
 .af-docs-pushmode-button {
@@ -3892,13 +3901,27 @@ button[class], input[class], select[class], textarea[class] { font-size: var(--a
 .af-docs-chip {
   display: inline-flex;
   align-items: center;
+  flex: 0 1 auto;
   gap: var(--af-space-1);
   min-width: 0;
   white-space: nowrap;
 }
 
+.af-docs-chip-text,
+.af-docs-status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .af-docs-chip-text {
   font-variant-numeric: tabular-nums;
+}
+
+.af-docs-chip-action,
+.af-docs-push .af-docs-sep,
+.af-docs-questions {
+  flex: none;
 }
 
 .af-docs-chip-action:disabled {
@@ -3907,6 +3930,7 @@ button[class], input[class], select[class], textarea[class] { font-size: var(--a
 }
 
 .af-docs-status {
+  flex: 0 4 auto;
   color: var(--af-ink);
   white-space: nowrap;
 }
@@ -4110,12 +4134,28 @@ button[class], input[class], select[class], textarea[class] { font-size: var(--a
   vertical-align: top;
 }
 
+@container (max-width: 440px) {
+  .af-docs-head {
+    flex-wrap: wrap;
+  }
+
+  .af-docs-tools {
+    flex: 1 1 100%;
+    min-width: 0;
+    margin-left: 0;
+  }
+}
+
 .af-docs-editor .cm-md-table th {
   background: var(--af-surface-raised);
   font-weight: 600;
 }
 
 @media (max-width: 768px) {
+  .af-docs-head {
+    flex-wrap: wrap;
+  }
+
   .af-docs-tools {
     flex: 1 1 100%;
     flex-wrap: wrap;
