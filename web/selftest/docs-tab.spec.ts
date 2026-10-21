@@ -55,6 +55,14 @@ test("docs tab: af proposal start opens a Docs pane whose edits save to disk", a
   await page.keyboard.type(`\n\n${marker}\n`);
   await expect(pane.locator(".af-docs-status")).toBeHidden({ timeout: 15_000 });
   await expect.poll(() => readFileSync(join(started.path, "goals.md"), "utf8")).toContain(marker);
+
+  await page.locator(".af-tab-label", { hasText: /^Agent$/ }).click();
+  await expect(panes, "a tab click leaves the proposal view for that tab alone").toHaveCount(1);
+  await expect(panes.nth(0).locator(".xterm")).toBeVisible();
+  await page.locator(".af-tab-label", { hasText: /^Proposal$/ }).click();
+  await expect(panes, "the Proposal tab brings back Agent and the proposal").toHaveCount(2);
+  await expect(panes.nth(0).locator(".xterm")).toBeVisible();
+  await expect(panes.nth(1).locator(".af-docs")).toBeVisible();
 });
 
 // Proposal mode, step 3: the tab has no Auto / Manual switch, but a session set to

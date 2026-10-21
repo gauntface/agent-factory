@@ -12259,7 +12259,7 @@ function confirmDeleteTabModal(opts) {
     confirmClass: "af-danger",
     onCancel: opts.onCancel
   });
-  body.append(h("p", { class: "af-modal-text" }, opts.kind === TabKind.Web ? "This removes the web tab, not the service it displays. Hiding a pane leaves the tab available." : opts.kind === TabKind.Docs ? "This removes the Docs tab. The proposal and its docs stay. Hiding a pane leaves the tab available." : "This removes the tab and requests cleanup of its runtime. Hiding a pane leaves the tab available."));
+  body.append(h("p", { class: "af-modal-text" }, opts.kind === TabKind.Web ? "This removes the web tab, not the service it displays. Hiding a pane leaves the tab available." : opts.kind === TabKind.Docs ? "This removes the Proposal tab. The proposal and its docs stay. Hiding a pane leaves the tab available." : "This removes the tab and requests cleanup of its runtime. Hiding a pane leaves the tab available."));
   asForm(handle.el.firstElementChild, opts.onConfirm);
   queueMicrotask(() => cancelBtn.focus());
   return handle;
@@ -13239,6 +13239,27 @@ function placeDocs(tree, docs, tabKinds) {
   const target = panes.find((l) => l.tab === AGENT_TAB) ?? (tree.kind === "leaf" ? tree : null);
   return target ? splitLeaf(tree, target.id, "right", docs) : tree;
 }
+function isProposalView(tree, tabKinds) {
+  return tree.kind === "split" && tree.dir === "row" && tree.a.kind === "leaf" && tree.a.tab === AGENT_TAB && tree.b.kind === "leaf" && tabKinds[tree.b.tab] === TabKind.Docs;
+}
+function showTab(tree, focusedId, tab, tabKinds, narrow, ratio) {
+  if (tabKinds[tab] === TabKind.Docs && !narrow && tab !== AGENT_TAB) {
+    if (isProposalView(tree, tabKinds) && tree.kind === "split" && tree.b.kind === "leaf" && tree.b.tab === tab) {
+      return { tree, focus: tree.b.id };
+    }
+    const shown = leaves(tree).find((l) => l.tab === AGENT_TAB);
+    const agent = shown ? { kind: "leaf", id: shown.id, tab: AGENT_TAB } : singleLeaf(AGENT_TAB);
+    const view = splitLeaf(agent, agent.id, "right", tab);
+    const sized = view.kind === "split" ? setRatio(view, view.id, ratio) : view;
+    return { tree: sized, focus: leaves(sized).find((l) => l.tab === tab)?.id ?? agent.id };
+  }
+  if (isProposalView(tree, tabKinds) && tree.kind === "split") {
+    const keep = tab === AGENT_TAB ? tree.a.id : focusedId;
+    return { tree: { kind: "leaf", id: keep, tab }, focus: keep };
+  }
+  const next = replaceTab(tree, focusedId, tab);
+  return { tree: next, focus: leaves(next).find((l) => l.tab === tab)?.id ?? focusedId };
+}
 
 // src/docs_tab.ts
 var docsModule = null;
@@ -13451,7 +13472,7 @@ function tabLabel(tab) {
     case TabKind.VSCode:
       return tab.name && tab.name !== "vscode" ? tab.name : "VS Code";
     case TabKind.Docs:
-      return tab.name && tab.name !== "docs" ? tab.name : "Docs";
+      return tab.name && tab.name !== "docs" ? tab.name : "Proposal";
     default:
       return tab.name || "Tab";
   }
@@ -13640,6 +13661,9 @@ var SplitView = class {
   // Docs tabs already auto-split once this page load, keyed by session and tab
   // identity, so a split the user closes is not put back.
   docsPlaced = /* @__PURE__ */ new Set();
+  // The divider ratio of each session's proposal view, so the view comes back as
+  // the user left it.
+  proposalRatios = /* @__PURE__ */ new Map();
   /**
    * Shows `sessionId`'s layout, building/rebuilding terminals as needed. Called on
    * every selection/tab change: a NEW session rebuilds from its retained tree (or a
@@ -13743,11 +13767,9 @@ var SplitView = class {
   /** Rebinds the FOCUSED pane to show `tab` (a 1-9 key or a tab-bar click on the
    *  focused pane). No-op without a focused pane. Does not steal DOM focus. */
   setFocusedTab(tab) {
-    if (!this.tree || !this.focusedId) {
-      return;
+    if (this.showTab(tab)) {
+      this.commit();
     }
-    this.tree = replaceTab(this.tree, this.focusedId, tab);
-    this.commit();
   }
   /** setFocusedTab for the post-await apply of an awaited tab mutation
    *  (index.ts guardedTabRebind). The landing is identical — retain, reconcile,
@@ -13760,11 +13782,21 @@ var SplitView = class {
    *  overlapping awaited gestures by issue order, so a stale apply still refuses
    *  to clobber a NEWER one that already landed (rebindTargetAfterAwait). */
   setFocusedTabAwaited(tab) {
-    if (!this.tree || !this.focusedId) {
-      return;
+    if (this.showTab(tab)) {
+      this.land();
     }
-    this.tree = replaceTab(this.tree, this.focusedId, tab);
-    this.land();
+  }
+  /** Applies docs_autosplit's showTab rule to the tree and focus; false without a
+   *  focused pane. */
+  showTab(tab) {
+    if (!this.tree || !this.focusedId) {
+      return false;
+    }
+    const ratio = this.sessionId && this.proposalRatios.get(this.sessionId) || 0.5;
+    const next = showTab(this.tree, this.focusedId, tab, this.tabKinds, this.narrow(), ratio);
+    this.tree = next.tree;
+    this.focusedId = next.focus;
+    return true;
   }
   /** Gives the keyboard to the focused pane's terminal (attach), returning whether
    *  a terminal actually took it. False means there was nothing to focus: a web or
@@ -14391,6 +14423,9 @@ var SplitView = class {
         document.body.classList.remove("af-resizing-col", "af-resizing-row");
         if (this.tree) {
           this.tree = setRatio(this.tree, node.id, node.ratio);
+          if (this.sessionId && this.tree.kind === "split" && isProposalView(this.tree, this.tabKinds)) {
+            this.proposalRatios.set(this.sessionId, this.tree.ratio);
+          }
           if (this.sessionId) {
             this.retain(this.sessionId, this.tree, this.tabIds);
           }

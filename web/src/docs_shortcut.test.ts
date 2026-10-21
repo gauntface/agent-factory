@@ -52,7 +52,7 @@ test("each Docs tab gets a named header button that opens it in one click", () =
   const opened: number[] = [];
   const buttons = docsShortcuts(tabs, (i) => opened.push(i)) as unknown as Element[];
   assert.equal(buttons.length, 2);
-  assert.deepEqual(buttons.map((b) => b.getAttribute("aria-label")), ["Open Docs", "Open auth-rework"]);
+  assert.deepEqual(buttons.map((b) => b.getAttribute("aria-label")), ["Open Proposal", "Open auth-rework"]);
   assert.ok(buttons.every((b) => b.className.split(" ").includes("af-term-docs")));
   assert.ok(buttons.every((b) => b.children[0]?.getAttribute("data-icon") === "file-text"));
   buttons[1].click();

@@ -1,7 +1,7 @@
 // Opens a proposal's Docs tab split to the right of the Agent pane (proposal-mode
 // ui.md). Pure, so the rule is testable without the DOM SplitView needs.
 
-import { type LayoutNode, leaves, replaceTab, splitLeaf } from "./layout.js";
+import { type LayoutNode, type LeafNode, leaves, replaceTab, setRatio, singleLeaf, splitLeaf } from "./layout.js";
 import { TabKind } from "./types.js";
 
 const AGENT_TAB = 0;
@@ -52,4 +52,49 @@ function placeDocs(tree: LayoutNode, docs: number, tabKinds: number[]): LayoutNo
   }
   const target = panes.find((l) => l.tab === AGENT_TAB) ?? (tree.kind === "leaf" ? tree : null);
   return target ? splitLeaf(tree, target.id, "right", docs) : tree;
+}
+
+/** True when `tree` is the proposal view: one row split, Agent left, a Docs tab right. */
+export function isProposalView(tree: LayoutNode, tabKinds: number[]): boolean {
+  return (
+    tree.kind === "split" &&
+    tree.dir === "row" &&
+    tree.a.kind === "leaf" &&
+    tree.a.tab === AGENT_TAB &&
+    tree.b.kind === "leaf" &&
+    tabKinds[tree.b.tab] === TabKind.Docs
+  );
+}
+
+/**
+ * The layout after a tab click (proposal-tab ui.md). A Docs tab always gives the
+ * proposal view, Agent | Docs at `ratio`, whatever was on screen. Any other tab
+ * leaves the proposal view for that tab alone, full width. Outside the proposal
+ * view, and for a Docs tab at phone width, the focused pane shows the tab, as
+ * before. `focus` is the leaf that shows `tab` afterwards.
+ */
+export function showTab(
+  tree: LayoutNode,
+  focusedId: string,
+  tab: number,
+  tabKinds: number[],
+  narrow: boolean,
+  ratio: number,
+): { tree: LayoutNode; focus: string } {
+  if (tabKinds[tab] === TabKind.Docs && !narrow && tab !== AGENT_TAB) {
+    if (isProposalView(tree, tabKinds) && tree.kind === "split" && tree.b.kind === "leaf" && tree.b.tab === tab) {
+      return { tree, focus: tree.b.id };
+    }
+    const shown = leaves(tree).find((l) => l.tab === AGENT_TAB);
+    const agent: LeafNode = shown ? { kind: "leaf", id: shown.id, tab: AGENT_TAB } : singleLeaf(AGENT_TAB);
+    const view = splitLeaf(agent, agent.id, "right", tab);
+    const sized = view.kind === "split" ? setRatio(view, view.id, ratio) : view;
+    return { tree: sized, focus: leaves(sized).find((l) => l.tab === tab)?.id ?? agent.id };
+  }
+  if (isProposalView(tree, tabKinds) && tree.kind === "split") {
+    const keep = tab === AGENT_TAB ? tree.a.id : focusedId;
+    return { tree: { kind: "leaf", id: keep, tab }, focus: keep };
+  }
+  const next = replaceTab(tree, focusedId, tab);
+  return { tree: next, focus: leaves(next).find((l) => l.tab === tab)?.id ?? focusedId };
 }

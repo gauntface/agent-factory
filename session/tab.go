@@ -514,7 +514,7 @@ func TabLabel(t *Tab) string {
 		if t.Name != "" && t.Name != docsTabName {
 			return t.Name
 		}
-		return "Docs"
+		return "Proposal"
 	default:
 		if t.Name != "" {
 			return t.Name

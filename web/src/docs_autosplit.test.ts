@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { register } from "node:module";
 
-import { placeNewDocsTabs } from "./docs_autosplit.js";
+import { isProposalView, placeNewDocsTabs, showTab } from "./docs_autosplit.js";
 import { closeLeaf, type LayoutNode, leaves, resetIds, singleLeaf, splitLeaf } from "./layout.js";
 import type { SplitView as SplitViewType } from "./split.js";
 import { TabKind } from "./types.js";
@@ -125,4 +125,61 @@ test("SplitView records Docs tabs per session", () => {
 test("SplitView reads phone width from its narrow probe", () => {
   resetIds();
   assert.deepEqual(tabs(view(true).placeDocs("s1", singleLeaf(0), ["agent", "docs"], [A, D])), [0]);
+});
+
+test("a Proposal click from any layout gives exactly Agent | Proposal", () => {
+  resetIds();
+  const kinds = [A, S, S, D];
+  const handMade = splitLeaf(singleLeaf(1), "leaf1", "bottom", 2);
+  const { tree, focus } = showTab(handMade, "leaf1", 3, kinds, false, 0.5);
+  assert.deepEqual(tabs(tree), [0, 3]);
+  assert.deepEqual(rowRatio(tree), ["row", 0.5]);
+  assert.ok(isProposalView(tree, kinds));
+  assert.equal(focus, leaves(tree)[1]!.id, "the Proposal pane gets focus");
+});
+
+test("the proposal view reuses the Agent pane and keeps the ratio it is given", () => {
+  resetIds();
+  const agent = singleLeaf(0);
+  const { tree } = showTab(agent, agent.id, 1, [A, D], false, 0.3);
+  assert.equal(leaves(tree)[0]!.id, agent.id, "the Agent terminal is not rebuilt");
+  assert.deepEqual(rowRatio(tree), ["row", 0.3]);
+});
+
+test("a Proposal click in the proposal view changes nothing", () => {
+  resetIds();
+  const kinds = [A, D];
+  const view = showTab(singleLeaf(0), "leaf1", 1, kinds, false, 0.5).tree;
+  const again = showTab(view, leaves(view)[0]!.id, 1, kinds, false, 0.5);
+  assert.equal(again.tree, view);
+  assert.equal(again.focus, leaves(view)[1]!.id);
+});
+
+test("any other tab click leaves the proposal view for that tab alone", () => {
+  resetIds();
+  const kinds = [A, S, D];
+  const view = showTab(singleLeaf(0), "leaf1", 2, kinds, false, 0.5).tree;
+  const [agentPane, docsPane] = leaves(view);
+  const toAgent = showTab(view, docsPane!.id, 0, kinds, false, 0.5);
+  assert.deepEqual(tabs(toAgent.tree), [0]);
+  assert.equal(toAgent.tree.id, agentPane!.id, "Agent keeps its pane");
+  const toShell = showTab(view, docsPane!.id, 1, kinds, false, 0.5);
+  assert.deepEqual(tabs(toShell.tree), [1]);
+  assert.equal(toShell.focus, toShell.tree.id);
+});
+
+test("outside the proposal view a tab click rebinds the focused pane", () => {
+  resetIds();
+  const kinds = [A, S, S, D];
+  const handMade = splitLeaf(singleLeaf(0), "leaf1", "right", 1);
+  const { tree, focus } = showTab(handMade, "leaf1", 2, kinds, false, 0.5);
+  assert.deepEqual(tabs(tree), [2, 1]);
+  assert.equal(focus, "leaf1");
+});
+
+test("at phone width a Proposal click shows the proposal in the focused pane", () => {
+  resetIds();
+  const agent = singleLeaf(0);
+  const { tree } = showTab(agent, agent.id, 1, [A, D], true, 0.5);
+  assert.deepEqual(tabs(tree), [1]);
 });
