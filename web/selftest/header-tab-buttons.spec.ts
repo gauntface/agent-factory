@@ -94,6 +94,8 @@ for (const width of [1280, 390]) {
   });
 }
 
+for (const key of ["Enter", "Space"]) {
+  test(`phone ${key} and Escape dismiss carried desktop session actions`, async ({ page, request }) => {
     await page.setViewportSize({ width: 1280, height: 844 });
     const snapshot = await (await request.post("/v1/Snapshot", { data: {} })).json();
     const session = snapshot.data.instances.find((s: { title: string }) =>
