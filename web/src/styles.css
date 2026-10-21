@@ -1789,6 +1789,7 @@ button:disabled,
   min-height: 0;
   padding: 0;
   overflow: hidden;
+  isolation: isolate;
 }
 
 .af-pane-host .xterm {
@@ -1959,10 +1960,16 @@ button:disabled,
 
 /* The focused pane, marked only when the layout is split (a single pane already reads
  * as focused via the whole-pane .af-kb-terminal outline). An inner accent ring shows
- * which pane the keyboard, Alt+w close, and a tab-bar click act on. */
-.af-kb-terminal .af-split-multi .af-pane-focused {
-  outline: calc(var(--af-space-1) * 0.5) solid var(--af-accent);
-  outline-offset: calc(var(--af-space-1) * -0.5);
+ * which pane the keyboard, Alt+w close, and a tab-bar click act on. It is an overlay,
+ * not an outline: xterm and the Docs editor paint over an outline, which left the
+ * ring visible only around the pane head. .af-pane-host isolates their z-indexes. */
+.af-kb-terminal .af-split-multi .af-pane-focused::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  border: calc(var(--af-space-1) * 0.5) solid var(--af-accent);
 }
 
 /* While a tab is being dragged, every pane hints it can receive the drop. */
@@ -3696,6 +3703,7 @@ button[class], input[class], select[class], textarea[class] { font-size: var(--a
 }
 
 .af-docs-stripwrap {
+  position: relative;
   display: flex;
   align-items: center;
   flex: 1 8 auto;
@@ -3775,7 +3783,30 @@ button[class], input[class], select[class], textarea[class] { font-size: var(--a
   border-radius: var(--af-radius-dialog);
 }
 
+.af-docs-docmenu {
+  top: 0;
+  gap: var(--af-space-1);
+}
+
+.af-docs-confirm-text,
+.af-docs-confirm-note {
+  margin: 0;
+  padding: 0 var(--af-space-1);
+  font-size: var(--af-type-body);
+}
+
+.af-docs-confirm-text {
+  font-weight: 600;
+}
+
+.af-docs-confirm-actions {
+  display: flex;
+  gap: var(--af-space-2);
+  padding: var(--af-space-1);
+}
+
 .af-docs-menu[hidden],
+.af-docs-status[hidden],
 .af-docs-questions[hidden],
 .af-docs-banner[hidden],
 .af-docs-notice[hidden],
@@ -3852,41 +3883,6 @@ button[class], input[class], select[class], textarea[class] { font-size: var(--a
   display: none;
 }
 
-.af-docs-pushmode {
-  display: inline-flex;
-  flex: none;
-}
-
-.af-docs-pushmode-button {
-  padding: var(--af-space-1) var(--af-space-2);
-  background: var(--af-surface);
-  border: calc(var(--af-space-1) * 0.25) solid var(--af-border);
-  color: var(--af-ink);
-  font: inherit;
-  font-size: var(--af-type-body);
-  cursor: pointer;
-}
-
-.af-docs-pushmode-button:first-child {
-  border-radius: var(--af-radius-control) 0 0 var(--af-radius-control);
-}
-
-.af-docs-pushmode-button:last-child {
-  margin-left: calc(var(--af-space-1) * -0.25);
-  border-radius: 0 var(--af-radius-control) var(--af-radius-control) 0;
-}
-
-.af-docs-pushmode-button[aria-pressed="true"] {
-  background: var(--af-accent);
-  border-color: var(--af-accent);
-  color: var(--af-surface);
-  font-weight: 600;
-}
-
-.af-docs-pushmode-button:disabled {
-  cursor: default;
-}
-
 .af-docs-chip {
   display: inline-flex;
   align-items: center;
@@ -3919,9 +3915,35 @@ button[class], input[class], select[class], textarea[class] { font-size: var(--a
 }
 
 .af-docs-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--af-space-1);
   flex: 0 4 auto;
   color: var(--af-ink);
   white-space: nowrap;
+}
+
+.af-docs-status-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.af-docs-status .af-icon {
+  display: none;
+  flex: none;
+  width: var(--af-space-3);
+  height: var(--af-space-3);
+  color: var(--af-ink-muted);
+}
+
+.af-docs-status:is([data-state="saving"], [data-state="pending"], [data-state="loading"]) .af-icon {
+  display: inline-block;
+  animation: af-working-spin 1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .af-docs-status .af-icon { animation: none; }
 }
 
 .af-docs-status[data-state="conflict"],

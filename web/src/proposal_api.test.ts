@@ -15,7 +15,6 @@ import {
   parseSaveResponse,
   putDoc,
   sendChanges,
-  setPushMode,
 } from "./proposal_api.js";
 
 const realFetch = globalThis.fetch;
@@ -133,11 +132,9 @@ test("parseProposalPush reads only proposal.push events that name a session and 
 test("push routes post the session and parse the status", async () => {
   const reply = { data: { session_id: "s1", slug: "plan", mode: "manual", state: "idle", unsent: 0 }, error: null };
   const calls = recordFetch(200, reply);
-  assert.equal((await setPushMode("s1", "manual", "tok")).mode, "manual");
-  await holdPush("s1", "tok");
+  assert.equal((await holdPush("s1", "tok")).mode, "manual");
   await sendChanges("s1", "tok");
   assert.deepEqual(calls.map((c) => [c.url, JSON.parse(String(c.init.body))]), [
-    ["/v1/SetProposalPushMode", { session_id: "s1", mode: "manual" }],
     ["/v1/HoldProposalPush", { session_id: "s1" }],
     ["/v1/SendProposalChanges", { session_id: "s1" }],
   ]);

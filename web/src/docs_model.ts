@@ -28,7 +28,7 @@ export function statusText(status: SyncStatus, detail = ""): string {
     case "loading":
       return "Loading…";
     case "saved":
-      return "Saved";
+      return "";
     case "pending":
     case "saving":
       return "Saving…";

@@ -1593,11 +1593,11 @@
       },
       "web": {
         "status": "yes",
-        "pointer": "web/src/docs_pane.ts DocsPane (doc strip, + menu, editor) → web/src/proposal_api.ts GetProposal, ReadProposalDoc, SaveProposalDoc, AddProposalDoc"
+        "pointer": "web/src/docs_pane.ts DocsPane (doc strip, + menu, doc context menu, editor) → web/src/proposal_api.ts GetProposal, ReadProposalDoc, SaveProposalDoc, AddProposalDoc, RemoveProposalDoc"
       },
       "cli": {
         "status": "yes",
-        "pointer": "api/proposals.go proposalListCmd/proposalPathCmd/proposalAddDocCmd/proposalCatCmd/proposalWriteCmd → POST /v1/{List,Get}Proposal(s), AddProposalDoc, ReadProposalDoc, WriteProposalDoc (daemon/proposals.go)"
+        "pointer": "api/proposals.go proposalListCmd/proposalPathCmd/proposalAddDocCmd/proposalRemoveDocCmd/proposalCatCmd/proposalWriteCmd → POST /v1/{List,Get}Proposal(s), AddProposalDoc, RemoveProposalDoc, ReadProposalDoc, WriteProposalDoc (daemon/proposals.go)"
       },
       "verdict": "real-gap",
       "issue": "TBD",
@@ -1631,7 +1631,7 @@
       },
       "web": {
         "status": "yes",
-        "pointer": "web/src/docs_pane.ts DocsPane push switch and chip (web/src/docs_push.ts PushChip) → web/src/proposal_api.ts SetProposalPushMode, HoldProposalPush, SendProposalChanges"
+        "pointer": "web/src/docs_pane.ts DocsPane push chip (web/src/docs_push.ts PushChip) → web/src/proposal_api.ts HoldProposalPush, SendProposalChanges"
       },
       "cli": {
         "status": "yes",
@@ -1639,7 +1639,7 @@
       },
       "verdict": "real-gap",
       "issue": "TBD",
-      "notes": "Proposal mode step 3a (docs/dev/proposals/proposal-mode/api.md, Push) adds the daemon push: auto mode sends the unseen edits 10 s after the last human save when the agent is Ready. The CLI sets the mode and sends now. Step 3b adds the web push chip (Auto / Manual switch, countdown, Hold, Send now) over these routes. HoldProposalPush has no CLI verb: a hold only means something to the Docs tab whose save started the countdown, and the next save releases it. The TUI is not planned to edit proposals: goals.md lists a TUI editor as a non-goal."
+      "notes": "Proposal mode step 3a (docs/dev/proposals/proposal-mode/api.md, Push) adds the daemon push: auto mode sends the unseen edits 10 s after the last human save when the agent is Ready. The CLI sets the mode and sends now. Step 3b adds the web push chip (countdown, Hold, Send now) over these routes. The web has no Auto / Manual switch: the tab always pushes in auto mode, and manual mode is CLI-only (af proposal push-mode); a tab whose session is in manual mode still shows Send now. HoldProposalPush has no CLI verb: a hold only means something to the Docs tab whose save started the countdown, and the next save releases it. The TUI is not planned to edit proposals: goals.md lists a TUI editor as a non-goal."
     }
   ],
   "ledger": {
@@ -1691,6 +1691,7 @@
       "af proposal list": "proposal.docs",
       "af proposal path": "proposal.docs",
       "af proposal add-doc": "proposal.docs",
+      "af proposal remove-doc": "proposal.docs",
       "af proposal cat": "proposal.docs",
       "af proposal write": "proposal.docs",
       "af proposal push-mode": "proposal.push",
@@ -1737,6 +1738,7 @@
     "routes": {
       "GET /v1/health": "-",
       "POST /v1/AddProposalDoc": "proposal.docs",
+      "POST /v1/RemoveProposalDoc": "proposal.docs",
       "POST /v1/AttachProposal": "proposal.agent-workflow",
       "POST /v1/CheckpointProposal": "proposal.agent-workflow",
       "POST /v1/DetachProposal": "proposal.agent-workflow",
@@ -1851,11 +1853,11 @@
       "RegisterAccount": "session.accounts",
       "AddTask": "task.add",
       "AddProposalDoc": "proposal.docs",
+      "RemoveProposalDoc": "proposal.docs",
       "GetProposal": "proposal.docs",
       "ReadProposalDoc": "proposal.docs",
       "HoldProposalPush": "proposal.push",
       "SendProposalChanges": "proposal.push",
-      "SetProposalPushMode": "proposal.push",
       "ArchiveSession": "session.archive",
       "CloseTab": "session.tab.close",
       "ConfirmHandoffDelivery": "session.handoff-delivery-confirm",
@@ -1986,6 +1988,8 @@
       "af proposal path --help": "meta.discovery",
       "af proposal add-doc --help": "meta.discovery",
       "af proposal add-doc --session": "proposal.docs",
+      "af proposal remove-doc --help": "meta.discovery",
+      "af proposal remove-doc --session": "proposal.docs",
       "af proposal cat --help": "meta.discovery",
       "af proposal write --help": "meta.discovery",
       "af proposal write --session": "proposal.docs",
@@ -2681,6 +2685,14 @@
         }
       },
       "AddProposalDoc": {
+        "repo_id": {
+          "ok": "The Docs tab is a tab of one session, so it addresses the proposal by session_id, which api.md says the Docs tab sends. The daemon finds the project from the session, so repo_id and repo_path would only repeat it."
+        },
+        "repo_path": {
+          "ok": "The Docs tab is a tab of one session, so it addresses the proposal by session_id, which api.md says the Docs tab sends. The daemon finds the project from the session, so repo_id and repo_path would only repeat it."
+        }
+      },
+      "RemoveProposalDoc": {
         "repo_id": {
           "ok": "The Docs tab is a tab of one session, so it addresses the proposal by session_id, which api.md says the Docs tab sends. The daemon finds the project from the session, so repo_id and repo_path would only repeat it."
         },

@@ -7,7 +7,7 @@ The web UI only gets this tab, in step 2 and step 3.
 ```
 ┌───────────────────────────┬───────────────────────────────────────────┐
 │ Agent                     │ Docs · auth-rework                        │
-│                           │ goals  technical  api  +       ● Auto 2?  │
+│                           │ goals  technical  api  +              2?  │
 │  (live terminal)          ├───────────────────────────────────────────┤
 │                           │ # API design                              │
 │                           │                                           │
@@ -38,7 +38,12 @@ The web UI only gets this tab, in step 2 and step 3.
 - **Doc strip:** one sub-tab for each file, in template order and then
   alphabetical order. The **+** menu lists the templates that are not used
   yet, and **Blank…**.
-- **Header right:** the Auto / Manual switch, and a count of open
+- **Remove a doc:** right-click a doc sub-tab (or long-press it on a touch
+  screen, or press the context-menu key) and select **Remove doc…**. A confirm
+  step shows "Remove “<name>”? It stays in the proposal's history." **Remove**
+  calls `RemoveProposalDoc`, which deletes the file in a commit. If the removed
+  doc was open, the tab opens the first doc that is left.
+- **Header right:** the push chip, the save status, and a count of open
   `[!question]` callouts. Click the count to go to the next question.
 
 ## Editor
@@ -56,8 +61,9 @@ The web UI only gets this tab, in step 2 and step 3.
 
 ## Saving and live reload
 
-- Autosave runs 500 ms after the last keystroke. A save status shows in the
-  header: "Saved", "Saving…", or "Merged agent edits".
+- Autosave runs 500 ms after the last keystroke. While a save is pending or
+  runs, the header shows a spinner and "Saving…". A saved doc shows no status.
+  Other statuses are "Merged agent edits" and the "Not saved" errors.
 - When the agent changes a doc that you have no unsaved edits in, the tab
   reloads it. The cursor and scroll position stay where they were.
 - When a merge has a conflict, a banner shows "The agent changed this section
@@ -65,7 +71,10 @@ The web UI only gets this tab, in step 2 and step 3.
 
 ## Push chip (step 3)
 
-The header slot holds the Auto / Manual switch and the chip. They render the
+The header slot holds the chip. There is no Auto / Manual switch: a new
+session is in auto mode, and only `af proposal push-mode` sets manual mode. A
+tab whose session is in manual mode shows the Manual mode column below. The
+chip renders the
 `push` status from `GetProposal` and then each `proposal.push` event for the
 tab's session (`api.md`, Push). With `"push": null` (the session is not
 attached to this proposal), the slot is empty.
@@ -84,11 +93,9 @@ attached to this proposal), the slot is empty.
   needs no other rule.
 - **Hold** calls `HoldProposalPush`. **Send now** calls
   `SendProposalChanges`, and it is active only when `unsent` is more than 0.
-  The Auto / Manual switch calls `SetProposalPushMode`. The tab applies each
-  reply as the new status.
-- While a call runs, the switch and the chip button are disabled. A failed
-  call shows "Could not send · <reason>" (or hold, or switch to auto/manual)
-  in the chip until the next status.
+  The tab applies each reply as the new status.
+- While a call runs, the chip button is disabled. A failed call shows
+  "Could not send · <reason>" (or hold) in the chip until the next status.
 - A `GetProposal` reply is applied only when no push status arrived after the
   request went out, so a slow reply cannot replace a newer event.
 - The header stays on one row at split width (a 540px pane). The doc strip

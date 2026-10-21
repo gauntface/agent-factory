@@ -274,6 +274,31 @@ func (s *Store) AddDoc(slug, name string, by Committer) (string, string, error) 
 	return docFile(n), commit, err
 }
 
+// RemoveDoc deletes doc from proposal slug and commits the deletion, so the doc
+// stays in the store's history. It returns the doc file name and the new commit.
+func (s *Store) RemoveDoc(slug, doc string, by Committer) (string, string, error) {
+	if err := by.validate(); err != nil {
+		return "", "", err
+	}
+	var file, commit string
+	err := s.withLock(func() error {
+		path, f, err := s.docPath(slug, doc)
+		if err != nil {
+			return err
+		}
+		file = f
+		if _, err := s.snapshot(); err != nil {
+			return err
+		}
+		if err := os.Remove(path); err != nil {
+			return err
+		}
+		commit, err = s.commitPaths("remove "+slug+"/"+file, by.Author, by.SessionID, slug+"/"+file)
+		return err
+	})
+	return file, commit, err
+}
+
 // docPath validates slug and doc and returns the doc's absolute path. The doc
 // must exist.
 func (s *Store) docPath(slug, doc string) (string, string, error) {
