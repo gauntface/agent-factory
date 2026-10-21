@@ -37,6 +37,9 @@ path filled in:
 
 1. The docs are at `<path>`. Edit them with your normal file tools.
 2. Before you edit, run `af proposal changes` and read what the user changed.
+   The user's edits can also arrive as a prompt that starts with
+   `Proposal <slug>:` (see Push). That prompt holds the edits, so after it the
+   agent does not need to run `af proposal changes` first.
 3. After each round of edits, run `af proposal checkpoint`.
 4. Put questions for the user in `> [!question]` callouts, in the doc they
    belong to. Then stop and tell the user.

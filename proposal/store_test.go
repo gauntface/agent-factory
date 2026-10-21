@@ -462,3 +462,10 @@ func TestRulesAskForAttention(t *testing.T) {
 		t.Fatalf("rule 4 must ask for attention:\n%s", r)
 	}
 }
+
+func TestRulesExplainPushedEdits(t *testing.T) {
+	r := Rules("p", "/x/p")
+	if !strings.Contains(r, `arrive as a prompt that starts with "Proposal p:"`) || !strings.Contains(r, `you do not need to run "af proposal changes" first`) {
+		t.Fatalf("rule 2 must explain pushed edits:\n%s", r)
+	}
+}
