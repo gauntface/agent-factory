@@ -374,3 +374,20 @@ func (s *Service) SendNow(t PushTarget) (*PushStatus, error) {
 		return true
 	})
 }
+
+// AttachedSlug returns the proposal the session is attached to, or
+// ErrNotAttached.
+func (s *Service) AttachedSlug(sessionID string) (string, error) {
+	r, err := s.sessionTarget(sessionID)
+	if err != nil {
+		return "", err
+	}
+	slug, err := r.store.Attached(r.session.ID)
+	if err != nil {
+		return "", err
+	}
+	if slug == "" {
+		return "", s.notAttached(r)
+	}
+	return slug, nil
+}
