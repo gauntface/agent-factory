@@ -7413,6 +7413,7 @@ function terminalChrome(opts) {
     button.hidden = true;
     button.addEventListener("click", () => {
       menu.close();
+      button.blur();
       opts.newTab(kind);
     });
     return button;
@@ -17722,13 +17723,15 @@ var AppShell = class {
       this.main.replaceChildren(head, archiveWarning, this.termHost);
     }
     this.sessionFirst = sessionFirstComposition([
+      // Restore runs in reverse and inserts each node before its old next sibling,
+      // so a node must be listed before the sibling that follows it.
       [chrome.title, this.header],
-      [chrome.keyboard, this.header],
-      [chrome.newTabs, this.header],
       [this.viewNav, this.appControls.panel],
       [this.projectSwitchWrap, this.appControls.panel],
       ...Array.from(this.appControls.panel.children, (node) => [node, this.appControls.panel]),
       [chrome.tabs, this.appControls.panel],
+      [chrome.newTabs, this.header],
+      [chrome.keyboard, this.header],
       [chrome.retry, this.appControls.panel],
       [chrome.menu.panel, this.appControls.panel]
     ]);

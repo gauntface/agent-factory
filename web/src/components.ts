@@ -149,7 +149,8 @@ export function terminalChrome(opts: { title: string; copyLink(): void; handoff(
       icon(glyph), h("span", { class: "af-term-new-label" }, label));
     button.setAttribute("aria-label", name);
     button.hidden = true;
-    button.addEventListener("click", () => { menu.close(); opts.newTab(kind); });
+    // The new tab owns input next; a focused button would swallow the rail keys.
+    button.addEventListener("click", () => { menu.close(); button.blur(); opts.newTab(kind); });
     return button;
   };
   const newTerminal = newTabButton("shell", "Terminal", "terminal", "New terminal tab");
