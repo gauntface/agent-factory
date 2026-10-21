@@ -1266,6 +1266,9 @@ button:disabled,
   font-size: var(--af-type-body);
   white-space: normal;
 }
+.af-tab-new-unavailable[hidden] {
+  display: none;
+}
 .af-toast {
   position: fixed;
   right: var(--af-space-4);

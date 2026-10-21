@@ -1579,6 +1579,7 @@ button:disabled,
   font-size: var(--af-type-body);
   white-space: normal;
 }
+.af-tab-new-unavailable[hidden] { display: none; }
 
 /* Operation-error toast (#1592 Phase 5 PR7): a transient banner pinned bottom-right,
  * shown only while `tabError` is set. Tab ops and asynchronous session creation have
