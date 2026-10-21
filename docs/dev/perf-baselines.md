@@ -142,8 +142,8 @@ shell (1,061,433 raw, 237,195 gzip) and 4,973 raw and 1,415 gzip bytes to the
 lazy bundle (342,761 raw, 111,710 gzip), measured the same way. All four stay
 inside their budgets, so the baselines are unchanged.
 
-The phone Docs shortcut and the one-row Docs header add 1,803 raw and 354 gzip
-bytes to the shell (1,055,363 raw, 235,918 gzip) and 111 raw and 14 gzip bytes
+The phone Docs shortcut and the one-row Docs header add 1,815 raw and 357 gzip
+bytes to the shell (1,055,375 raw, 235,921 gzip) and 111 raw and 14 gzip bytes
 to the lazy bundle (342,872 raw, 111,724 gzip), measured the same way. All four
 stay inside their budgets, so the baselines are unchanged.
 
