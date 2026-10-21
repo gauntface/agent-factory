@@ -26,7 +26,7 @@ class Harness {
   buffer = "";
   bufferSets: string[] = [];
   statuses: SyncStatus[] = [];
-  saves: { text: string; base: string; reply: Deferred<SaveResult> }[] = [];
+  saves: { text: string; base: string; final: boolean; reply: Deferred<SaveResult> }[] = [];
   loads = 0;
   timers: { fn: () => void; ms: number; live: boolean }[] = [];
   holdLoad: Deferred<DocText> | null = null;
@@ -35,9 +35,9 @@ class Harness {
       this.loads++;
       return this.holdLoad ? this.holdLoad.promise : Promise.resolve({ ...this.head });
     },
-    save: (text, base) => {
+    save: (text, base, final) => {
       const reply = deferred<SaveResult>();
-      this.saves.push({ text, base, reply });
+      this.saves.push({ text, base, final: final === true, reply });
       return reply.promise;
     },
     setBuffer: (text) => {
@@ -286,4 +286,48 @@ test("dispose saves unsaved edits", async () => {
   h.sync.dispose();
   await tick();
   assert.deepEqual(h.saves.map((s) => s.text), ["unsaved"]);
+});
+
+test("dispose saves a buffer that still has conflict markers", async () => {
+  const h = new Harness();
+  h.head = { text: "a\nb\nc", commit: "c1" };
+  await h.sync.start();
+  h.type("a\nmine\nc");
+  await h.fire();
+  h.saves[0]!.reply.resolve({ kind: "conflict", ours: "a\nmine\nc", theirs: "a\ntheirs\nc", base: "a\nb\nc", head: "c7" });
+  await tick();
+  await h.sync.showBoth();
+  assert.equal(h.status, "markers");
+  assert.equal(h.liveTimers().length, 0, "autosave holds while markers are present");
+  h.sync.dispose();
+  assert.equal(h.saves.length, 2);
+  assert.deepEqual([h.saves[1]!.text, h.saves[1]!.base, h.saves[1]!.final],
+    ["a\n<<<<<<< mine\nmine\n=======\ntheirs\n>>>>>>> agent\nc", "c7", true]);
+});
+
+test("leaving the page saves edits but keeps the doc open", async () => {
+  const h = await started();
+  h.type("unsaved");
+  h.sync.saveBeforeLeaving();
+  assert.deepEqual(h.saves.map((s) => [s.text, s.final]), [["unsaved", true]]);
+  h.type("unsaved more");
+  assert.equal(h.status, "pending", "editing continues after a pagehide that did not unload");
+});
+
+test("dispose does not send an open conflict the user has not resolved", async () => {
+  const h = await started();
+  h.type("mine");
+  await h.fire();
+  h.saves[0]!.reply.resolve({ kind: "conflict", ours: "mine", theirs: "theirs", base: "v1", head: "c5" });
+  await tick();
+  h.sync.dispose();
+  assert.equal(h.saves.length, 1);
+});
+
+test("dispose does not repeat a save that is already in flight", async () => {
+  const h = await started();
+  h.type("x");
+  await h.fire();
+  h.sync.dispose();
+  assert.equal(h.saves.length, 1);
 });

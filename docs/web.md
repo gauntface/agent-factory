@@ -703,7 +703,9 @@ af sessions tab-create my-session --kind docs --proposal auth-rework
 - When the agent changes a doc that you have not edited, the tab reloads it and
   keeps your cursor. When you both changed the same lines, a banner asks you to
   keep yours, take the agent's, or show both. "Show both" puts both versions
-  between conflict markers, and saving waits until you remove them.
+  between conflict markers, and autosave waits until you remove them. If you
+  close the tab or the page first, the doc saves with the markers in it, so no
+  edit is lost and the agent sees both sides.
 
 The editor loads the first time a Docs tab opens. In the **TUI** a Docs tab
 shows a placeholder.

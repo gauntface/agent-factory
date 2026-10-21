@@ -28,7 +28,9 @@ export interface Conflict {
 
 export interface DocSyncDeps {
   load(): Promise<DocText>;
-  save(text: string, base: string): Promise<SaveResult>;
+  /** `final` marks the save that dispose or page unload sends; nobody waits
+   *  for its reply. */
+  save(text: string, base: string, final?: boolean): Promise<SaveResult>;
   /** Replaces the editor buffer. The editor keeps the cursor and scroll. */
   setBuffer(text: string): void;
   onStatus(status: SyncStatus, detail: string): void;
@@ -43,6 +45,7 @@ export class DocSync {
   private base = "";
   private loaded = false;
   private inflight = false;
+  private inflightText = "";
   private loading = false;
   private disposed = false;
   private remotePending = false;
@@ -129,10 +132,19 @@ export class DocSync {
     void this.save();
   }
 
+  /** Sends unsaved edits now, conflict markers included: autosave holds a
+   *  buffer with markers, but closing the tab or the page must not lose it, and
+   *  the agent can read both sides from the markers. A buffer with an open
+   *  conflict is not sent, because the user has not chosen yet. */
+  saveBeforeLeaving(): void {
+    if (this.disposed || !this.loaded || !this.dirty || this.conflict) return;
+    if (this.inflight && this.inflightText === this.buffer) return;
+    this.cancelTimer();
+    this.deps.save(this.buffer, this.base, true).catch(() => undefined);
+  }
+
   dispose(): void {
-    if (this.dirty && !this.conflict && !hasConflictMarkers(this.buffer)) {
-      this.flush();
-    }
+    this.saveBeforeLeaving();
     this.disposed = true;
     this.cancelTimer();
   }
@@ -231,6 +243,7 @@ export class DocSync {
     const sent = this.buffer;
     const sentBase = this.base;
     this.inflight = true;
+    this.inflightText = sent;
     this.setStatus("saving");
     let result: SaveResult;
     try {

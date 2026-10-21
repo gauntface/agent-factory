@@ -118,6 +118,7 @@ export async function putDoc(
   text: string,
   base: string,
   token: string,
+  keepalive = false,
 ): Promise<SaveResult> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token !== "") {
@@ -129,6 +130,7 @@ export async function putDoc(
       method: "POST",
       headers,
       body: JSON.stringify({ session_id: sessionId, slug, doc, text, base }),
+      keepalive,
     });
   } catch (e) {
     throw new ApiError(0, `cannot reach the daemon: ${errorText(e)}`);

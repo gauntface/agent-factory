@@ -35,6 +35,7 @@ import { diffText } from "./text_diff.js";
 const lastDoc = new Map<string, string>();
 
 const REFRESH_DEBOUNCE_MS = 300;
+const KEEPALIVE_LIMIT = 60_000;
 
 export interface DocsPaneOptions {
   sessionId: string;
@@ -67,6 +68,7 @@ export class DocsPane {
   private refreshTimer: number | null = null;
   private disposed = false;
   private readonly unsubscribe: () => void;
+  private readonly onPageHide = (): void => this.sync?.saveBeforeLeaving();
   private readonly onDocMouseDown = (e: MouseEvent): void => {
     if (!this.menu.hidden && !this.menu.contains(e.target as Node) && e.target !== this.addButton &&
       !this.addButton.contains(e.target as Node)) {
@@ -108,6 +110,7 @@ export class DocsPane {
     host.replaceChildren(this.root);
     this.unsubscribe = opts.subscribe((change) => this.handleChange(change));
     document.addEventListener("mousedown", this.onDocMouseDown, true);
+    window.addEventListener("pagehide", this.onPageHide);
     this.setStatus("loading");
     void this.loadProposal();
   }
@@ -116,6 +119,7 @@ export class DocsPane {
     this.disposed = true;
     this.unsubscribe();
     document.removeEventListener("mousedown", this.onDocMouseDown, true);
+    window.removeEventListener("pagehide", this.onPageHide);
     if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer);
     this.sync?.dispose();
     this.sync = null;
@@ -303,7 +307,9 @@ export class DocsPane {
     this.freshBuffer = true;
     const sync = new DocSync({
       load: () => getDoc(this.opts.sessionId, this.opts.slug, doc.name, this.opts.token),
-      save: (text, base) => putDoc(this.opts.sessionId, this.opts.slug, doc.name, text, base, this.opts.token),
+      // A keepalive request outlives page unload, but browsers cap its body at 64 KiB.
+      save: (text, base, final) => putDoc(this.opts.sessionId, this.opts.slug, doc.name, text, base,
+        this.opts.token, final === true && new TextEncoder().encode(text).length < KEEPALIVE_LIMIT),
       setBuffer: (text) => {
         if (this.sync !== sync || !this.editor) return;
         if (this.freshBuffer) {

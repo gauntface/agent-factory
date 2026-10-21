@@ -37,7 +37,7 @@ export function statusText(status: SyncStatus, detail = ""): string {
     case "conflict":
       return "Not saved";
     case "markers":
-      return "Resolve the marked sections to save";
+      return "Resolve the markers to save";
     case "error":
       return detail ? `Not saved · ${detail}` : "Not saved";
   }
