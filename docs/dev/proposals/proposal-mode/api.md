@@ -161,7 +161,8 @@ Shapes:
 `SaveProposalDoc` is the Docs tab save. It always commits as `human`.
 
 - `base` is the `commit` from the last read or save of this doc. It is
-  required.
+  required, and it must be a lowercase hex commit id (7 to 64 characters). Any
+  other value, such as a ref name, fails with `unknown base commit`.
 - The daemon first commits uncommitted edits of the doc as `external`. Then
   "theirs" is the doc at the new head.
 - If theirs is the same as the doc at `base`, the daemon writes `text` and

@@ -365,6 +365,30 @@ func TestSaveNeedsAKnownBase(t *testing.T) {
 	}
 }
 
+func TestSaveRejectsABaseThatIsNotACommitID(t *testing.T) {
+	svc, _, store := newTestService(t)
+	if _, err := svc.Start(sessA, "p", []string{"goals"}); err != nil {
+		t.Fatal(err)
+	}
+	head, err := store.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "x")
+	for _, base := range []string{"--output=/tmp/x", "--output=" + out, "-q", "HEAD", "master", "HEAD~1", strings.ToUpper(head), head + " ", "abc"} {
+		_, err := svc.Save(byRepo(), "p", "goals", "x", base)
+		if err == nil || !strings.Contains(err.Error(), "unknown base commit") {
+			t.Fatalf("base %q: err = %v, want unknown base commit", base, err)
+		}
+	}
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Fatalf("an option base must not reach git: stat %s = %v", out, err)
+	}
+	if after, _ := store.Head(); after != head {
+		t.Fatalf("a rejected base must commit nothing: head %s → %s", head, after)
+	}
+}
+
 func TestSaveDocAddedAfterBase(t *testing.T) {
 	svc, _, _ := newTestService(t)
 	if _, err := svc.Start(sessA, "p", []string{"goals"}); err != nil {

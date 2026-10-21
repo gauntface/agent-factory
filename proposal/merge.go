@@ -5,11 +5,16 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 )
 
 // ErrorCodeConflict is the envelope error code of a save that conflicts.
 const ErrorCodeConflict = "proposal_conflict"
+
+// commitIDPattern is the only base Save accepts. base reaches git rev-parse, so
+// a ref name or a value that starts with '-' must never get there.
+var commitIDPattern = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
 
 // SaveResult is the result of Store.Save.
 type SaveResult struct {
@@ -60,6 +65,9 @@ func shortCommit(c string) string {
 func (s *Store) Save(slug, doc, text, base string) (*SaveResult, error) {
 	if strings.TrimSpace(base) == "" {
 		return nil, errors.New("base is required: send the commit from the last read or save of this doc")
+	}
+	if !commitIDPattern.MatchString(base) {
+		return nil, fmt.Errorf("unknown base commit %q: read the doc again", base)
 	}
 	var res *SaveResult
 	err := s.withLock(func() error {
