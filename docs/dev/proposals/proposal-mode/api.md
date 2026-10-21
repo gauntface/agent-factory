@@ -103,7 +103,7 @@ or `api.md`). Replies always use the file name (`api.md`).
 
 | Route | Request | Reply `data` |
 |---|---|---|
-| `POST /v1/ListProposals` | target | `[proposal]`, newest edit first |
+| `POST /v1/ListProposals` | target | `{proposals: [proposal]}`, newest edit first |
 | `POST /v1/GetProposal` | target, `slug` | `proposal detail` |
 | `POST /v1/StartProposal` | `session_id`, `slug`, `docs` | `attached proposal` |
 | `POST /v1/AttachProposal` | `session_id`, `slug` (optional) | `attached proposal` |
@@ -111,7 +111,7 @@ or `api.md`). Replies always use the file name (`api.md`).
 | `POST /v1/AddProposalDoc` | target, `slug`, `name`, `author` | `{slug, doc, path, commit}` |
 | `POST /v1/ReadProposalDoc` | target, `slug`, `doc` | `{slug, doc, text, commit}` |
 | `POST /v1/SaveProposalDoc` | target, `slug`, `doc`, `text`, `base` | `{slug, doc, text, commit, merged}`, or 409 |
-| `POST /v1/WriteProposalDoc` | target, `slug`, `doc`, `text`, `author` | `{slug, doc, commit, author}` |
+| `POST /v1/WriteProposalDoc` | target, `slug`, `doc`, `text`, `author` | `{slug, doc, path, commit, author}` |
 | `POST /v1/PullProposalChanges` | `session_id` | the `changes` output above |
 | `POST /v1/CheckpointProposal` | `session_id` | `{slug, commit, cursor, unseen}` |
 
