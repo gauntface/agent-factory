@@ -155,7 +155,8 @@ export function terminalChrome(opts: { title: string; copyLink(): void; handoff(
   };
   const newTerminal = newTabButton("shell", "Terminal", "terminal", "New terminal tab");
   const newVSCode = newTabButton("vscode", "VS Code", "panels", "New VS Code tab");
-  const newTabs = h("div", { class: "af-term-new-group" }, newTerminal, newVSCode);
+  const docsShortcuts = h("div", { class: "af-term-docs-group" });
+  const newTabs = h("div", { class: "af-term-new-group" }, docsShortcuts, newTerminal, newVSCode);
   const title = h("span", { class: "af-term-title", title: opts.title }, opts.title);
   title.setAttribute("aria-label", opts.title);
   const titleBox = h("div", { class: "af-term-head-main" }, title, h("span", { class: "af-term-title-separator", ariaHidden: "true" }, " · "));
@@ -182,7 +183,7 @@ export function terminalChrome(opts: { title: string; copyLink(): void; handoff(
   closePane.hidden = true;
   menu.panel.append(tabUnavailable, copy, handoff, deliver, actions, closePane);
   const head = h("div", { class: "af-term-head" }, titleBox, tabs, newTabs, keyboard, retry, menu.el);
-  return { head, title, tabs, keyboard, retry, deliver, handoff, closePane, actions, newTabs, newTerminal, newVSCode, tabUnavailable, menu, dispose: menu.dispose };
+  return { head, title, tabs, keyboard, retry, deliver, handoff, closePane, actions, newTabs, newTerminal, newVSCode, docsShortcuts, tabUnavailable, menu, dispose: menu.dispose };
 }
 
 /** Split leaves share the same title/close treatment as the main tab row. */

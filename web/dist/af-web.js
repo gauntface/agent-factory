@@ -7420,7 +7420,8 @@ function terminalChrome(opts) {
   };
   const newTerminal = newTabButton("shell", "Terminal", "terminal", "New terminal tab");
   const newVSCode = newTabButton("vscode", "VS Code", "panels", "New VS Code tab");
-  const newTabs = h("div", { class: "af-term-new-group" }, newTerminal, newVSCode);
+  const docsShortcuts2 = h("div", { class: "af-term-docs-group" });
+  const newTabs = h("div", { class: "af-term-new-group" }, docsShortcuts2, newTerminal, newVSCode);
   const title = h("span", { class: "af-term-title", title: opts.title }, opts.title);
   title.setAttribute("aria-label", opts.title);
   const titleBox = h("div", { class: "af-term-head-main" }, title, h("span", { class: "af-term-title-separator", ariaHidden: "true" }, " \xB7 "));
@@ -7445,7 +7446,7 @@ function terminalChrome(opts) {
   closePane.hidden = true;
   menu.panel.append(tabUnavailable, copy, handoff, deliver, actions2, closePane);
   const head = h("div", { class: "af-term-head" }, titleBox, tabs, newTabs, keyboard, retry, menu.el);
-  return { head, title, tabs, keyboard, retry, deliver, handoff, closePane, actions: actions2, newTabs, newTerminal, newVSCode, tabUnavailable, menu, dispose: menu.dispose };
+  return { head, title, tabs, keyboard, retry, deliver, handoff, closePane, actions: actions2, newTabs, newTerminal, newVSCode, docsShortcuts: docsShortcuts2, tabUnavailable, menu, dispose: menu.dispose };
 }
 function paneChrome(onClose) {
   const glyph = h("span", { class: "af-pane-glyph", ariaHidden: "true" });
@@ -16363,6 +16364,33 @@ function projectColorRow(current, label, onPick) {
   return row;
 }
 
+// src/docs_shortcut.ts
+function docsTabIndexes(tabs) {
+  const out = [];
+  tabs.forEach((tab, i) => {
+    if (tab.kind === TabKind.Docs) out.push(i);
+  });
+  return out;
+}
+function docsShortcuts(tabs, open) {
+  return docsTabIndexes(tabs).map((index) => {
+    const tab = tabs[index];
+    const name = `Open ${tabDisplayLabel(tab)}`;
+    const button = h(
+      "button",
+      { type: "button", class: "af-ghost af-term-action af-term-docs", title: name },
+      icon(tabIcon(tab.kind))
+    );
+    button.setAttribute("aria-label", name);
+    button.dataset.tabIndex = String(index);
+    button.addEventListener("click", () => {
+      button.blur();
+      open(index);
+    });
+    return button;
+  });
+}
+
 // src/tabreorder.ts
 var PINNED_TABS = 1;
 function insertionIndexAt(centers, x) {
@@ -17838,6 +17866,7 @@ var AppShell = class {
       const unavailable = tabCreationUnavailableReason(selected);
       chrome.newTerminal.hidden = unavailable !== null || !canCreateTabKind(selected, "shell");
       chrome.newVSCode.hidden = unavailable !== null || !canCreateTabKind(selected, "vscode");
+      chrome.docsShortcuts.replaceChildren(...docsShortcuts(tabs, (i) => this.openTab(i)));
       chrome.tabUnavailable.hidden = unavailable === null;
       chrome.tabUnavailable.textContent = unavailable ?? "";
       chrome.tabUnavailable.title = unavailable ?? "";

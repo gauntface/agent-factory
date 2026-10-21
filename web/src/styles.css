@@ -3567,6 +3567,22 @@ button[class], input[class], select[class], textarea[class] { font-size: var(--a
   .af-session-first .af-appbar-tools a { min-height: calc(var(--af-space-4) + var(--af-space-3) + var(--af-space-1)); }
 }
 
+/* Docs shortcuts: the phone header's one-tap way to a Docs tab while the tab bar
+ * sits in the app menu. Desktop keeps the tab bar. */
+.af-term-docs-group { display: none; }
+@media (max-width: 768px) {
+  .af-session-first .af-term-docs-group {
+    display: flex;
+    align-items: center;
+    gap: var(--af-space-1);
+  }
+  .af-session-first .af-term-docs {
+    display: inline-flex;
+    align-items: center;
+    min-height: calc(var(--af-space-4) + var(--af-space-3) + var(--af-space-1));
+  }
+}
+
 .af-phone-pane-close { display: none; }
 @media (max-width: 768px) {
   .af-session-first .af-phone-pane-close:not([hidden]) { display: block; }

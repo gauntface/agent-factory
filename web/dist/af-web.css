@@ -3085,6 +3085,21 @@ textarea[class] {
     min-height: calc(var(--af-space-4) + var(--af-space-3) + var(--af-space-1));
   }
 }
+.af-term-docs-group {
+  display: none;
+}
+@media (max-width: 768px) {
+  .af-session-first .af-term-docs-group {
+    display: flex;
+    align-items: center;
+    gap: var(--af-space-1);
+  }
+  .af-session-first .af-term-docs {
+    display: inline-flex;
+    align-items: center;
+    min-height: calc(var(--af-space-4) + var(--af-space-3) + var(--af-space-1));
+  }
+}
 .af-phone-pane-close {
   display: none;
 }
