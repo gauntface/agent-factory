@@ -1630,8 +1630,8 @@
         "pointer": ""
       },
       "web": {
-        "status": "no",
-        "pointer": ""
+        "status": "yes",
+        "pointer": "web/src/docs_pane.ts DocsPane push switch and chip (web/src/docs_push.ts PushChip) → web/src/proposal_api.ts SetProposalPushMode, HoldProposalPush, SendProposalChanges"
       },
       "cli": {
         "status": "yes",
@@ -1639,7 +1639,7 @@
       },
       "verdict": "real-gap",
       "issue": "TBD",
-      "notes": "Proposal mode step 3a (docs/dev/proposals/proposal-mode/api.md, Push) adds the daemon push: auto mode sends the unseen edits 10 s after the last human save when the agent is Ready. The CLI sets the mode and sends now. Step 3b adds the web push chip (mode switch, countdown, Hold, Send now) over these routes. HoldProposalPush has no CLI verb: a hold only means something to the Docs tab whose save started the countdown, and the next save releases it. The TUI is not planned to edit proposals: goals.md lists a TUI editor as a non-goal."
+      "notes": "Proposal mode step 3a (docs/dev/proposals/proposal-mode/api.md, Push) adds the daemon push: auto mode sends the unseen edits 10 s after the last human save when the agent is Ready. The CLI sets the mode and sends now. Step 3b adds the web push chip (Auto / Manual switch, countdown, Hold, Send now) over these routes. HoldProposalPush has no CLI verb: a hold only means something to the Docs tab whose save started the countdown, and the next save releases it. The TUI is not planned to edit proposals: goals.md lists a TUI editor as a non-goal."
     }
   ],
   "ledger": {
@@ -1853,6 +1853,9 @@
       "AddProposalDoc": "proposal.docs",
       "GetProposal": "proposal.docs",
       "ReadProposalDoc": "proposal.docs",
+      "HoldProposalPush": "proposal.push",
+      "SendProposalChanges": "proposal.push",
+      "SetProposalPushMode": "proposal.push",
       "ArchiveSession": "session.archive",
       "CloseTab": "session.tab.close",
       "ConfirmHandoffDelivery": "session.handoff-delivery-confirm",

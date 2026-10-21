@@ -6,11 +6,16 @@ import {
   changeNamesDoc,
   getDoc,
   getProposal,
+  holdPush,
   parseDocText,
+  parsePushStatus,
+  parseProposalPush,
   parseProposalChange,
   parseProposalInfo,
   parseSaveResponse,
   putDoc,
+  sendChanges,
+  setPushMode,
 } from "./proposal_api.js";
 
 const realFetch = globalThis.fetch;
@@ -43,6 +48,7 @@ test("parseProposalInfo reads the GetProposal detail", () => {
     docs: raw.docs,
     templates: ["ui", "future"],
     open_questions: 2,
+    push: null,
   });
   assert.deepEqual(parseProposalInfo({ slug: "s", docs: ["goals.md"] }).docs, [{ name: "goals", file: "goals.md" }]);
 });
@@ -101,4 +107,40 @@ test("parseProposalChange reads the event data, including a null commit", () => 
   assert.ok(changeNamesDoc(want, { name: "api", file: "api.md" }));
   assert.ok(changeNamesDoc({ ...want, doc: "api" }, { name: "api", file: "api.md" }));
   assert.ok(!changeNamesDoc(want, { name: "ui", file: "ui.md" }));
+});
+
+test("parsePushStatus reads the push status and refuses other values", () => {
+  assert.deepEqual(parsePushStatus({
+    session_id: "s1", slug: "plan", mode: "auto", state: "countdown",
+    due_at: "2026-10-20T22:41:24.000Z", due_in_ms: 6000, unsent: 2,
+  }), { sessionId: "s1", slug: "plan", mode: "auto", state: "countdown", dueInMs: 6000, unsent: 2 });
+  assert.deepEqual(parsePushStatus({ state: "idle", mode: "manual", due_in_ms: null }), {
+    sessionId: "", slug: "", mode: "manual", state: "idle", dueInMs: null, unsent: 0,
+  });
+  assert.equal(parsePushStatus({ state: "later" }), null);
+  assert.equal(parsePushStatus(null), null);
+  assert.equal(parseProposalInfo({ slug: "p", docs: [] }).push, null);
+  assert.equal(parseProposalInfo({ slug: "p", docs: [], push: { state: "held", unsent: 1 } }).push?.state, "held");
+});
+
+test("parseProposalPush reads only proposal.push events that name a session and slug", () => {
+  const data = { session_id: "s1", slug: "plan", mode: "auto", state: "sent", due_at: null, due_in_ms: null, unsent: 0 };
+  assert.equal(parseProposalPush({ type: "proposal.push", data })?.state, "sent");
+  assert.equal(parseProposalPush({ type: "proposal.changed", data }), null);
+  assert.equal(parseProposalPush({ type: "proposal.push", data: { ...data, session_id: "" } }), null);
+});
+
+test("push routes post the session and parse the status", async () => {
+  const reply = { data: { session_id: "s1", slug: "plan", mode: "manual", state: "idle", unsent: 0 }, error: null };
+  const calls = recordFetch(200, reply);
+  assert.equal((await setPushMode("s1", "manual", "tok")).mode, "manual");
+  await holdPush("s1", "tok");
+  await sendChanges("s1", "tok");
+  assert.deepEqual(calls.map((c) => [c.url, JSON.parse(String(c.init.body))]), [
+    ["/v1/SetProposalPushMode", { session_id: "s1", mode: "manual" }],
+    ["/v1/HoldProposalPush", { session_id: "s1" }],
+    ["/v1/SendProposalChanges", { session_id: "s1" }],
+  ]);
+  recordFetch(200, { data: {}, error: null });
+  await assert.rejects(sendChanges("s1", ""), /push status/);
 });

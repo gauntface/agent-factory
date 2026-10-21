@@ -1,5 +1,6 @@
-// The Docs tab (proposal mode, step 2): a doc strip, a header with the save
-// status and the open-question count, a conflict banner, and the editor. This
+// The Docs tab (proposal mode): a doc strip, a header with the push switch and
+// chip, the save status and the open-question count, a conflict banner, and the
+// editor. This
 // module is the entry of the lazy bundle dist/lazy/docs-editor.js (see build.mjs);
 // docs_tab.ts in the main bundle loads it the first time a Docs tab opens. What
 // it imports from the main bundle's modules gets a second copy in this bundle, so
@@ -15,6 +16,7 @@ import {
   questionCountLabel,
   statusText,
 } from "./docs_model.js";
+import { PushChip, type PushView } from "./docs_push.js";
 import { DocSync, type SyncStatus } from "./docs_sync.js";
 import { h } from "./dom.js";
 import { icon } from "./icon.js";
@@ -24,10 +26,15 @@ import {
   DOC_NAME_PATTERN,
   getDoc,
   getProposal,
+  holdPush,
   type ProposalChange,
   type ProposalDocRef,
   type ProposalInfo,
   putDoc,
+  type PushMode,
+  type PushStatus,
+  sendChanges,
+  setPushMode,
 } from "./proposal_api.js";
 import { diffText } from "./text_diff.js";
 
@@ -43,6 +50,8 @@ export interface DocsPaneOptions {
   token: string;
   /** Registers for proposal.changed events; returns the unsubscribe. */
   subscribe(fn: (change: ProposalChange) => void): () => void;
+  /** Registers for proposal.push events; returns the unsubscribe. */
+  subscribePush(fn: (status: PushStatus) => void): () => void;
 }
 
 export class DocsPane {
@@ -56,6 +65,14 @@ export class DocsPane {
   private readonly body: HTMLElement;
   private readonly editorHost: HTMLElement;
   private readonly notice: HTMLElement;
+  private readonly push: HTMLElement;
+  private readonly modeButtons: Record<PushMode, HTMLButtonElement>;
+  private readonly chipText: HTMLElement;
+  private readonly chipSep: HTMLElement;
+  private readonly chipAction: HTMLButtonElement;
+  private readonly chip: PushChip;
+  /** Counts push statuses applied, so a GetProposal reply older than one is not applied. */
+  private pushSeq = 0;
 
   private info: ProposalInfo | null = null;
   private ordered: ProposalDocRef[] = [];
@@ -68,6 +85,7 @@ export class DocsPane {
   private refreshTimer: number | null = null;
   private disposed = false;
   private readonly unsubscribe: () => void;
+  private readonly unsubscribePush: () => void;
   private readonly onPageHide = (): void => this.sync?.saveBeforeLeaving();
   private readonly onDocMouseDown = (e: MouseEvent): void => {
     if (!this.menu.hidden && !this.menu.contains(e.target as Node) && e.target !== this.addButton &&
@@ -97,9 +115,32 @@ export class DocsPane {
     this.status = h("span", { class: "af-docs-status", role: "status" });
     this.questions = h("button", { type: "button", class: "af-ghost af-docs-questions", hidden: true });
     this.questions.addEventListener("click", () => void this.goToNextQuestion());
-    // Step 3 puts the auto-send switch and chip here.
-    const slot = h("div", { class: "af-docs-slot" });
-    const tools = h("div", { class: "af-docs-tools" }, slot, this.status, this.questions);
+    const modeButton = (mode: PushMode, label: string, title: string): HTMLButtonElement => {
+      const btn = h("button", { type: "button", class: "af-docs-pushmode-button", title }, label);
+      btn.setAttribute("aria-pressed", "false");
+      btn.addEventListener("click", () => this.choosePushMode(mode));
+      return btn;
+    };
+    this.modeButtons = {
+      auto: modeButton("auto", "Auto", "Send your edits to the agent 10 s after you stop typing"),
+      manual: modeButton("manual", "Manual", "Send your edits to the agent only when you click Send now"),
+    };
+    const modeGroup = h("div", { class: "af-docs-pushmode", role: "group" }, this.modeButtons.auto,
+      this.modeButtons.manual);
+    modeGroup.setAttribute("aria-label", "Send edits to the agent");
+    this.chipText = h("span", { class: "af-docs-chip-text" });
+    this.chipSep = h("span", { class: "af-docs-sep", ariaHidden: "true", hidden: true }, " · ");
+    this.chipAction = h("button", { type: "button", class: "af-ghost af-docs-chip-action", hidden: true });
+    this.chipAction.addEventListener("click", () => this.runChipAction());
+    const chip = h("span", { class: "af-docs-chip" }, this.chipText, this.chipSep, this.chipAction);
+    this.push = h("div", { class: "af-docs-slot af-docs-push", hidden: true }, modeGroup, chip);
+    this.chip = new PushChip({
+      now: () => performance.now(),
+      setTimer: (fn, ms) => window.setTimeout(fn, ms),
+      clearTimer: (handle) => window.clearTimeout(handle as number),
+      render: (view) => this.renderPush(view),
+    });
+    const tools = h("div", { class: "af-docs-tools" }, this.push, this.status, this.questions);
     const head = h("div", { class: "af-docs-head" }, stripWrap, tools);
     this.banner = h("div", { class: "af-docs-banner", role: "alert", hidden: true });
     this.editorHost = h("div", { class: "af-docs-editor" });
@@ -109,6 +150,10 @@ export class DocsPane {
     this.root.dataset.proposal = opts.slug;
     host.replaceChildren(this.root);
     this.unsubscribe = opts.subscribe((change) => this.handleChange(change));
+    this.unsubscribePush = opts.subscribePush((status) => {
+      if (this.disposed || status.sessionId !== opts.sessionId || status.slug !== opts.slug) return;
+      this.applyPush(status);
+    });
     document.addEventListener("mousedown", this.onDocMouseDown, true);
     window.addEventListener("pagehide", this.onPageHide);
     this.setStatus("loading");
@@ -118,6 +163,8 @@ export class DocsPane {
   dispose(): void {
     this.disposed = true;
     this.unsubscribe();
+    this.unsubscribePush();
+    this.chip.dispose();
     document.removeEventListener("mousedown", this.onDocMouseDown, true);
     window.removeEventListener("pagehide", this.onPageHide);
     if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer);
@@ -150,6 +197,7 @@ export class DocsPane {
 
   private async loadProposal(): Promise<void> {
     const gen = ++this.generation;
+    const seq = this.pushSeq;
     let info: ProposalInfo;
     try {
       info = await getProposal(this.opts.sessionId, this.opts.slug, this.opts.token);
@@ -160,7 +208,7 @@ export class DocsPane {
       return;
     }
     if (this.disposed || gen !== this.generation) return;
-    this.applyInfo(info);
+    this.applyInfo(info, seq);
     const remembered = lastDoc.get(this.memoryKey());
     const first = this.ordered.find((d) => d.name === remembered) ?? this.ordered[0] ?? null;
     if (!first) {
@@ -174,7 +222,9 @@ export class DocsPane {
     }
   }
 
-  private applyInfo(info: ProposalInfo): void {
+  /** `pushSeq` is this.pushSeq when the GetProposal request went out. */
+  private applyInfo(info: ProposalInfo, pushSeq: number): void {
+    if (pushSeq === this.pushSeq) this.applyPush(info.push);
     this.info = info;
     this.ordered = orderDocs(info.docs);
     if (this.current) {
@@ -257,10 +307,11 @@ export class DocsPane {
   private async createDoc(name: string, errorEl?: HTMLElement): Promise<void> {
     try {
       await addDoc(this.opts.sessionId, this.opts.slug, name, this.opts.token);
+      const seq = this.pushSeq;
       const info = await getProposal(this.opts.sessionId, this.opts.slug, this.opts.token);
       if (this.disposed) return;
       this.closeMenu();
-      this.applyInfo(info);
+      this.applyInfo(info, seq);
       const doc = this.ordered.find((d) => d.name === name);
       if (doc) await this.openDoc(doc);
     } catch (e) {
@@ -372,10 +423,11 @@ export class DocsPane {
     if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer);
     this.refreshTimer = window.setTimeout(() => {
       this.refreshTimer = null;
+      const seq = this.pushSeq;
       void getProposal(this.opts.sessionId, this.opts.slug, this.opts.token).then((info) => {
         if (this.disposed) return;
         const known = new Set(this.ordered.map((d) => d.name));
-        this.applyInfo(info);
+        this.applyInfo(info, seq);
         for (const doc of this.ordered) {
           if (!known.has(doc.name)) void this.refreshText(doc);
         }
@@ -392,6 +444,67 @@ export class DocsPane {
         }
       }, () => undefined);
     }, REFRESH_DEBOUNCE_MS);
+  }
+
+  private applyPush(status: PushStatus | null): void {
+    this.pushSeq++;
+    this.chip.apply(status);
+  }
+
+  private renderPush(view: PushView | null): void {
+    this.push.hidden = view === null;
+    if (!view) return;
+    for (const mode of ["auto", "manual"] as const) {
+      const btn = this.modeButtons[mode];
+      btn.setAttribute("aria-pressed", view.mode === mode ? "true" : "false");
+      btn.disabled = view.busy;
+    }
+    this.push.dataset.state = view.state;
+    this.chipText.textContent = view.text;
+    this.chipText.hidden = view.text === "";
+    this.chipAction.hidden = view.action === null;
+    this.chipAction.disabled = !view.actionEnabled;
+    this.chipSep.hidden = view.text === "" || view.action === null;
+    if (view.action === "hold") {
+      this.chipAction.textContent = "Hold";
+      this.chipAction.title = "Hold the send until your next edit";
+    } else if (view.action === "send") {
+      this.chipAction.textContent = "Send now";
+      this.chipAction.title = view.unsent > 0
+        ? `Send ${view.unsent === 1 ? "1 edit" : `${view.unsent} edits`} to the agent`
+        : "No edits to send";
+    }
+  }
+
+  private choosePushMode(mode: PushMode): void {
+    if (this.chip.current?.mode === mode) return;
+    this.runPush(`switch to ${mode}`, () => setPushMode(this.opts.sessionId, mode, this.opts.token));
+  }
+
+  private runChipAction(): void {
+    const status = this.chip.current;
+    if (!status) return;
+    if (status.state === "countdown" && status.mode === "auto") {
+      this.runPush("hold", () => holdPush(this.opts.sessionId, this.opts.token));
+    } else {
+      this.runPush("send", () => sendChanges(this.opts.sessionId, this.opts.token));
+    }
+  }
+
+  private runPush(what: string, call: () => Promise<PushStatus>): void {
+    this.chip.setBusy(true);
+    call().then(
+      (status) => {
+        if (this.disposed) return;
+        this.chip.setBusy(false);
+        this.applyPush(status);
+      },
+      (e: unknown) => {
+        if (this.disposed) return;
+        this.chip.setBusy(false);
+        this.chip.setError(`Could not ${what} · ${errorText(e)}`);
+      },
+    );
   }
 
   private questionCounts(): Map<string, number> {

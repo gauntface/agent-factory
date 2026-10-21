@@ -137,6 +137,11 @@ so the three samples are identical. The shell entries are unchanged: the same PR
 adds 4,380 raw bytes of JavaScript and 7,548 of CSS to the shell, which then
 measures 1,058,851 raw and 236,671 gzip bytes, inside its existing budget.
 
+The push chip (proposal mode, step 3b) adds 2,582 raw and 524 gzip bytes to the
+shell (1,061,433 raw, 237,195 gzip) and 4,973 raw and 1,415 gzip bytes to the
+lazy bundle (342,761 raw, 111,710 gzip), measured the same way. All four stay
+inside their budgets, so the baselines are unchanged.
+
 ### Bundle refresh provenance (#5028)
 
 Measured on the PR's final tree by recomputing the identical metric locally

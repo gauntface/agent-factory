@@ -134,8 +134,8 @@ import {
 } from "./ui.js";
 import { captureTabDeleteTarget } from "./tab_delete_target.js";
 import { type AccountsResponse, type SessionData, TabKind, type TaskData, type WireEvent } from "./types.js";
-import { publishProposalChange } from "./docs_tab.js";
-import { parseProposalChange } from "./proposal_api.js";
+import { publishProposalChange, publishProposalPush } from "./docs_tab.js";
+import { parseProposalChange, parseProposalPush } from "./proposal_api.js";
 
 // Boot stamp (redesign PR1): apply the saved theme choice to <html> BEFORE the app
 // mounts (before first paint), so an explicit light/dark choice shows no flash. This
@@ -2760,6 +2760,11 @@ function onEvent(ev: WireEvent): void {
   if (ev.type === "proposal.changed") {
     const change = parseProposalChange(ev);
     if (change) publishProposalChange(change);
+    return;
+  }
+  if (ev.type === "proposal.push") {
+    const status = parseProposalPush(ev);
+    if (status) publishProposalPush(status);
     return;
   }
   // Task deltas (#1592 Phase 5 PR8) don't touch the session list; the daemon owns
