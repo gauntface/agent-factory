@@ -62,6 +62,8 @@ func TestProposalPush_ModePersistsOnTheDocsTab(t *testing.T) {
 	require.Equal(t, data.ID, st["session_id"])
 	require.Equal(t, "idle", st["state"])
 	require.Nil(t, st["due_at"])
+	require.Contains(t, st, "due_in_ms")
+	require.Nil(t, st["due_in_ms"])
 
 	tabs := docsTabsOf(t, manager, data.ID)
 	require.Len(t, tabs, 1)
@@ -102,6 +104,8 @@ func TestProposalPush_HoldAndSendNowWhileBusy(t *testing.T) {
 	st := nextPushEvent(t, ch, proposal.PushCountdown)
 	require.Equal(t, 1, st.Unsent)
 	require.NotNil(t, st.DueAt)
+	require.NotNil(t, st.DueInMs)
+	require.LessOrEqual(t, *st.DueInMs, int64(proposal.PushQuiet/time.Millisecond))
 
 	code, env := postProposalRoute(t, cs, "HoldProposalPush", HoldProposalPushRequest{SessionID: data.ID})
 	require.Equal(t, http.StatusOK, code, env)

@@ -168,8 +168,14 @@ func TestPushAutoSendsAfterTheQuietPeriod(t *testing.T) {
 	if st.State != PushCountdown || st.Unsent != 1 || st.DueAt == nil || *st.DueAt != "2026-10-20T22:00:10.000Z" {
 		t.Fatalf("after save: %+v", st)
 	}
+	if st.DueInMs == nil || *st.DueInMs != 10000 {
+		t.Fatalf("due_in_ms after save: %v", st.DueInMs)
+	}
 	r.advance(9 * time.Second)
 	r.expect(PushCountdown, 0)
+	if st := r.state(); st.DueInMs == nil || *st.DueInMs != 1000 {
+		t.Fatalf("due_in_ms 9 s after save: %v", st.DueInMs)
+	}
 	r.advance(time.Second)
 	r.expect(PushSent, 1)
 	if p := r.prompts()[0]; !strings.HasPrefix(p, "Proposal p: the user edited goals.md.\n") || !strings.Contains(p, "+human edit") {
@@ -187,8 +193,11 @@ func TestPushWaitsForAReadyAgent(t *testing.T) {
 	r := newPushRig(t)
 	r.ready = false
 	r.save("edit\n")
-	r.advance(PushQuiet)
+	r.advance(PushQuiet + time.Second)
 	r.expect(PushWaitingAgent, 0)
+	if st := r.state(); st.DueInMs == nil || *st.DueInMs != 0 {
+		t.Fatalf("due_in_ms past due: %v", st.DueInMs)
+	}
 	r.ready = true
 	r.advance(time.Second)
 	r.expect(PushSent, 1)
@@ -321,6 +330,9 @@ func TestPushPublishesOnlyChanges(t *testing.T) {
 	r.host.mu.Unlock()
 	if len(got) != 1 || got[0].State != PushCountdown || got[0].SessionID != sessA || got[0].Slug != "p" {
 		t.Fatalf("pushes: %+v", got)
+	}
+	if got[0].DueInMs == nil || *got[0].DueInMs != 10000 {
+		t.Fatalf("the event must carry due_in_ms from when it was built: %v", got[0].DueInMs)
 	}
 }
 

@@ -371,8 +371,8 @@ func TestProposalCommandOutputsKeepTheirShape(t *testing.T) {
 		{cmd: proposalWriteCmd, args: []string{"p", "goals"}, stdin: "new\n", want: []string{"author", "commit", "doc", "path", "slug"}},
 		{cmd: proposalCheckpointCmd, want: []string{"commit", "cursor", "slug", "unseen"}},
 		{cmd: proposalChangesCmd, want: []string{"edits", "from", "slug", "to"}},
-		{cmd: proposalPushModeCmd, args: []string{"manual"}, want: []string{"due_at", "mode", "session_id", "slug", "state", "unsent"}},
-		{cmd: proposalSendCmd, want: []string{"due_at", "mode", "session_id", "slug", "state", "unsent"}},
+		{cmd: proposalPushModeCmd, args: []string{"manual"}, want: []string{"due_at", "due_in_ms", "mode", "session_id", "slug", "state", "unsent"}},
+		{cmd: proposalSendCmd, want: []string{"due_at", "due_in_ms", "mode", "session_id", "slug", "state", "unsent"}},
 		{cmd: proposalDetachCmd, want: []string{"detached", "slug"}},
 	}
 	for _, tc := range cases {

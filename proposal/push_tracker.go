@@ -39,7 +39,10 @@ type PushStatus struct {
 	Mode      PushMode  `json:"mode"`
 	State     PushState `json:"state"`
 	DueAt     *string   `json:"due_at"`
-	Unsent    int       `json:"unsent"`
+	// DueInMs is the time from when the daemon built this status to DueAt.
+	// Clients count down from it, so a skewed client clock does not matter.
+	DueInMs *int64 `json:"due_in_ms"`
+	Unsent  int    `json:"unsent"`
 }
 
 // pushUnsentMaxAge is how long a cached unsent count is used when no commit
@@ -94,10 +97,13 @@ func (s *Service) status(sessionID string, e *pushEntry, now time.Time) PushStat
 	if !d.DueAt.IsZero() {
 		due := d.DueAt.UTC().Format("2006-01-02T15:04:05.000Z07:00")
 		st.DueAt = &due
+		in := max(d.DueAt.Sub(now).Milliseconds(), 0)
+		st.DueInMs = &in
 	}
 	return st
 }
 
+// sameStatus ignores DueInMs, which changes with every call.
 func sameStatus(a *PushStatus, b PushStatus) bool {
 	if a == nil || a.SessionID != b.SessionID || a.Slug != b.Slug || a.Mode != b.Mode || a.State != b.State || a.Unsent != b.Unsent {
 		return false

@@ -56,7 +56,7 @@ The chip renders the `push` status from `GetProposal` and then each
 
 | `state` | Chip |
 |---|---|
-| `countdown` | "Sending to agent in 4s · Hold". The tab counts down to `due_at`. |
+| `countdown` | "Sending to agent in 4s · Hold". The tab counts down from `due_in_ms`, starting when it receives the status, not to `due_at`: the browser clock can be different from the daemon clock. |
 | `waiting_agent` | "Waits for agent". It sends when the agent becomes idle and 10 s have passed since your last edit. |
 | `held` | "Held · Send now". The next edit starts the countdown again. |
 | `sent` | "Sent to agent". |

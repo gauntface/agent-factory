@@ -248,6 +248,7 @@ and has a Docs tab for it.
  "mode": "auto",
  "state": "countdown",
  "due_at": "2026-10-20T22:41:24.000Z",
+ "due_in_ms": 6000,
  "unsent": 2}
 ```
 
@@ -261,6 +262,11 @@ and has a Docs tab for it.
 
 - `due_at` is an RFC 3339 UTC time in `countdown` and `waiting_agent` in auto
   mode, else `null`. It is the daemon's clock.
+- `due_in_ms` is the number of milliseconds from the moment the daemon built
+  this status to `due_at`, and `0` when `due_at` has passed. It is `null` when
+  `due_at` is `null`. **Clients count down from `due_in_ms` at the time they
+  receive the status, not from `due_at`**, because the client clock can be
+  different from the daemon clock. `due_at` is for display and logs only.
 - `unsent` counts the commits that `changes` would show the session now. Edits
   on disk that are not committed yet do not count.
 - `GetProposal` with `session_id` returns `"push": <push status>` for that
@@ -274,11 +280,11 @@ Each change of a session's push status publishes:
 {"type": "proposal.push",
  "data": {"session_id": "8f0c…", "slug": "auth-rework", "mode": "auto",
           "state": "waiting_agent", "due_at": "2026-10-20T22:41:24.000Z",
-          "unsent": 2}}
+          "due_in_ms": 0, "unsent": 2}}
 ```
 
-The countdown does not publish an event each second. The tab counts down to
-`due_at` itself.
+The countdown does not publish an event each second. The tab counts down
+from `due_in_ms` itself, starting when it receives the event.
 
 ### When the daemon sends
 
