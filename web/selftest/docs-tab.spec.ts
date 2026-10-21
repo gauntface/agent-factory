@@ -48,3 +48,52 @@ test("docs tab: af proposal start opens a Docs pane whose edits save to disk", a
   await expect(pane.locator(".af-docs-status")).toHaveText("Saved", { timeout: 15_000 });
   await expect.poll(() => readFileSync(join(started.path, "goals.md"), "utf8")).toContain(marker);
 });
+
+// Proposal mode, step 3: in Manual mode an edit waits, Send now is enabled only
+// once there is an unsent edit, and a click delivers the push prompt to the agent.
+test("docs tab: Manual mode holds edits until Send now delivers them to the agent", async ({ page, request }) => {
+  const afBin = process.env.AF_BIN;
+  const mockRepo = process.env.AF_MOCK_REPO;
+  test.skip(!afBin || !mockRepo, "AF_BIN/AF_MOCK_REPO are set only by web-selftest-entry.sh");
+  const af = (...args: string[]): string =>
+    execFileSync(afBin as string, args, { stdio: ["ignore", "pipe", "pipe"], encoding: "utf8" });
+
+  const title = "docs-push-probe";
+  const slug = "docs-push-plan";
+  af("sessions", "create", "--repo", mockRepo as string, "--name", title, "--program", "claude");
+  const started = JSON.parse(af("proposal", "start", slug, "--repo", mockRepo as string, "--session", title,
+    "--docs", "goals")) as { tab?: string; tab_error?: string };
+  expect(started.tab_error ?? "", "start must create the Docs tab").toBe("");
+
+  const envelope = await (await request.post("/v1/Snapshot", { data: { repo_id: "" } })).json();
+  const session = envelope.data.instances.find((s: { title: string }) => s.title === title);
+  expect(session).toBeTruthy();
+
+  await page.goto(`/#/session/${session.id}`);
+  await page.locator(".af-tab", { hasText: "Docs" }).click();
+  const pane = page.locator(`.af-docs[data-proposal="${slug}"]`);
+  await expect(pane.locator(".cm-content")).toBeVisible();
+  await expect(pane.locator(".af-docs-status")).toHaveText("Saved");
+
+  const push = pane.locator(".af-docs-push");
+  const auto = push.getByRole("button", { name: "Auto", exact: true });
+  const manual = push.getByRole("button", { name: "Manual", exact: true });
+  await expect(auto).toHaveAttribute("aria-pressed", "true");
+  await manual.click();
+  await expect(manual).toHaveAttribute("aria-pressed", "true");
+  const sendNow = push.locator(".af-docs-chip-action");
+  await expect(sendNow).toHaveText("Send now");
+  await expect(sendNow).toBeDisabled();
+
+  const marker = `Pushed from the browser ${Date.now()}`;
+  await pane.locator(".cm-content").click();
+  await page.keyboard.press("Control+End");
+  await page.keyboard.type(`\n\n${marker}\n`);
+  await expect(pane.locator(".af-docs-status")).toHaveText("Saved", { timeout: 15_000 });
+  await expect(sendNow, "a manual-mode save must not send by itself").toBeEnabled({ timeout: 15_000 });
+
+  await sendNow.click();
+  await expect.poll(() => af("sessions", "preview", title, "--repo", mockRepo as string, "--full", "--plain"),
+    { timeout: 30_000 }).toContain(`Proposal ${slug}: the user edited goals.md.`);
+  await expect(sendNow).toBeDisabled({ timeout: 15_000 });
+});
