@@ -1592,8 +1592,8 @@
         "pointer": ""
       },
       "web": {
-        "status": "no",
-        "pointer": ""
+        "status": "yes",
+        "pointer": "web/src/docs_pane.ts DocsPane (doc strip, + menu, editor) → web/src/proposal_api.ts GetProposal, ReadProposalDoc, SaveProposalDoc, AddProposalDoc"
       },
       "cli": {
         "status": "yes",
@@ -1601,7 +1601,7 @@
       },
       "verdict": "real-gap",
       "issue": "TBD",
-      "notes": "Not yet: proposal mode step 2a adds the daemon routes (docs/dev/proposals/proposal-mode/api.md) and moves this CLI onto them. SaveProposalDoc, the three-way human save, has no CLI verb: it is for the web editor. Step 2b adds the web Docs tab (doc strip, live-preview editor, add-doc menu) over those routes. The TUI is not planned to edit proposals: goals.md lists a TUI editor as a non-goal, and future.md lists a read-only TUI view as later work."
+      "notes": "Not yet: proposal mode step 2a adds the daemon routes (docs/dev/proposals/proposal-mode/api.md) and moves this CLI onto them. SaveProposalDoc, the three-way human save, has no CLI verb: it is for the web editor. The web Docs tab (step 2b) has the doc strip, the live-preview editor and the add-doc menu over those routes, and saves with SaveProposalDoc. The TUI is not planned to edit proposals: goals.md lists a TUI editor as a non-goal, and future.md lists a read-only TUI view as later work."
     },
     {
       "id": "proposal.docs-tab",
@@ -1611,8 +1611,8 @@
         "pointer": "ui/tab_pane.go docsTabPlaceholder"
       },
       "web": {
-        "status": "no",
-        "pointer": ""
+        "status": "partial",
+        "pointer": "web/src/split.ts reconcile → web/src/docs_tab.ts mountDocsTab (lazy web/dist/lazy/docs-editor.js)"
       },
       "cli": {
         "status": "yes",
@@ -1620,7 +1620,7 @@
       },
       "verdict": "real-gap",
       "issue": "TBD",
-      "notes": "Proposal mode step 2a adds the docs tab kind (session.TabKindDocs) and creates it from af proposal start and attach. Step 2b renders it in the web UI as the proposal editor. The TUI shows a placeholder that says the tab is web only: goals.md lists a TUI editor as a non-goal."
+      "notes": "Proposal mode step 2a adds the docs tab kind (session.TabKindDocs) and creates it from af proposal start and attach. The web UI renders it as the proposal editor (step 2b). The web renders Docs tabs but cannot create one: CreateTab.proposal is a gap, and start and attach create the tab. The TUI shows a placeholder that says the tab is web only: goals.md lists a TUI editor as a non-goal."
     }
   ],
   "ledger": {
@@ -1826,6 +1826,9 @@
       "ListAccounts": "session.accounts",
       "RegisterAccount": "session.accounts",
       "AddTask": "task.add",
+      "AddProposalDoc": "proposal.docs",
+      "GetProposal": "proposal.docs",
+      "ReadProposalDoc": "proposal.docs",
       "ArchiveSession": "session.archive",
       "CloseTab": "session.tab.close",
       "ConfirmHandoffDelivery": "session.handoff-delivery-confirm",
@@ -2644,6 +2647,30 @@
       "RestoreSession": {
         "force_reap": {
           "ok": "The force-reap override is deliberately CLI-only. It discards a reachable sandbox's unpushed work (#2923), so it must be a typed, per-invocation act with the consequence written next to it — not a button or a keystroke a mis-click can reach. The refusal it releases names the exact command, so the TUI and web point at the CLI rather than reproducing the hazard."
+        }
+      },
+      "AddProposalDoc": {
+        "repo_id": {
+          "ok": "The Docs tab is a tab of one session, so it addresses the proposal by session_id, which api.md says the Docs tab sends. The daemon finds the project from the session, so repo_id and repo_path would only repeat it."
+        },
+        "repo_path": {
+          "ok": "The Docs tab is a tab of one session, so it addresses the proposal by session_id, which api.md says the Docs tab sends. The daemon finds the project from the session, so repo_id and repo_path would only repeat it."
+        }
+      },
+      "GetProposal": {
+        "repo_id": {
+          "ok": "The Docs tab is a tab of one session, so it addresses the proposal by session_id, which api.md says the Docs tab sends. The daemon finds the project from the session, so repo_id and repo_path would only repeat it."
+        },
+        "repo_path": {
+          "ok": "The Docs tab is a tab of one session, so it addresses the proposal by session_id, which api.md says the Docs tab sends. The daemon finds the project from the session, so repo_id and repo_path would only repeat it."
+        }
+      },
+      "ReadProposalDoc": {
+        "repo_id": {
+          "ok": "The Docs tab is a tab of one session, so it addresses the proposal by session_id, which api.md says the Docs tab sends. The daemon finds the project from the session, so repo_id and repo_path would only repeat it."
+        },
+        "repo_path": {
+          "ok": "The Docs tab is a tab of one session, so it addresses the proposal by session_id, which api.md says the Docs tab sends. The daemon finds the project from the session, so repo_id and repo_path would only repeat it."
         }
       }
     }
