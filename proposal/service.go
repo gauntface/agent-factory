@@ -370,7 +370,7 @@ func (s *Service) Detach(sessionID string) (*DetachResult, error) {
 	res := &DetachResult{Slug: slug, Detached: slug != ""}
 	if slug != "" {
 		if res.Tab, err = s.host.CloseDocsTabs(r.session.ID, slug); err != nil {
-			return nil, fmt.Errorf("detached from %s, but closing its Docs tab failed: %w", slug, err)
+			return nil, fmt.Errorf("detached from %s, but closing its Proposal tab failed: %w", slug, err)
 		}
 	}
 	return res, nil
