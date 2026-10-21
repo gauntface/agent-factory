@@ -3,9 +3,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 
-// Proposal mode, step 2: `af proposal start` gives a session a Docs tab, the web
-// renders it with the lazy editor bundle, and an edit in the browser saves through
-// the daemon to the doc on disk.
+// Proposal mode, step 2: `af proposal start` gives the session being viewed a Docs
+// tab, the web splits it to the right of the Agent pane with the lazy editor bundle,
+// and an edit in the browser saves through the daemon to the doc on disk.
 test("docs tab: af proposal start opens a Docs pane whose edits save to disk", async ({ page, request }) => {
   const afBin = process.env.AF_BIN;
   const mockRepo = process.env.AF_MOCK_REPO;
@@ -16,10 +16,6 @@ test("docs tab: af proposal start opens a Docs pane whose edits save to disk", a
   const title = "docs-probe";
   const slug = "docs-probe-plan";
   af("sessions", "create", "--repo", mockRepo as string, "--name", title, "--program", "claude");
-  const started = JSON.parse(af("proposal", "start", slug, "--repo", mockRepo as string, "--session", title,
-    "--docs", "goals,api")) as { path: string; tab?: string; tab_error?: string };
-  expect(started.tab_error ?? "", "start must create the Docs tab").toBe("");
-  expect(started.tab).toBeTruthy();
 
   const envelope = await (await request.post("/v1/Snapshot", { data: { repo_id: "" } })).json();
   const session = envelope.data.instances.find((s: { title: string }) => s.title === title);
@@ -31,11 +27,23 @@ test("docs tab: af proposal start opens a Docs pane whose edits save to disk", a
   });
   await page.goto(`/#/session/${session.id}`);
   await expect(page.locator(".af-tab-label", { hasText: "Agent" })).toBeVisible();
+  await expect(page.locator(".af-pane")).toHaveCount(1);
   expect(editorLoads, "the editor bundle must not load before a Docs tab opens").toHaveLength(0);
 
-  await page.locator(".af-tab", { hasText: "Docs" }).click();
+  const started = JSON.parse(af("proposal", "start", slug, "--repo", mockRepo as string, "--session", title,
+    "--docs", "goals,api")) as { path: string; tab?: string; tab_error?: string };
+  expect(started.tab_error ?? "", "start must create the Docs tab").toBe("");
+  expect(started.tab).toBeTruthy();
+
   const pane = page.locator(`.af-docs[data-proposal="${slug}"]`);
   await expect(pane.locator(".cm-content")).toBeVisible();
+  const panes = page.locator(".af-pane");
+  await expect(panes, "Agent and Docs open side by side").toHaveCount(2);
+  await expect(panes.nth(0).locator(".xterm")).toBeVisible();
+  await expect(panes.nth(1).locator(".af-docs")).toBeVisible();
+  const agentBox = await panes.nth(0).boundingBox();
+  const docsBox = await panes.nth(1).boundingBox();
+  expect(docsBox!.x, "Docs sits to the right of Agent").toBeGreaterThan(agentBox!.x);
   await expect(pane.locator(".af-docs-tab")).toHaveText(["goals", "api"]);
   await expect(pane.locator('.af-docs-tab[aria-selected="true"]')).toHaveText("goals");
   await expect(pane.locator(".af-docs-status")).toHaveText("Saved");
@@ -70,7 +78,7 @@ test("docs tab: Manual mode holds edits until Send now delivers them to the agen
   expect(session).toBeTruthy();
 
   await page.goto(`/#/session/${session.id}`);
-  await page.locator(".af-tab", { hasText: "Docs" }).click();
+  await expect(page.locator(".af-pane"), "a session opened with a Docs tab shows it split").toHaveCount(2);
   const pane = page.locator(`.af-docs[data-proposal="${slug}"]`);
   await expect(pane.locator(".cm-content")).toBeVisible();
   await expect(pane.locator(".af-docs-status")).toHaveText("Saved");

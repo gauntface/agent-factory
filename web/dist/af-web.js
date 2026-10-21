@@ -13212,6 +13212,36 @@ function resolveDragTab(drag, tabRealIds, tabIds, tabCount) {
   return tab;
 }
 
+// src/docs_autosplit.ts
+var AGENT_TAB = 0;
+function placeNewDocsTabs(tree, tabIds, tabKinds, seen, key, narrow) {
+  let out = tree;
+  tabKinds.forEach((kind, tab) => {
+    const k = key(tabIds[tab] ?? "");
+    if (kind !== TabKind.Docs || seen.has(k)) {
+      return;
+    }
+    seen.add(k);
+    if (narrow) {
+      return;
+    }
+    out = placeDocs(out, tab, tabKinds);
+  });
+  return out;
+}
+function placeDocs(tree, docs, tabKinds) {
+  const panes = leaves(tree);
+  if (panes.some((l) => l.tab === docs)) {
+    return tree;
+  }
+  const docsPane = panes.find((l) => tabKinds[l.tab] === TabKind.Docs);
+  if (docsPane) {
+    return replaceTab(tree, docsPane.id, docs);
+  }
+  const target = panes.find((l) => l.tab === AGENT_TAB) ?? (tree.kind === "leaf" ? tree : null);
+  return target ? splitLeaf(tree, target.id, "right", docs) : tree;
+}
+
 // src/docs_tab.ts
 var docsModule = null;
 function loadDocsModule() {
@@ -13437,6 +13467,9 @@ function isRenameableTab(kind) {
 
 // src/split.ts
 var EDGE_BAND = 0.3;
+function phoneWidth() {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function" ? window.matchMedia("(max-width: 768px)").matches : false;
+}
 function el(tag, cls) {
   const node = document.createElement(tag);
   node.className = cls;
@@ -13512,9 +13545,10 @@ function probeFallbackMsg(health, host) {
   return health === "unreachable" ? `Could not reach the daemon to check ${host}.` : `No dev server is answering at ${host} yet.`;
 }
 var SplitView = class {
-  constructor(host, cb) {
+  constructor(host, cb, narrow = phoneWidth) {
     this.host = host;
     this.cb = cb;
+    this.narrow = narrow;
   }
   // Retained layout per session id (in-memory; a nice-to-have to persist across
   // reload is out of scope for v1). Keyed by the stable session id.
@@ -13605,6 +13639,9 @@ var SplitView = class {
   // ordinal later would ask the current roster about a past position and get the wrong
   // tab, so the id is captured at the same moment as the ordinal.
   lastFocusedTabId = "";
+  // Docs tabs already auto-split once this page load, keyed by session and tab
+  // identity, so a split the user closes is not put back.
+  docsPlaced = /* @__PURE__ */ new Set();
   /**
    * Shows `sessionId`'s layout, building/rebuilding terminals as needed. Called on
    * every selection/tab change: a NEW session rebuilds from its retained tree (or a
@@ -13639,7 +13676,7 @@ var SplitView = class {
       this.tabCount = tabCount;
       const before = this.tree;
       const settled = remapByIdentity(this.tree ?? singleLeaf(initialTab), prevIds, tabIds);
-      this.tree = validate(settled, tabCount);
+      this.tree = this.placeDocs(sessionId, validate(settled, tabCount), tabIds, tabKinds);
       this.retain(sessionId, this.tree, tabIds);
       const rebound = tabsRebound(prevIds, prevKinds, prevTargets, tabIds, tabKinds, tabTargets);
       const renamed = !sameTabs(prevNames, tabNames);
@@ -13654,7 +13691,12 @@ var SplitView = class {
     this.forgetFocusHistory();
     this.sessionId = sessionId;
     this.tabCount = tabCount;
-    this.tree = validate(this.retainedTree(sessionId, tabIds) ?? singleLeaf(initialTab), tabCount);
+    this.tree = this.placeDocs(
+      sessionId,
+      validate(this.retainedTree(sessionId, tabIds) ?? singleLeaf(initialTab), tabCount),
+      tabIds,
+      tabKinds
+    );
     this.retain(sessionId, this.tree, tabIds);
     this.focusedId = leaves(this.tree)[0]?.id ?? null;
     this.reconcile();
@@ -13691,6 +13733,10 @@ var SplitView = class {
       return null;
     }
     return remapByIdentity(rec.tree, rec.ids, tabIds);
+  }
+  placeDocs(sessionId, tree, tabIds, tabKinds) {
+    const key = (identity) => `${sessionId}\0${identity}`;
+    return placeNewDocsTabs(tree, tabIds, tabKinds, this.docsPlaced, key, this.narrow());
   }
   /** Retains `tree` for `sessionId` together with the identities it is bound against. */
   retain(sessionId, tree, ids) {

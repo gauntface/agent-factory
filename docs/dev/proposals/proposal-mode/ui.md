@@ -19,8 +19,18 @@ The web UI only gets this tab, in step 2 and step 3.
 └───────────────────────────┴───────────────────────────────────────────┘
 ```
 
-- The Docs tab is a normal tab. When `start` or `attach` creates it, it opens
-  split to the right of the Agent tab. It uses the existing pane-split code.
+- The Docs tab is a normal tab. The web opens it split to the right of the
+  Agent pane, 50/50, with the existing pane-split code. This happens when the
+  tab appears while you view the session (`start` or `attach` creates it), and
+  when you open a session that already has one.
+  - It happens once for each Docs tab in each page load. If you close or move
+    the split, it stays that way.
+  - A second Docs tab replaces the Docs pane. It does not add a third pane.
+  - If no pane shows the Agent tab, a single pane splits to the right and keeps
+    its tab. A layout of more than one pane that has no Agent pane does not
+    change.
+  - At phone width (768px or less), the Docs tab stays a tab.
+  - The layout is not persisted, and the daemon is not involved.
 - **Doc strip:** one sub-tab for each file, in template order and then
   alphabetical order. The **+** menu lists the templates that are not used
   yet, and **Blank…**.
