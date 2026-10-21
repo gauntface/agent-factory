@@ -133,7 +133,9 @@ import {
   type NewTabKind,
 } from "./ui.js";
 import { captureTabDeleteTarget } from "./tab_delete_target.js";
-import type { AccountsResponse, SessionData, TaskData, WireEvent } from "./types.js";
+import { type AccountsResponse, type SessionData, TabKind, type TaskData, type WireEvent } from "./types.js";
+import { publishProposalChange } from "./docs_tab.js";
+import { parseProposalChange } from "./proposal_api.js";
 
 // Boot stamp (redesign PR1): apply the saved theme choice to <html> BEFORE the app
 // mounts (before first paint), so an explicit light/dark choice shows no flash. This
@@ -2648,7 +2650,10 @@ function syncSplit(state: AppState): void {
   const tabRealIds = runtimeSelected ? sessionTabs(runtimeSelected).map(tabRealId) : [""];
   // The per-tab iframe target for web tabs (undefined for terminal tabs), parallel
   // to tabIds, so the split view can iframe a web leaf.
-  const tabTargets = runtimeSelected ? sessionTabs(runtimeSelected).map((t) => t.url) : [];
+  // A Docs tab has no URL; its target is the proposal slug it edits.
+  const tabTargets = runtimeSelected
+    ? sessionTabs(runtimeSelected).map((t) => (t.kind === TabKind.Docs ? t.proposal : t.url))
+    : [];
   // The kind of each tab, parallel to tabIds — the split view reads it to tell a web
   // tab from a terminal one now that the identity is the opaque stable id (#1738).
   const tabKinds = runtimeSelected ? sessionTabs(runtimeSelected).map((t) => t.kind) : [];
@@ -2752,6 +2757,11 @@ function stopStream(): void {
  * terminal down for.
  */
 function onEvent(ev: WireEvent): void {
+  if (ev.type === "proposal.changed") {
+    const change = parseProposalChange(ev);
+    if (change) publishProposalChange(change);
+    return;
+  }
   // Task deltas (#1592 Phase 5 PR8) don't touch the session list; the daemon owns
   // tasks.json, so a task.created/updated/removed event just triggers a debounced
   // ListTasks refetch (the authoritative task projection). The session reducer
@@ -2964,6 +2974,7 @@ function isNativeControl(el: HTMLElement | null): boolean {
     return false;
   }
   return (
+    el.isContentEditable ||
     el.tagName === "BUTTON" ||
     el.tagName === "INPUT" ||
     el.tagName === "TEXTAREA" ||
@@ -2983,7 +2994,9 @@ function onKeydown(e: KeyboardEvent): void {
   // Disconnect / pane-action button would have its Enter hijacked as an attach, and
   // modal typing would move the rail.
   const target = e.target as HTMLElement | null;
-  const inTerminal = target ? termHost.contains(target) : false;
+  // The Docs editor is contenteditable inside termHost, but it types text rather
+  // than driving a PTY, so it keeps its keys like any other field.
+  const inTerminal = target ? termHost.contains(target) && !target.isContentEditable : false;
   if (!inTerminal && e.key !== "Escape" && isNativeControl(target)) {
     return;
   }

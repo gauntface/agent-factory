@@ -450,7 +450,8 @@ export type EventType =
   | "projects.changed"
   | "task.created"
   | "task.updated"
-  | "task.removed";
+  | "task.removed"
+  | "proposal.changed";
 
 /**
  * agentproto.Event (agentproto/message.go): one message on the /v1/events plane.
