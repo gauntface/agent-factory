@@ -182,6 +182,14 @@ for `Ready` and for an unconfirmed delivery.
    cursor back with a compare-and-swap ref update, and the push tries again
    after 10 s.
 
+### Web
+
+The Docs tab reads the push status from `GetProposal` and follows
+`proposal.push` events, which `web/src/index.ts` relays to open tabs through
+`docs_tab.ts`. `docs_push.ts` turns a status into the chip text and button, and
+re-renders once a second during a countdown. All push calls are in
+`proposal_api.ts`. `ui.md` (Push chip) has the copy.
+
 ## Code layout
 
 - `proposal/` is a new package for the store, templates, git operations,

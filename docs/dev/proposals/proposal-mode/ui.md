@@ -51,21 +51,35 @@ The web UI only gets this tab, in step 2 and step 3.
 
 ## Push chip (step 3)
 
-The chip renders the `push` status from `GetProposal` and then each
-`proposal.push` event for the tab's session (`api.md`, Push).
+The header slot holds the Auto / Manual switch and the chip. They render the
+`push` status from `GetProposal` and then each `proposal.push` event for the
+tab's session (`api.md`, Push). With `"push": null` (the session is not
+attached to this proposal), the slot is empty.
 
-| `state` | Chip |
-|---|---|
-| `countdown` | "Sending to agent in 4s · Hold". The tab counts down from `due_in_ms`, starting when it receives the status, not to `due_at`: the browser clock can be different from the daemon clock. |
-| `waiting_agent` | "Waits for agent". It sends when the agent becomes idle and 10 s have passed since your last edit. |
-| `held` | "Held · Send now". The next edit starts the countdown again. |
-| `sent` | "Sent to agent". |
-| `idle` | Nothing in auto mode. |
+| `state` | Auto mode | Manual mode |
+|---|---|---|
+| `countdown` | "Sending to agent in 4s · Hold". At 0 s, "Sending to agent…" until the next status. | — |
+| `waiting_agent` | "Waits for agent". It sends when the agent becomes idle and 10 s have passed since your last edit. | "Waits for agent · Send now" |
+| `held` | "Held · Send now". The next edit starts the countdown again. | — |
+| `sent` | "Sent to agent" for 4 s, then nothing. | "Sent to agent · Send now" for 4 s |
+| `idle` | Nothing. | "Send now" |
 
-- **Hold** calls `HoldProposalPush`.
-- **Send now** calls `SendProposalChanges`. In Manual mode the chip is always
-  a **Send now** button, and it is active when `unsent` is more than 0.
-- The Auto / Manual switch calls `SetProposalPushMode`.
+- The tab counts down from `due_in_ms`, starting when it receives the status,
+  not to `due_at`: the browser clock can be different from the daemon clock.
+  The number changes once a second. There is no animation, so reduced motion
+  needs no other rule.
+- **Hold** calls `HoldProposalPush`. **Send now** calls
+  `SendProposalChanges`, and it is active only when `unsent` is more than 0.
+  The Auto / Manual switch calls `SetProposalPushMode`. The tab applies each
+  reply as the new status.
+- While a call runs, the switch and the chip button are disabled. A failed
+  call shows "Could not send · <reason>" (or hold, or switch to auto/manual)
+  in the chip until the next status.
+- A `GetProposal` reply is applied only when no push status arrived after the
+  request went out, so a slow reply cannot replace a newer event.
+- At phone width, the header tools wrap to their own row.
+- The code is `web/src/docs_push.ts` (the pure state machine and its timer,
+  tested in `docs_push.test.ts`) and the header slot in `docs_pane.ts`.
 
 ## Copy
 
