@@ -3089,7 +3089,7 @@ textarea[class] {
   display: none;
 }
 @media (max-width: 768px) {
-  .af-session-first .af-term-docs-group {
+  .af-session-first .af-term-docs-group:not(:empty) {
     display: flex;
     align-items: center;
     gap: var(--af-space-1);

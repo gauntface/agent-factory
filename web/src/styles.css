@@ -3571,7 +3571,7 @@ button[class], input[class], select[class], textarea[class] { font-size: var(--a
  * sits in the app menu. Desktop keeps the tab bar. */
 .af-term-docs-group { display: none; }
 @media (max-width: 768px) {
-  .af-session-first .af-term-docs-group {
+  .af-session-first .af-term-docs-group:not(:empty) {
     display: flex;
     align-items: center;
     gap: var(--af-space-1);

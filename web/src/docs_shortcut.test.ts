@@ -85,7 +85,7 @@ function phoneRules(selector: string): string {
       i++;
     }
     const body = css.slice(start, i - 1);
-    const rule = body.match(new RegExp(`(?:^|\\})\\s*${selector.replace(/[.[\]]/g, "\\$&")}\\s*\\{([^}]*)\\}`));
+    const rule = body.match(new RegExp(`(?:^|\\})\\s*${selector.replace(/[.[\]():]/g, "\\$&")}\\s*\\{([^}]*)\\}`));
     if (rule) return rule[1];
   }
   return "";
@@ -93,7 +93,8 @@ function phoneRules(selector: string): string {
 
 test("Docs shortcuts show only in the phone session header", () => {
   assert.match(rules(".af-term-docs-group").join(""), /display:\s*none/);
-  assert.match(phoneRules(".af-session-first .af-term-docs-group"), /display:\s*flex/);
+  assert.match(phoneRules(".af-session-first .af-term-docs-group:not(:empty)"), /display:\s*flex/,
+    "an empty group must not add a flex gap to the header");
   assert.match(phoneRules(".af-session-first .af-term-docs"), /display:\s*inline-flex/);
 });
 
