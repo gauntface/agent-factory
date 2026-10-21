@@ -130,10 +130,6 @@ export function parseProposalPush(ev: unknown): PushStatus | null {
   return status && status.sessionId !== "" && status.slug !== "" ? status : null;
 }
 
-export async function setPushMode(sessionId: string, mode: PushMode, token: string): Promise<PushStatus> {
-  return pushReply(await af<unknown>("SetProposalPushMode", { session_id: sessionId, mode }, token));
-}
-
 export async function holdPush(sessionId: string, token: string): Promise<PushStatus> {
   return pushReply(await af<unknown>("HoldProposalPush", { session_id: sessionId }, token));
 }
@@ -213,6 +209,10 @@ export async function putDoc(
 
 export async function addDoc(sessionId: string, slug: string, name: string, token: string): Promise<void> {
   await af<unknown>("AddProposalDoc", { session_id: sessionId, slug, name, author: "human" }, token);
+}
+
+export async function removeDoc(sessionId: string, slug: string, doc: string, token: string): Promise<void> {
+  await af<unknown>("RemoveProposalDoc", { session_id: sessionId, slug, doc, author: "human" }, token);
 }
 
 /** Reads a `proposal.changed` event. The fields sit under `data`. Returns null

@@ -1,6 +1,5 @@
-// The Docs tab (proposal mode): a doc strip, a header with the push switch and
-// chip, the save status and the open-question count, a conflict banner, and the
-// editor. This
+// The Docs tab (proposal mode): a doc strip, a header with the push chip, the
+// save status and the open-question count, a conflict banner, and the editor. This
 // module is the entry of the lazy bundle dist/lazy/docs-editor.js (see build.mjs);
 // docs_tab.ts in the main bundle loads it the first time a Docs tab opens. What
 // it imports from the main bundle's modules gets a second copy in this bundle, so
@@ -31,11 +30,11 @@ import {
   type ProposalDocRef,
   type ProposalInfo,
   putDoc,
-  type PushMode,
   type PushStatus,
+  removeDoc,
   sendChanges,
-  setPushMode,
 } from "./proposal_api.js";
+import { pressDistance, TAB_PRESS_LIMITS, tabPressVerdict } from "./tabtouch.js";
 import { diffText } from "./text_diff.js";
 
 // The doc each proposal last showed, so a rebuilt pane opens where it was.
@@ -59,14 +58,17 @@ export class DocsPane {
   private readonly strip: HTMLElement;
   private readonly addButton: HTMLButtonElement;
   private readonly menu: HTMLElement;
+  private readonly docMenu: HTMLElement;
+  private docMenuTab: HTMLElement | null = null;
+  private longPress: { timer: number; x: number; y: number; pointerId: number } | null = null;
   private readonly status: HTMLElement;
+  private readonly statusText: HTMLElement;
   private readonly questions: HTMLButtonElement;
   private readonly banner: HTMLElement;
   private readonly body: HTMLElement;
   private readonly editorHost: HTMLElement;
   private readonly notice: HTMLElement;
   private readonly push: HTMLElement;
-  private readonly modeButtons: Record<PushMode, HTMLButtonElement>;
   private readonly chipText: HTMLElement;
   private readonly chipSep: HTMLElement;
   private readonly chipAction: HTMLButtonElement;
@@ -92,6 +94,9 @@ export class DocsPane {
       !this.addButton.contains(e.target as Node)) {
       this.closeMenu();
     }
+    if (!this.docMenu.hidden && !this.docMenu.contains(e.target as Node)) {
+      this.closeDocMenu(false);
+    }
   };
 
   constructor(host: HTMLElement, private readonly opts: DocsPaneOptions) {
@@ -111,29 +116,24 @@ export class DocsPane {
       }
     });
     const addWrap = h("div", { class: "af-docs-addwrap" }, this.addButton, this.menu);
-    const stripWrap = h("div", { class: "af-docs-stripwrap" }, this.strip, addWrap);
-    this.status = h("span", { class: "af-docs-status", role: "status" });
+    this.docMenu = h("div", { class: "af-docs-menu af-docs-docmenu", role: "menu", hidden: true });
+    this.docMenu.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        this.closeDocMenu(true);
+      }
+    });
+    const stripWrap = h("div", { class: "af-docs-stripwrap" }, this.strip, addWrap, this.docMenu);
+    this.statusText = h("span", { class: "af-docs-status-text" });
+    this.status = h("span", { class: "af-docs-status", role: "status" }, icon("loader-circle"), this.statusText);
     this.questions = h("button", { type: "button", class: "af-ghost af-docs-questions", hidden: true });
     this.questions.addEventListener("click", () => void this.goToNextQuestion());
-    const modeButton = (mode: PushMode, label: string, title: string): HTMLButtonElement => {
-      const btn = h("button", { type: "button", class: "af-docs-pushmode-button", title }, label);
-      btn.setAttribute("aria-pressed", "false");
-      btn.addEventListener("click", () => this.choosePushMode(mode));
-      return btn;
-    };
-    this.modeButtons = {
-      auto: modeButton("auto", "Auto", "Send your edits to the agent 10 s after you stop typing"),
-      manual: modeButton("manual", "Manual", "Send your edits to the agent only when you click Send now"),
-    };
-    const modeGroup = h("div", { class: "af-docs-pushmode", role: "group" }, this.modeButtons.auto,
-      this.modeButtons.manual);
-    modeGroup.setAttribute("aria-label", "Send edits to the agent");
     this.chipText = h("span", { class: "af-docs-chip-text" });
     this.chipSep = h("span", { class: "af-docs-sep", ariaHidden: "true", hidden: true }, " · ");
     this.chipAction = h("button", { type: "button", class: "af-ghost af-docs-chip-action", hidden: true });
     this.chipAction.addEventListener("click", () => this.runChipAction());
     const chip = h("span", { class: "af-docs-chip" }, this.chipText, this.chipSep, this.chipAction);
-    this.push = h("div", { class: "af-docs-slot af-docs-push", hidden: true }, modeGroup, chip);
+    this.push = h("div", { class: "af-docs-slot af-docs-push", hidden: true }, chip);
     this.chip = new PushChip({
       now: () => performance.now(),
       setTimer: (fn, ms) => window.setTimeout(fn, ms),
@@ -167,6 +167,7 @@ export class DocsPane {
     this.chip.dispose();
     document.removeEventListener("mousedown", this.onDocMouseDown, true);
     window.removeEventListener("pagehide", this.onPageHide);
+    this.cancelLongPress();
     if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer);
     this.sync?.dispose();
     this.sync = null;
@@ -243,9 +244,128 @@ export class DocsPane {
       tab.title = doc.file;
       tab.addEventListener("click", () => void this.openDoc(doc));
       tab.addEventListener("keydown", (e) => this.onStripKey(e, doc));
+      tab.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        this.cancelLongPress();
+        const at = e.button === -1 || (e.clientX === 0 && e.clientY === 0) ? null : { x: e.clientX, y: e.clientY };
+        this.openDocMenu(doc, tab, at);
+      });
+      tab.addEventListener("pointerdown", (e) => this.startLongPress(e, doc, tab));
+      tab.addEventListener("pointermove", (e) => {
+        const p = this.longPress;
+        if (p && p.pointerId === e.pointerId && tabPressVerdict({ heldMs: 0,
+          movedPx: pressDistance(p.x, p.y, e.clientX, e.clientY) }, TAB_PRESS_LIMITS) === "abandon") {
+          this.cancelLongPress();
+        }
+      });
+      for (const type of ["pointerup", "pointercancel", "pointerleave"] as const) {
+        tab.addEventListener(type, () => this.cancelLongPress());
+      }
       return tab;
     });
     this.strip.replaceChildren(...tabs);
+  }
+
+  // iOS Safari fires no contextmenu event on a long press, so touch opens the
+  // menu from its own timer.
+  private startLongPress(e: PointerEvent, doc: ProposalDocRef, tab: HTMLElement): void {
+    if (e.pointerType !== "touch") return;
+    this.cancelLongPress();
+    const { clientX: x, clientY: y } = e;
+    const timer = window.setTimeout(() => {
+      this.longPress = null;
+      this.openDocMenu(doc, tab, { x, y });
+    }, TAB_PRESS_LIMITS.holdMs);
+    this.longPress = { timer, x, y, pointerId: e.pointerId };
+  }
+
+  private cancelLongPress(): void {
+    if (this.longPress) window.clearTimeout(this.longPress.timer);
+    this.longPress = null;
+  }
+
+  private openDocMenu(doc: ProposalDocRef, tab: HTMLElement, at: { x: number; y: number } | null): void {
+    this.closeMenu();
+    const remove = h("button", { type: "button", class: "af-docs-menuitem", role: "menuitem" }, "Remove doc…");
+    remove.addEventListener("click", () => this.confirmRemove(doc));
+    this.docMenu.replaceChildren(remove);
+    this.docMenuTab = tab;
+    const host = this.docMenu.parentElement!.getBoundingClientRect();
+    const box = tab.getBoundingClientRect();
+    const x = at ? at.x : box.left;
+    const y = at ? at.y : box.bottom;
+    this.docMenu.style.left = `${Math.max(0, x - host.left)}px`;
+    this.docMenu.style.top = `${Math.max(0, y - host.top)}px`;
+    this.docMenu.hidden = false;
+    remove.focus();
+  }
+
+  private closeDocMenu(restoreFocus: boolean): void {
+    if (this.docMenu.hidden) return;
+    this.docMenu.hidden = true;
+    this.docMenu.replaceChildren();
+    if (restoreFocus) this.docMenuTab?.focus();
+    this.docMenuTab = null;
+  }
+
+  private confirmRemove(doc: ProposalDocRef): void {
+    const error = h("p", { class: "af-docs-menu-error", hidden: true });
+    const confirm = h("button", { type: "button", class: "af-danger" }, "Remove");
+    const cancel = h("button", { type: "button", class: "af-ghost" }, "Cancel");
+    cancel.addEventListener("click", () => this.closeDocMenu(true));
+    confirm.addEventListener("click", () => {
+      confirm.disabled = true;
+      cancel.disabled = true;
+      void this.removeDoc(doc).then(
+        () => this.closeDocMenu(false),
+        (e: unknown) => {
+          confirm.disabled = false;
+          cancel.disabled = false;
+          error.textContent = `Could not remove ${doc.file}: ${errorText(e)}`;
+          error.hidden = false;
+        },
+      );
+    });
+    this.docMenu.replaceChildren(
+      h("p", { class: "af-docs-confirm-text" }, `Remove “${doc.name}”?`),
+      h("p", { class: "af-docs-confirm-note" }, "It stays in the proposal's history."),
+      h("div", { class: "af-docs-confirm-actions" }, confirm, cancel),
+      error,
+    );
+    cancel.focus();
+  }
+
+  private async removeDoc(doc: ProposalDocRef): Promise<void> {
+    const wasOpen = this.current?.name === doc.name;
+    if (wasOpen) {
+      this.sync?.dispose();
+      this.sync = null;
+    }
+    try {
+      await removeDoc(this.opts.sessionId, this.opts.slug, doc.name, this.opts.token);
+    } catch (e) {
+      if (wasOpen && !this.disposed) void this.openDoc(doc, false, true);
+      throw e;
+    }
+    if (this.disposed) return;
+    this.texts.delete(doc.name);
+    if (wasOpen) {
+      this.current = null;
+      if (lastDoc.get(this.memoryKey()) === doc.name) lastDoc.delete(this.memoryKey());
+    }
+    this.ordered = this.ordered.filter((d) => d.name !== doc.name);
+    this.renderStrip();
+    this.renderQuestions();
+    if (wasOpen) {
+      const next = this.ordered[0];
+      if (next) {
+        void this.openDoc(next);
+      } else {
+        this.setStatus("saved");
+        this.showNotice("This proposal has no docs yet. Add one with +.", null);
+      }
+    }
+    this.scheduleListRefresh();
   }
 
   private onStripKey(e: KeyboardEvent, doc: ProposalDocRef): void {
@@ -261,6 +381,7 @@ export class DocsPane {
   }
 
   private openMenu(): void {
+    this.closeDocMenu(false);
     const items: HTMLElement[] = [];
     for (const name of this.info?.templates ?? []) {
       const item = h("button", { type: "button", class: "af-docs-menuitem", role: "menuitem" }, name);
@@ -454,11 +575,6 @@ export class DocsPane {
   private renderPush(view: PushView | null): void {
     this.push.hidden = view === null;
     if (!view) return;
-    for (const mode of ["auto", "manual"] as const) {
-      const btn = this.modeButtons[mode];
-      btn.setAttribute("aria-pressed", view.mode === mode ? "true" : "false");
-      btn.disabled = view.busy;
-    }
     this.push.dataset.state = view.state;
     this.chipText.textContent = view.text;
     this.chipText.title = view.text;
@@ -475,11 +591,6 @@ export class DocsPane {
         ? `Send ${view.unsent === 1 ? "1 edit" : `${view.unsent} edits`} to the agent`
         : "No edits to send";
     }
-  }
-
-  private choosePushMode(mode: PushMode): void {
-    if (this.chip.current?.mode === mode) return;
-    this.runPush(`switch to ${mode}`, () => setPushMode(this.opts.sessionId, mode, this.opts.token));
   }
 
   private runChipAction(): void {
@@ -542,8 +653,10 @@ export class DocsPane {
   }
 
   private setStatus(status: SyncStatus, detail = ""): void {
-    this.status.textContent = statusText(status, detail);
-    this.status.title = this.status.textContent;
+    const text = statusText(status, detail);
+    this.statusText.textContent = text;
+    this.status.title = text;
+    this.status.hidden = text === "";
     this.status.dataset.state = status;
     if (status === "conflict") {
       this.showBanner();
@@ -561,8 +674,9 @@ export class DocsPane {
         for (const b of this.banner.querySelectorAll("button")) b.disabled = true;
         run().catch((e: unknown) => {
           for (const b of this.banner.querySelectorAll("button")) b.disabled = false;
-          this.status.textContent = `Not saved · ${errorText(e)}`;
-          this.status.title = this.status.textContent;
+          this.statusText.textContent = `Not saved · ${errorText(e)}`;
+          this.status.title = this.statusText.textContent;
+          this.status.dataset.state = "error";
         });
       });
       return btn;

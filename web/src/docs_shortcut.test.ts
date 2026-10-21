@@ -115,5 +115,16 @@ test("the Docs header stays on one row at split width and wraps only at phone wi
   assert.match(rules(".af-docs").join(""), /container-type:\s*inline-size/);
   assert.match(css, /@container \(max-width: 440px\) \{\s*\.af-docs-head \{\s*flex-wrap: wrap;/,
     "only a very narrow pane moves the tools to their own row");
-  assert.match(rules(".af-docs-pushmode").join(""), /flex:\s*none/, "the Auto / Manual switch keeps its size");
+  assert.match(rules(".af-docs-status-text").join(""), /text-overflow:\s*ellipsis/);
+  assert.equal(rules(".af-docs-pushmode").length, 0, "the Docs header has no Auto / Manual switch");
+});
+
+test("the focused split pane draws its ring above the terminal and the Docs editor", () => {
+  const ring = rules(".af-kb-terminal .af-split-multi .af-pane-focused::after").join("");
+  assert.match(ring, /position:\s*absolute/);
+  assert.match(ring, /inset:\s*0/);
+  assert.match(ring, /pointer-events:\s*none/);
+  assert.match(ring, /border:[^;]*var\(--af-accent\)/);
+  assert.match(rules(".af-pane-host").join(""), /isolation:\s*isolate/, "pane content must not paint over the ring");
+  assert.equal(rules(".af-kb-terminal .af-split-multi .af-pane-focused").length, 0, "an outline is hidden by pane content");
 });

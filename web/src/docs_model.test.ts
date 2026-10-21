@@ -11,7 +11,7 @@ test("docs are in template order, then alphabetical", () => {
 });
 
 test("status copy follows the spec", () => {
-  assert.equal(statusText("saved"), "Saved");
+  assert.equal(statusText("saved"), "");
   assert.equal(statusText("saving"), "Saving…");
   assert.equal(statusText("pending"), "Saving…");
   assert.equal(statusText("merged"), "Merged agent edits");

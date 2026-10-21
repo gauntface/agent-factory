@@ -12,6 +12,7 @@ All commands print JSON, the same as the other `af` commands.
 | `af proposal list` | no | Lists proposals by last edit: slug, docs, attached sessions, and last edit time. |
 | `af proposal path <slug>` | no | Prints the absolute folder path. |
 | `af proposal add-doc <slug> <name>` | no | Adds a doc from a template, or a blank doc if there is no template with that name. |
+| `af proposal remove-doc <slug> <doc>` | no | Removes a doc in a commit. The doc stays in the proposal's history. |
 | `af proposal changes` | yes | Prints the edits that other people and other sessions made since this session's cursor, then moves the cursor. |
 | `af proposal checkpoint` | yes | Commits this session's edits and moves its cursor. |
 | `af proposal cat <slug> <doc>` | no | Prints a doc. This is for agents that cannot read the host disk. |
@@ -114,6 +115,7 @@ or `api.md`). Replies always use the file name (`api.md`).
 | `POST /v1/AttachProposal` | `session_id`, `slug` (optional) | `attached proposal` |
 | `POST /v1/DetachProposal` | `session_id` | `{slug, detached, tab}` |
 | `POST /v1/AddProposalDoc` | target, `slug`, `name`, `author` | `{slug, doc, path, commit}` |
+| `POST /v1/RemoveProposalDoc` | target, `slug`, `doc`, `author` | `{slug, doc, path, commit}` |
 | `POST /v1/ReadProposalDoc` | target, `slug`, `doc` | `{slug, doc, text, commit}` |
 | `POST /v1/SaveProposalDoc` | target, `slug`, `doc`, `text`, `base` | `{slug, doc, text, commit, merged}`, or 409 |
 | `POST /v1/WriteProposalDoc` | target, `slug`, `doc`, `text`, `author` | `{slug, doc, path, commit, author}` |
@@ -205,8 +207,8 @@ the existing events socket (`GET /v1/events`):
 - A proposal is watched when a session is attached to it or has a Docs tab for
   it.
 - `session_ids` lists those sessions. It can be empty.
-- Saves, writes and add-doc through the daemon publish the event with their
-  commit and author.
+- Saves, writes, add-doc and remove-doc through the daemon publish the event
+  with their commit and author.
 - The daemon also checks the watched docs on disk in its poll loop (mtime and
   size). An edit on disk, for example by an agent, publishes the event with
   `"commit": null` and `"author": "external"`, the author that the next

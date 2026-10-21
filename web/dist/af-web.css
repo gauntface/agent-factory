@@ -1410,6 +1410,7 @@ button:disabled,
   min-height: 0;
   padding: 0;
   overflow: hidden;
+  isolation: isolate;
 }
 .af-pane-host .xterm {
   height: 100%;
@@ -1517,9 +1518,13 @@ button:disabled,
 .af-webpane-fallback-retry[hidden] {
   display: none;
 }
-.af-kb-terminal .af-split-multi .af-pane-focused {
-  outline: calc(var(--af-space-1) * 0.5) solid var(--af-accent);
-  outline-offset: calc(var(--af-space-1) * -0.5);
+.af-kb-terminal .af-split-multi .af-pane-focused::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  border: calc(var(--af-space-1) * 0.5) solid var(--af-accent);
 }
 .af-dragging-tab .af-pane {
   outline: calc(var(--af-space-1) * 0.25) dashed var(--af-accent);
@@ -3230,6 +3235,7 @@ textarea[class] {
   font-size: var(--af-type-body);
 }
 .af-docs-stripwrap {
+  position: relative;
   display: flex;
   align-items: center;
   flex: 1 8 auto;
@@ -3299,7 +3305,26 @@ textarea[class] {
   border: calc(var(--af-space-1) * 0.25) solid var(--af-border);
   border-radius: var(--af-radius-dialog);
 }
+.af-docs-docmenu {
+  top: 0;
+  gap: var(--af-space-1);
+}
+.af-docs-confirm-text,
+.af-docs-confirm-note {
+  margin: 0;
+  padding: 0 var(--af-space-1);
+  font-size: var(--af-type-body);
+}
+.af-docs-confirm-text {
+  font-weight: 600;
+}
+.af-docs-confirm-actions {
+  display: flex;
+  gap: var(--af-space-2);
+  padding: var(--af-space-1);
+}
 .af-docs-menu[hidden],
+.af-docs-status[hidden],
 .af-docs-questions[hidden],
 .af-docs-banner[hidden],
 .af-docs-notice[hidden],
@@ -3364,35 +3389,6 @@ textarea[class] {
 .af-docs-push .af-docs-sep[hidden] {
   display: none;
 }
-.af-docs-pushmode {
-  display: inline-flex;
-  flex: none;
-}
-.af-docs-pushmode-button {
-  padding: var(--af-space-1) var(--af-space-2);
-  background: var(--af-surface);
-  border: calc(var(--af-space-1) * 0.25) solid var(--af-border);
-  color: var(--af-ink);
-  font: inherit;
-  font-size: var(--af-type-body);
-  cursor: pointer;
-}
-.af-docs-pushmode-button:first-child {
-  border-radius: var(--af-radius-control) 0 0 var(--af-radius-control);
-}
-.af-docs-pushmode-button:last-child {
-  margin-left: calc(var(--af-space-1) * -0.25);
-  border-radius: 0 var(--af-radius-control) var(--af-radius-control) 0;
-}
-.af-docs-pushmode-button[aria-pressed=true] {
-  background: var(--af-accent);
-  border-color: var(--af-accent);
-  color: var(--af-surface);
-  font-weight: 600;
-}
-.af-docs-pushmode-button:disabled {
-  cursor: default;
-}
 .af-docs-chip {
   display: inline-flex;
   align-items: center;
@@ -3420,9 +3416,33 @@ textarea[class] {
   cursor: default;
 }
 .af-docs-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--af-space-1);
   flex: 0 4 auto;
   color: var(--af-ink);
   white-space: nowrap;
+}
+.af-docs-status-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.af-docs-status .af-icon {
+  display: none;
+  flex: none;
+  width: var(--af-space-3);
+  height: var(--af-space-3);
+  color: var(--af-ink-muted);
+}
+.af-docs-status:is([data-state=saving], [data-state=pending], [data-state=loading]) .af-icon {
+  display: inline-block;
+  animation: af-working-spin 1s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .af-docs-status .af-icon {
+    animation: none;
+  }
 }
 .af-docs-status[data-state=conflict],
 .af-docs-status[data-state=error] {
