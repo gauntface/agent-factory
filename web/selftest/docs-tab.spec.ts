@@ -139,14 +139,14 @@ test("docs tab: right-click removes a doc after a confirm", async ({ page, reque
   const goals = pane.locator(".af-docs-tab", { hasText: "goals" });
   await goals.click({ button: "right" });
   const menu = pane.locator(".af-docs-docmenu");
-  await menu.getByRole("menuitem", { name: "Remove doc…" }).click();
+  await menu.getByRole("menuitem", { name: "Delete" }).click();
   await expect(menu).toContainText("Remove “goals”?");
   await menu.getByRole("button", { name: "Cancel" }).click();
   await expect(menu).toBeHidden();
   await expect(pane.locator(".af-docs-tab")).toHaveText(["goals", "api"]);
 
   await goals.click({ button: "right" });
-  await menu.getByRole("menuitem", { name: "Remove doc…" }).click();
+  await menu.getByRole("menuitem", { name: "Delete" }).click();
   await menu.getByRole("button", { name: "Remove", exact: true }).click();
   await expect(menu).toBeHidden();
   await expect(pane.locator(".af-docs-tab")).toHaveText(["api"]);
