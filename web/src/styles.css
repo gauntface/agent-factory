@@ -3788,23 +3788,6 @@ button[class], input[class], select[class], textarea[class] { font-size: var(--a
   gap: var(--af-space-1);
 }
 
-.af-docs-confirm-text,
-.af-docs-confirm-note {
-  margin: 0;
-  padding: 0 var(--af-space-1);
-  font-size: var(--af-type-body);
-}
-
-.af-docs-confirm-text {
-  font-weight: 600;
-}
-
-.af-docs-confirm-actions {
-  display: flex;
-  gap: var(--af-space-2);
-  padding: var(--af-space-1);
-}
-
 .af-docs-menu[hidden],
 .af-docs-status[hidden],
 .af-docs-questions[hidden],

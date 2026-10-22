@@ -287,7 +287,7 @@ export class DocsPane {
   private openDocMenu(doc: ProposalDocRef, tab: HTMLElement, at: { x: number; y: number } | null): void {
     this.closeMenu();
     const remove = h("button", { type: "button", class: "af-docs-menuitem", role: "menuitem" }, "Delete");
-    remove.addEventListener("click", () => this.confirmRemove(doc));
+    remove.addEventListener("click", () => this.deleteDoc(doc, remove));
     this.docMenu.replaceChildren(remove);
     this.docMenuTab = tab;
     const host = this.docMenu.parentElement!.getBoundingClientRect();
@@ -308,31 +308,16 @@ export class DocsPane {
     this.docMenuTab = null;
   }
 
-  private confirmRemove(doc: ProposalDocRef): void {
-    const error = h("p", { class: "af-docs-menu-error", hidden: true });
-    const confirm = h("button", { type: "button", class: "af-danger" }, "Remove");
-    const cancel = h("button", { type: "button", class: "af-ghost" }, "Cancel");
-    cancel.addEventListener("click", () => this.closeDocMenu(true));
-    confirm.addEventListener("click", () => {
-      confirm.disabled = true;
-      cancel.disabled = true;
-      void this.removeDoc(doc).then(
-        () => this.closeDocMenu(false),
-        (e: unknown) => {
-          confirm.disabled = false;
-          cancel.disabled = false;
-          error.textContent = `Could not remove ${doc.file}: ${errorText(e)}`;
-          error.hidden = false;
-        },
-      );
-    });
-    this.docMenu.replaceChildren(
-      h("p", { class: "af-docs-confirm-text" }, `Remove “${doc.name}”?`),
-      h("p", { class: "af-docs-confirm-note" }, "It stays in the proposal's history."),
-      h("div", { class: "af-docs-confirm-actions" }, confirm, cancel),
-      error,
+  private deleteDoc(doc: ProposalDocRef, button: HTMLButtonElement): void {
+    button.disabled = true;
+    void this.removeDoc(doc).then(
+      () => this.closeDocMenu(false),
+      (e: unknown) => {
+        button.disabled = false;
+        const error = h("p", { class: "af-docs-menu-error" }, `Could not delete ${doc.file}: ${errorText(e)}`);
+        this.docMenu.replaceChildren(button, error);
+      },
     );
-    cancel.focus();
   }
 
   private async removeDoc(doc: ProposalDocRef): Promise<void> {
