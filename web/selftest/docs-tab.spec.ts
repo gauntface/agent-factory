@@ -112,9 +112,9 @@ test("docs tab: Manual mode holds edits until Send now delivers them to the agen
   await expect(sendNow).toBeDisabled({ timeout: 15_000 });
 });
 
-// Right-click on a doc tab removes the doc after a confirm; the file leaves the
+// Right-click on a doc tab deletes the doc at once; the file leaves the
 // proposal and the strip moves to the next doc.
-test("docs tab: right-click removes a doc after a confirm", async ({ page, request }) => {
+test("docs tab: right-click Delete removes a doc", async ({ page, request }) => {
   const afBin = process.env.AF_BIN;
   const mockRepo = process.env.AF_MOCK_REPO;
   test.skip(!afBin || !mockRepo, "AF_BIN/AF_MOCK_REPO are set only by web-selftest-entry.sh");
@@ -140,14 +140,6 @@ test("docs tab: right-click removes a doc after a confirm", async ({ page, reque
   await goals.click({ button: "right" });
   const menu = pane.locator(".af-docs-docmenu");
   await menu.getByRole("menuitem", { name: "Delete" }).click();
-  await expect(menu).toContainText("Remove “goals”?");
-  await menu.getByRole("button", { name: "Cancel" }).click();
-  await expect(menu).toBeHidden();
-  await expect(pane.locator(".af-docs-tab")).toHaveText(["goals", "api"]);
-
-  await goals.click({ button: "right" });
-  await menu.getByRole("menuitem", { name: "Delete" }).click();
-  await menu.getByRole("button", { name: "Remove", exact: true }).click();
   await expect(menu).toBeHidden();
   await expect(pane.locator(".af-docs-tab")).toHaveText(["api"]);
   await expect(pane.locator('.af-docs-tab[aria-selected="true"]')).toHaveText("api");
