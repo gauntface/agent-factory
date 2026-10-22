@@ -286,7 +286,7 @@ export class DocsPane {
 
   private openDocMenu(doc: ProposalDocRef, tab: HTMLElement, at: { x: number; y: number } | null): void {
     this.closeMenu();
-    const remove = h("button", { type: "button", class: "af-docs-menuitem", role: "menuitem" }, "Remove doc…");
+    const remove = h("button", { type: "button", class: "af-docs-menuitem", role: "menuitem" }, "Delete");
     remove.addEventListener("click", () => this.confirmRemove(doc));
     this.docMenu.replaceChildren(remove);
     this.docMenuTab = tab;
