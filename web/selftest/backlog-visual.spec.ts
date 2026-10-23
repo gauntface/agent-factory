@@ -114,8 +114,8 @@ test.describe("backlog view stills", () => {
     await openBacklog(page);
     await page.locator(".af-backlog-row").first().blur();
     const plan = page.locator(".af-backlog-plan");
-    const box = await plan.boundingBox();
-    expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(390);
+    const planBox = await plan.boundingBox();
+    expect((planBox?.x ?? 0) + (planBox?.width ?? 0)).toBeLessThanOrEqual(390);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
     await plan.click();
     await expect(page.locator(".af-backlog-plan-detail")).toContainText("read 2 min ago · all projects");
