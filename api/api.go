@@ -612,6 +612,8 @@ func silenceCobraOutput() {
 	ProjectsCmd.SilenceErrors = true
 	ProposalCmd.SilenceUsage = true
 	ProposalCmd.SilenceErrors = true
+	BacklogCmd.SilenceUsage = true
+	BacklogCmd.SilenceErrors = true
 	if root := SessionsCmd.Root(); root != nil {
 		root.SilenceUsage = true
 		root.SilenceErrors = true

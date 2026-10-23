@@ -566,8 +566,8 @@ type Manager struct {
 	// the webtab proxy resolves a vscode tab's target through it. Immutable after
 	// construction; its own mutex keeps spawning (seconds) off m.mu.
 	vscode *vscodeSupervisor
-	// proposals runs the proposal routes and the poll-time doc scan.
-	proposals proposalState
+	// routeServices runs the proposal and backlog routes.
+	routeServices
 	// configAgents owns the bare tmux sessions spawned for config agents. They
 	// have no Instance and so appear in no roster; this is the only thing that
 	// knows they exist, which is why its Stop() is wired into daemon teardown.
