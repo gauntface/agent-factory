@@ -24,6 +24,7 @@ import {
   canCreateTabKind,
   canCloseTabs,
   canMutateTabRoster,
+  setNeedsYouBadge,
 } from "./ui.js";
 import type { AppState } from "./ui.js";
 import { InFlightOp, Liveness, type SessionData } from "./types.js";
@@ -666,4 +667,14 @@ test("restore skips confirmation only for known local backends (#4017)", () => {
   for (const backend_type of ["docker", "ssh", "sandbox", "remote", "future-backend"]) {
     assert.equal(restoreRequiresConfirmation(sess({ backend_type })), true);
   }
+});
+
+test("setNeedsYouBadge hides at zero and labels the count", () => {
+  const el = document.createElement("span");
+  setNeedsYouBadge(el, 2);
+  assert.equal(el.hidden, false);
+  assert.equal(el.textContent, "2");
+  assert.equal(el.getAttribute("aria-label"), "2 need you");
+  setNeedsYouBadge(el, 0);
+  assert.equal(el.hidden, true);
 });
