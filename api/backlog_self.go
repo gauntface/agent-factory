@@ -30,6 +30,9 @@ func (t *backlogTarget) selfItem() (string, *backlog.Item, error) {
 	if it == nil {
 		return "", nil, fmt.Errorf("--self needs an item session; this session (%s) was not started from the backlog", s.Title)
 	}
+	if r := v.Backlog.LatestRun(it.ID); r == nil || r.SessionID != s.ID {
+		return "", nil, fmt.Errorf("this session (%s) is an older run of %s; only its latest session can report on it", s.Title, backlog.FormatID(it.ID))
+	}
 	return s.ID, it, nil
 }
 

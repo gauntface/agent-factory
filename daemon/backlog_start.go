@@ -54,7 +54,7 @@ func (m *Manager) StartBacklogItem(req backlog.StartRequest, by string) (backlog
 		return backlog.RunRef{}, svc.Named(ref, err)
 	}
 	if plan.Continue != "" {
-		return m.continueBacklogItem(ref, req.ID, plan.Continue)
+		return m.continueBacklogItem(ref, req.ID, by, plan.Continue)
 	}
 	root := req.RepoPath
 	if root == "" {
@@ -108,10 +108,10 @@ func (m *Manager) StartBacklogItem(req backlog.StartRequest, by string) (backlog
 			}
 		}()
 		data, err := createBacklogSession(m, ctx, create)
-		m.finishBacklogStart(ref, req.ID, plan.Run.StartedAt, data, err)
+		m.finishBacklogStart(ref, req.ID, plan.Run.StartedAt, data, err, stop)
 	})
 	if !launched {
-		m.finishBacklogStart(ref, req.ID, plan.Run.StartedAt, session.InstanceData{}, errors.New("af is shutting down"))
+		m.finishBacklogStart(ref, req.ID, plan.Run.StartedAt, session.InstanceData{}, errors.New("af is shutting down"), nil)
 	}
 	return plan.Run, nil
 }
@@ -128,62 +128,92 @@ func proposalDir(repoID string, it *backlog.Item) string {
 }
 
 // finishBacklogStart records a create's outcome on its starting run, then
-// releases the slot the create held. The write is retried, since a run left
-// starting holds the item until the next daemon start.
-func (m *Manager) finishBacklogStart(ref backlog.ProjectRef, id int, startedAt time.Time, data session.InstanceData, createErr error) {
+// releases the slot the create held. A busy backlog is retried with backoff
+// until the write lands or stop closes, since a run left starting holds the
+// item until the next daemon start. A nil stop retries until the write lands.
+func (m *Manager) finishBacklogStart(ref backlog.ProjectRef, id int, startedAt time.Time, data session.InstanceData, createErr error, stop <-chan struct{}) {
 	defer m.backlog.release(ref.ID)
 	if createErr == nil && data.ID == "" {
 		createErr = errors.New("the daemon created no session")
 	}
 	svc := m.backlogService()
-	var err error
-	for attempt := 0; attempt < 3; attempt++ {
-		_, err = svc.Apply(ref, func(b *backlog.Backlog) ([]int, error) {
+	delay := finishStartBackoff
+	for {
+		_, err := svc.Apply(ref, func(b *backlog.Backlog) ([]int, error) {
 			return []int{id}, b.FinishStart(id, startedAt, data.ID, data.Title, createErr, svc.Now())
 		})
-		if err == nil || !errors.Is(err, backlog.ErrBusy) {
-			break
+		if err == nil {
+			return
 		}
-		time.Sleep(time.Second)
-	}
-	if err != nil {
-		m.warn().Printf("record start of %s: %v", backlog.FormatID(id), err)
+		if !errors.Is(err, backlog.ErrBusy) {
+			m.warn().Printf("record start of %s: %v", backlog.FormatID(id), err)
+			return
+		}
+		select {
+		case <-stop:
+			m.warn().Printf("record start of %s: %v; restart recovery will settle it", backlog.FormatID(id), err)
+			return
+		case <-time.After(delay):
+		}
+		delay = min(delay*2, 5*time.Second)
 	}
 }
 
-// continueBacklogItem re-arms the item's live session and sends it "continue".
-// The marker is armed before the send so the turn it starts is the run; a send
-// that fails disarms it and leaves the item as it was.
-func (m *Manager) continueBacklogItem(ref backlog.ProjectRef, id int, sessionID string) (backlog.RunRef, error) {
+// finishStartBackoff is the first wait after a busy backlog. A var so tests can
+// shorten it.
+var finishStartBackoff = 100 * time.Millisecond
+
+// continueBacklogItem sends "continue" to the item's live session. The item is
+// set running first, under the backlog lock, so a second start sees it; then
+// the session's run marker is armed and the prompt sent. A send that fails
+// disarms the marker and puts the status back.
+func (m *Manager) continueBacklogItem(ref backlog.ProjectRef, id int, by, sessionID string) (backlog.RunRef, error) {
 	svc := m.backlogService()
+	if !m.backlog.beginContinue(ref.ID, id) {
+		return backlog.RunRef{}, svc.Named(ref, fmt.Errorf("%s is already starting", backlog.FormatID(id)))
+	}
+	defer m.backlog.endContinue(ref.ID, id)
 	s, ok := m.itemSessions(ref.ID)[sessionID]
 	if !ok {
 		return backlog.RunRef{}, fmt.Errorf("the session for %s is gone; retry \"af backlog start %d\" to start a new one", backlog.FormatID(id), id)
 	}
 	inst := s.instance
-	if !inst.ArmBacklogRun(time.Now()) {
-		return backlog.RunRef{}, fmt.Errorf("session %q is not an item session", inst.Title)
-	}
-	m.persistAndPublishInstance(ref.ID, inst)
-	b, err := backlog.Load(ref.ID)
-	if err != nil {
-		m.disarmBacklogRun(ref.ID, inst)
-		return backlog.RunRef{}, err
-	}
-	it := b.Item(id)
-	if it == nil {
-		m.disarmBacklogRun(ref.ID, inst)
-		return backlog.RunRef{}, svc.Named(ref, &backlog.NotFoundError{ID: id})
-	}
-	if err := sendBacklogPrompt(m, SendPromptRequest{ID: inst.ID, Title: inst.Title, RepoID: ref.ID, Prompt: backlog.ContinuePrompt(it)}); err != nil {
-		m.disarmBacklogRun(ref.ID, inst)
-		return backlog.RunRef{}, fmt.Errorf("send continue to session %q: %w", inst.Title, err)
-	}
+	facts := backlogHost{m: m}.Facts(ref.ID)
+	var (
+		prev   backlog.Status
+		prompt string
+	)
 	out, err := svc.Apply(ref, func(b *backlog.Backlog) ([]int, error) {
+		p, err := b.BeginStart(id, by, facts, svc.Now())
+		if err != nil {
+			return nil, err
+		}
+		if p.Continue != sessionID {
+			return nil, fmt.Errorf("%s changed while starting; retry", backlog.FormatID(id))
+		}
+		it := b.Item(id)
+		prev, prompt = it.Status, backlog.ContinuePrompt(it)
 		return []int{id}, b.Continued(id, sessionID, svc.Now())
 	})
 	if err != nil {
 		return backlog.RunRef{}, svc.Named(ref, err)
+	}
+	sendErr := fmt.Errorf("session %q is not an item session", inst.Title)
+	if inst.ArmBacklogRun(time.Now()) {
+		m.persistAndPublishInstance(ref.ID, inst)
+		sendErr = sendBacklogPrompt(m, SendPromptRequest{ID: inst.ID, Title: inst.Title, RepoID: ref.ID, Prompt: prompt})
+		if sendErr != nil {
+			m.disarmBacklogRun(ref.ID, inst)
+			sendErr = fmt.Errorf("send continue to session %q: %w", inst.Title, sendErr)
+		}
+	}
+	if sendErr != nil {
+		if _, err := svc.Apply(ref, func(b *backlog.Backlog) ([]int, error) {
+			return []int{id}, b.ContinueFailed(id, prev, sendErr, svc.Now())
+		}); err != nil {
+			m.warn().Printf("restore %s after a failed continue: %v", backlog.FormatID(id), err)
+		}
+		return backlog.RunRef{}, sendErr
 	}
 	runs := out.Item(id).Runs
 	return runs[len(runs)-1], nil

@@ -293,8 +293,8 @@ func checkAgentReview(b *Backlog, req SetItemStatusRequest) error {
 	if req.Status != StatusReview {
 		return fmt.Errorf("an item session can only send its item to review, not set it to %s", req.Status)
 	}
-	if !it.hasRun(req.SessionID) {
-		return fmt.Errorf("session %s is not a run of %s", req.SessionID, FormatID(req.ID))
+	if r := it.lastRun(); r == nil || r.SessionID != req.SessionID {
+		return fmt.Errorf("session %s is not the latest run of %s", req.SessionID, FormatID(req.ID))
 	}
 	return nil
 }

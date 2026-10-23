@@ -521,7 +521,7 @@ func (m *Manager) observeTaskRunWhilePaused(repoID, key string, instance *sessio
 	// attach owns this session's tmux. Park the declared lifecycle so the first
 	// unpaused tick applies it, instead of losing the edge entirely (#2595).
 	m.deferTaskSessionLifecycleWhilePaused(repoID, instance, taskRunWasActive)
-	m.noteBacklogRunEnd(repoID, instance, backlogRunWasActive, false)
+	m.noteBacklogRunEnd(repoID, instance, backlogRunWasActive)
 }
 
 // RefreshStatuses recomputes every started instance's status the way the TUI
@@ -953,7 +953,8 @@ func (m *Manager) refreshInstanceStatus(repoID string, instance *session.Instanc
 	// And drain a lifecycle owed from a run that finished while this session was
 	// attached, now that it is being polled normally again.
 	m.applyDeferredTaskSessionLifecycle(repoID, instance)
-	m.noteBacklogRunEnd(repoID, instance, backlogRunWasActive, true)
+	m.noteBacklogRunEnd(repoID, instance, backlogRunWasActive)
+	m.drainBacklogDeferredArchive(repoID, instance)
 }
 
 // SaveInstances writes the manager's authoritative in-memory instances to disk

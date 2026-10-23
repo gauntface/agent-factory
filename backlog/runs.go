@@ -42,6 +42,8 @@ func (b *Backlog) BeginStart(id int, by string, facts Facts, now time.Time) (Sta
 		switch {
 		case last.State == RunStarting:
 			return StartPlan{}, fmt.Errorf("%s is already starting", FormatID(id))
+		case last.State == RunStarted && facts(last.SessionID).Limited:
+			return StartPlan{}, fmt.Errorf("%s is at a %s", FormatID(id), facts(last.SessionID).Reason)
 		case last.State == RunStarted && facts(last.SessionID).RunActive:
 			return StartPlan{}, fmt.Errorf("%s is already working in session %q", FormatID(id), last.Title)
 		case last.State == RunStarted && facts(last.SessionID).Live:
@@ -61,7 +63,8 @@ func (b *Backlog) BeginStart(id int, by string, facts Facts, now time.Time) (Sta
 	return StartPlan{Run: run}, nil
 }
 
-// Continued sets id running after "continue" reached its live session.
+// Continued sets id running for a "continue" to its live session, before the
+// prompt is sent. If the send fails, ContinueFailed puts the status back.
 func (b *Backlog) Continued(id int, sessionID string, now time.Time) error {
 	it, err := b.get(id)
 	if err != nil {
@@ -76,6 +79,42 @@ func (b *Backlog) Continued(id int, sessionID string, now time.Time) error {
 	it.Status = StatusRunning
 	it.UpdatedAt = now
 	return nil
+}
+
+// ContinueFailed puts back the status a Continued replaced, when the
+// "continue" could not be sent, and notes why.
+func (b *Backlog) ContinueFailed(id int, prev Status, sendErr error, now time.Time) error {
+	it, err := b.get(id)
+	if err != nil {
+		return err
+	}
+	if it.Status == StatusRunning && prev.Valid() && CheckStatusChange(StatusChange{ID: id, From: it.Status, To: prev,
+		By: ActorAF, StartFailed: true, PrevStatus: prev}) == nil {
+		it.Status = prev
+		it.UpdatedAt = now
+	}
+	_, err = b.AddNote(id, AuthorAF, "Continue could not be sent: "+sendErr.Error(), now)
+	return err
+}
+
+// LatestRun returns the latest run of id, or nil.
+func (b *Backlog) LatestRun(id int) *RunRef {
+	if it := b.Item(id); it != nil {
+		return it.lastRun()
+	}
+	return nil
+}
+
+// LatestSessions maps the session of each item's latest started run to the
+// item id.
+func (b *Backlog) LatestSessions() map[string]int {
+	out := map[string]int{}
+	for i := range b.Items {
+		if r := b.Items[i].lastRun(); r != nil && r.State == RunStarted && r.SessionID != "" {
+			out[r.SessionID] = b.Items[i].ID
+		}
+	}
+	return out
 }
 
 // FinishStart settles the starting run of id that began at startedAt: started
@@ -119,11 +158,12 @@ type ItemSession struct {
 	CreatedAt time.Time
 }
 
-// RecoverStarts settles the runs a daemon restart left starting. A run is
-// matched to the earliest session of its item created at or after its start
-// that no other run names; a run with no match fails. It returns the ids it
-// changed.
-func (b *Backlog) RecoverStarts(sessions []ItemSession, now time.Time) []int {
+// RecoverStarts settles the runs a daemon restart left starting: those that
+// began before the given time, so a start of the current daemon still in
+// flight is left alone. A run is matched to the earliest session of its item
+// created at or after its start that no other run names; a run with no match
+// fails. It returns the ids it changed.
+func (b *Backlog) RecoverStarts(sessions []ItemSession, before, now time.Time) []int {
 	taken := map[string]bool{}
 	for _, it := range b.Items {
 		for _, r := range it.Runs {
@@ -139,7 +179,7 @@ func (b *Backlog) RecoverStarts(sessions []ItemSession, now time.Time) []int {
 		it := &b.Items[i]
 		for j := range it.Runs {
 			r := it.Runs[j]
-			if r.State != RunStarting {
+			if r.State != RunStarting || !r.StartedAt.Before(before) {
 				continue
 			}
 			var match *ItemSession
@@ -180,8 +220,8 @@ type RunEnd struct {
 	ID int
 	// Changed is whether the item was written.
 	Changed bool
-	// Archive asks the caller to archive the session: the item was in review
-	// or done when the run ended and the project's on_done is archive.
+	// Archive asks the caller to archive the session: the user marked the item
+	// done and the project's on_done is archive.
 	Archive bool
 }
 
@@ -195,7 +235,7 @@ func (b *Backlog) RunEnded(sessionID string, now time.Time) RunEnd {
 	}
 	out := RunEnd{ID: it.ID}
 	switch it.Status {
-	case StatusReview, StatusDone:
+	case StatusDone:
 		out.Archive = b.Settings.OnDone == OnDoneArchive
 	case StatusRunning:
 		if it.OpenQuestion() != nil {

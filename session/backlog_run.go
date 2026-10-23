@@ -14,15 +14,24 @@ func runGateActiveInData(data InstanceData) bool {
 
 // endRunsLocked ends the run in flight on its own edge. Caller holds i.mu.
 func (i *Instance) endRunsLocked() {
-	task := i.taskRunActive
+	if i.backlogRunActive {
+		i.backlogRunEndedAt = time.Now()
+	}
 	i.taskRunActive = false
 	i.backlogRunActive = false
 	i.taskRunIdleEdgeHeld = false
 	i.taskRunTurnGateHeld = false
 	i.touchLocked()
-	if task {
-		i.captureAdoptionBaselineLocked()
-	}
+	i.captureAdoptionBaselineLocked()
+}
+
+// BacklogRunEndedAt is when this item session's latest backlog run ended;
+// zero while a run is in flight or before the first ends. Pane churn after it
+// means someone worked in the session since.
+func (i *Instance) BacklogRunEndedAt() time.Time {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.backlogRunEndedAt
 }
 
 // BacklogRunActive reports whether the backlog run on this item session is in
@@ -45,6 +54,7 @@ func (i *Instance) ArmBacklogRun(at time.Time) bool {
 		return false
 	}
 	i.backlogRunActive = true
+	i.backlogRunEndedAt = time.Time{}
 	i.taskRunPromptAttemptAt = at
 	i.taskRunTurnObservedAt = time.Time{}
 	i.taskRunIdleEdgeHeld = false
@@ -89,4 +99,11 @@ func (i *Instance) RunGateActive() bool {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
 	return i.runGateActiveLocked()
+}
+
+// EndBacklogRunForTest ends the backlog run as its idle edge would.
+func (i *Instance) EndBacklogRunForTest() {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.endRunsLocked()
 }

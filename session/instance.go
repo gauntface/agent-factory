@@ -138,6 +138,8 @@ type Instance struct {
 	// many runs. It shares the task run's completion gate (prompt boundary, turn
 	// evidence, held edges); a session is never both a task and an item session.
 	backlogRunActive bool
+	// backlogRunEndedAt is when the latest backlog run ended (persisted).
+	backlogRunEndedAt time.Time
 	// adoption counts the deliveries that make a finished task session the USER's
 	// and fences them against its declared teardown (#3865). Guarded by i.mu; see
 	// adoption_fence.go, which owns the whole contract.

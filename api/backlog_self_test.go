@@ -91,13 +91,13 @@ func TestBacklogGuardRails(t *testing.T) {
 	withRunningItem(t, &session.InstanceData{ID: "s1", Title: "B-1 work", BacklogItem: 1})
 	*methods = nil
 	for _, args := range [][]string{
-		{"queue", "1"}, {"draft", "1"}, {"start", "1"}, {"done", "1"}, {"drop", "1"}, {"delete", "1"},
+		{"queue", "1"}, {"draft", "1"}, {"review", "1"}, {"reopen", "1"}, {"start", "1"}, {"done", "1"}, {"drop", "1"}, {"delete", "1"},
 	} {
 		if _, err := runBacklogCmd(t, args...); err == nil || !strings.Contains(err.Error(), "item sessions cannot run") {
 			t.Errorf("%v: %v", args, err)
 		}
 	}
-	for _, args := range [][]string{{"runner", "on"}, {"runner", "--max-running", "2"}, {"budget", "add", "5"}, {"budget", "--max-per-run", "1"}} {
+	for _, args := range [][]string{{"runner", "on"}, {"runner", "--max-running", "2"}, {"budget", "--share", "40"}, {"budget", "--usd-limit", "5"}} {
 		if _, err := runBacklogCmd(t, args...); err == nil || !strings.Contains(err.Error(), "cannot change the runner or budget") {
 			t.Errorf("%v: %v", args, err)
 		}
@@ -111,5 +111,24 @@ func TestBacklogGuardRails(t *testing.T) {
 		if _, err := runBacklogCmd(t, args...); err != nil {
 			t.Errorf("%v refused: %v", args, err)
 		}
+	}
+}
+
+func TestBacklogDoneSelfFromOlderRun(t *testing.T) {
+	stubBacklogDaemon(t)
+	withRunningItem(t, &session.InstanceData{ID: "s0", Title: "B-1 work", BacklogItem: 1})
+	p, err := backlogProject()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backlog.Update(p.repoID, func(b *backlog.Backlog) error {
+		it := b.Item(1)
+		it.Runs = append([]backlog.RunRef{{SessionID: "s0", Title: "B-1 work", State: backlog.RunStarted, StartedAt: time.Now().Add(-time.Hour)}}, it.Runs...)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runBacklogCmd(t, "done", "--self"); err == nil || !strings.Contains(err.Error(), "older run of B-1") {
+		t.Fatalf("got %v", err)
 	}
 }

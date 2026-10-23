@@ -201,6 +201,9 @@ type InstanceData struct {
 	// BacklogRunActive is the backlog run marker (Instance.backlogRunActive). The
 	// task-run gate fields above carry its prompt boundary and held edges.
 	BacklogRunActive bool `json:"backlog_run_active,omitempty"`
+	// BacklogRunEndedAt is when the latest backlog run ended; the on_done
+	// archive treats pane churn after it as the user taking the session over.
+	BacklogRunEndedAt time.Time `json:"backlog_run_ended_at,omitzero"`
 	// LimitResetAt is the parsed usage-limit reset time (#1146), display-only:
 	// written (and carried in the daemon snapshot to the read-only TUI) only for a
 	// LiveLimitReached row so the sidebar [limit] badge can show "resets <t>" and

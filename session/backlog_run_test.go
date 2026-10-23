@@ -127,3 +127,18 @@ func TestMarkStartupStateUnknownEndsBacklogRun(t *testing.T) {
 	inst.MarkStartupStateUnknown()
 	require.False(t, inst.BacklogRunActive())
 }
+
+func TestBacklogRunEndRecordsFenceBaseline(t *testing.T) {
+	inst := backlogRunSession(t)
+	require.True(t, inst.BacklogRunEndedAt().IsZero())
+	attemptedAt := time.Now().Add(-10 * time.Second)
+	require.True(t, inst.RecordPromptAttempt(PromptSentUnverified, attemptedAt))
+	require.True(t, inst.RecordTaskRunTurn(attemptedAt.Add(time.Second)))
+	require.NoError(t, inst.Transition(ObserveLiveness(LiveReady)))
+	require.False(t, inst.BacklogRunActive())
+	require.False(t, inst.BacklogRunEndedAt().IsZero(), "the idle edge records when the run ended")
+	require.Equal(t, inst.AdoptionDeliveries(), inst.AdoptionDeliveriesAtRunEnd(), "the run end takes the adoption baseline")
+
+	require.True(t, inst.ArmBacklogRun(time.Now()))
+	require.True(t, inst.BacklogRunEndedAt().IsZero(), "a new run clears the end time")
+}

@@ -44,6 +44,13 @@ func loadItem(t *testing.T, repoID string, id int) backlog.Item {
 
 func TestStartBacklogItemCreatesItemSession(t *testing.T) {
 	m, repoID, repoPath := backlogTestManager(t)
+	var prompt string
+	prev := createBacklogSession
+	createBacklogSession = func(m *Manager, ctx context.Context, req CreateSessionRequest) (session.InstanceData, error) {
+		prompt = req.Prompt
+		return prev(m, ctx, req)
+	}
+	t.Cleanup(func() { createBacklogSession = prev })
 	run, err := m.StartBacklogItem(backlog.StartRequest{RepoPath: repoPath, ID: 1}, backlog.StartedByUser)
 	if err != nil {
 		t.Fatal(err)
@@ -65,8 +72,8 @@ func TestStartBacklogItemCreatesItemSession(t *testing.T) {
 	if s.instance.Title != "B-1 web view" || s.instance.BacklogItem != 1 || !s.instance.BacklogRunActive() {
 		t.Fatalf("session %q item %d active %v", s.instance.Title, s.instance.BacklogItem, s.instance.BacklogRunActive())
 	}
-	if !strings.Contains(s.instance.Prompt, "Build it.") || !strings.Contains(s.instance.Prompt, "af backlog done --self") {
-		t.Fatalf("prompt %q", s.instance.Prompt)
+	if !strings.Contains(prompt, "Build it.") || !strings.Contains(prompt, "af backlog done --self") {
+		t.Fatalf("prompt %q", prompt)
 	}
 	if got := m.backlogSlotsUsed(repoID); got != 1 {
 		t.Fatalf("slots used %d, want 1", got)
@@ -121,7 +128,7 @@ func startedItem(t *testing.T) (*Manager, string, *session.Instance) {
 
 func TestBacklogRunEndedMovesToReview(t *testing.T) {
 	m, repoID, inst := startedItem(t)
-	m.backlogRunEnded(repoID, inst.ID, true)
+	m.backlogRunEnded(repoID, inst.ID)
 	it := loadItem(t, repoID, 1)
 	if it.Status != backlog.StatusReview || it.Thread[len(it.Thread)-1].Text != backlog.RunEndNote {
 		t.Fatalf("item %+v", it)
@@ -133,7 +140,7 @@ func TestContinueBacklogItem(t *testing.T) {
 	if !inst.DisarmBacklogRun() {
 		t.Fatal("precondition: run active")
 	}
-	m.backlogRunEnded(repoID, inst.ID, false)
+	m.backlogRunEnded(repoID, inst.ID)
 
 	var sent []SendPromptRequest
 	prev := sendBacklogPrompt
@@ -156,7 +163,7 @@ func TestContinueBacklogItem(t *testing.T) {
 func TestContinueBacklogItemSendFails(t *testing.T) {
 	m, repoID, inst := startedItem(t)
 	inst.DisarmBacklogRun()
-	m.backlogRunEnded(repoID, inst.ID, false)
+	m.backlogRunEnded(repoID, inst.ID)
 	prev := sendBacklogPrompt
 	sendBacklogPrompt = func(*Manager, SendPromptRequest) error { return errors.New("pane gone") }
 	t.Cleanup(func() { sendBacklogPrompt = prev })
@@ -164,8 +171,16 @@ func TestContinueBacklogItemSendFails(t *testing.T) {
 	if _, err := m.StartBacklogItem(backlog.StartRequest{RepoID: repoID, ID: 1}, backlog.StartedByUser); err == nil {
 		t.Fatal("start succeeded with a failed send")
 	}
-	if inst.BacklogRunActive() || loadItem(t, repoID, 1).Status != backlog.StatusReview {
+	it := loadItem(t, repoID, 1)
+	if inst.BacklogRunActive() || it.Status != backlog.StatusReview {
 		t.Fatal("a failed send must leave the item and session as they were")
+	}
+	if !strings.Contains(it.Thread[len(it.Thread)-1].Text, "pane gone") {
+		t.Fatalf("thread %+v", it.Thread)
+	}
+	sendBacklogPrompt = func(*Manager, SendPromptRequest) error { return nil }
+	if _, err := m.StartBacklogItem(backlog.StartRequest{RepoID: repoID, ID: 1}, backlog.StartedByUser); err != nil {
+		t.Fatalf("retry after a failed send: %v", err)
 	}
 }
 
@@ -179,6 +194,9 @@ func TestRecoverBacklogMatchesStartingRun(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	prevStart := daemonProcessStart
+	t.Cleanup(func() { daemonProcessStart = prevStart })
+	daemonProcessStart = time.Now()
 	m.recoverBacklog(repoID)
 	it := loadItem(t, repoID, 1)
 	if it.Runs[0].State != backlog.RunStarted || it.Runs[0].SessionID != inst.ID {
@@ -196,7 +214,7 @@ func TestBacklogSessionFacts(t *testing.T) {
 		{"idle", session.LifecycleView{Liveness: session.LiveReady}, backlog.SessionFacts{Live: true}},
 		{"archived", session.LifecycleView{Liveness: session.LiveArchived, BacklogRunActive: true}, backlog.SessionFacts{Reason: "session archived"}},
 		{"dead", session.LifecycleView{Liveness: session.LiveDead}, backlog.SessionFacts{Reason: "session dead"}},
-		{"limit", session.LifecycleView{Liveness: session.LiveLimitReached, BacklogRunActive: true}, backlog.SessionFacts{Live: true, Reason: "usage limit"}},
+		{"limit", session.LifecycleView{Liveness: session.LiveLimitReached, BacklogRunActive: true}, backlog.SessionFacts{Limited: true, Reason: "usage limit"}},
 		{"killing", session.LifecycleView{Liveness: session.LiveReady, InFlightOp: session.OpKilling}, backlog.SessionFacts{Reason: "session killed"}},
 		{"lost finished", session.LifecycleView{Liveness: session.LiveLost}, backlog.SessionFacts{Lost: true, Reason: "session lost"}},
 	}

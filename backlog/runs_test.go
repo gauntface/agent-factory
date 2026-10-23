@@ -130,7 +130,7 @@ func TestRecoverStarts(t *testing.T) {
 		{ID: "s2a", Item: 2, Title: "B-2 Child a b", CreatedAt: t0.Add(time.Second)},
 		{ID: "x", Item: 9, CreatedAt: t0.Add(time.Hour)},
 	}
-	changed := b.RecoverStarts(sessions, t0)
+	changed := b.RecoverStarts(sessions, t0.Add(time.Hour), t0)
 	if len(changed) != 2 {
 		t.Fatalf("changed %v", changed)
 	}
@@ -142,7 +142,7 @@ func TestRecoverStarts(t *testing.T) {
 	if it3.Runs[0].State != RunFailed || it3.Status != StatusQueued || !it3.Runs[0].StartedAt.Equal(p3.Run.StartedAt) {
 		t.Fatalf("no match fails and restores the status: %+v", it3)
 	}
-	if b.RecoverStarts(sessions, t0) != nil {
+	if b.RecoverStarts(sessions, t0.Add(time.Hour), t0) != nil {
 		t.Fatal("recovery is idempotent")
 	}
 }
@@ -155,7 +155,7 @@ func TestRecoverStartsSkipsTakenSession(t *testing.T) {
 	if _, err := b.BeginStart(2, StartedByUser, nil, t0); err != nil {
 		t.Fatal(err)
 	}
-	b.RecoverStarts([]ItemSession{{ID: "s1", Item: 2, CreatedAt: t0.Add(time.Second)}}, t0)
+	b.RecoverStarts([]ItemSession{{ID: "s1", Item: 2, CreatedAt: t0.Add(time.Second)}}, t0.Add(time.Hour), t0)
 	if it.Runs[1].State != RunFailed {
 		t.Fatalf("a session another run names is not reused: %+v", it.Runs)
 	}
@@ -187,8 +187,16 @@ func TestRunEnded(t *testing.T) {
 	}
 
 	b.Settings.OnDone = OnDoneArchive
+	if got := b.RunEnded("s3", t0); got.Changed || got.Archive {
+		t.Fatalf("review never archives: %+v", got)
+	}
+	it.Status = StatusDropped
+	if got := b.RunEnded("s3", t0); got.Archive {
+		t.Fatalf("dropped never archives: %+v", got)
+	}
+	it.Status = StatusDone
 	if got := b.RunEnded("s3", t0); got.Changed || !got.Archive {
-		t.Fatalf("review with on_done archive: %+v", got)
+		t.Fatalf("done with on_done archive: %+v", got)
 	}
 
 	it.Status = StatusRunning
@@ -234,5 +242,55 @@ func TestServiceGetUsesHostSlots(t *testing.T) {
 	}
 	if v.Runner.Used != 2 {
 		t.Fatalf("used %d", v.Runner.Used)
+	}
+}
+
+func TestRecoverStartsSkipsLaterStarts(t *testing.T) {
+	b := runsBacklog(t)
+	if _, err := b.BeginStart(2, StartedByUser, nil, t0); err != nil {
+		t.Fatal(err)
+	}
+	if b.RecoverStarts(nil, t0, t0) != nil || b.Item(2).Runs[0].State != RunStarting {
+		t.Fatal("a start at or after the cutoff belongs to this daemon")
+	}
+}
+
+func TestBeginStartLimited(t *testing.T) {
+	b := runsBacklog(t)
+	it := b.Item(2)
+	it.Status = StatusRunning
+	it.Runs = []RunRef{{SessionID: "s1", State: RunStarted}}
+	limited := stubFacts(map[string]SessionFacts{"s1": {Limited: true, Reason: "usage limit until 14:00"}})
+	if _, err := b.BeginStart(2, StartedByUser, limited, t0); err == nil || err.Error() != "B-2 is at a usage limit until 14:00" {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestContinueFailed(t *testing.T) {
+	b := runsBacklog(t)
+	it := b.Item(2)
+	it.Status = StatusReview
+	it.Runs = []RunRef{{SessionID: "s1", State: RunStarted}}
+	if err := b.Continued(2, "s1", t0); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.ContinueFailed(2, StatusReview, errors.New("pane gone"), t0); err != nil {
+		t.Fatal(err)
+	}
+	if it.Status != StatusReview || !strings.Contains(it.Thread[len(it.Thread)-1].Text, "pane gone") {
+		t.Fatalf("item %+v", it)
+	}
+}
+
+func TestLatestSessions(t *testing.T) {
+	b := runsBacklog(t)
+	b.Item(2).Runs = []RunRef{{SessionID: "old", State: RunStarted}, {SessionID: "new", State: RunStarted}}
+	b.Item(3).Runs = []RunRef{{SessionID: "s3", State: RunStarted}, {State: RunFailed}}
+	got := b.LatestSessions()
+	if len(got) != 1 || got["new"] != 2 {
+		t.Fatalf("got %v", got)
+	}
+	if r := b.LatestRun(2); r == nil || r.SessionID != "new" || b.LatestRun(9) != nil {
+		t.Fatalf("latest run %+v", r)
 	}
 }

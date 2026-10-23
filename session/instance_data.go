@@ -107,6 +107,7 @@ func (i *Instance) toInstanceDataLocked() InstanceData {
 	data.TaskRunActive = i.taskRunActive
 	data.BacklogItem = i.BacklogItem
 	data.BacklogRunActive = i.backlogRunActive
+	data.BacklogRunEndedAt = i.backlogRunEndedAt
 	gate := i.runGateActiveLocked()
 	data.TaskRunIdleEdgeHeld = gate && i.taskRunIdleEdgeHeld
 	data.TaskRunTurnGateHeld = gate && i.taskRunTurnGateHeld
@@ -370,6 +371,7 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 		taskRunActive:       data.TaskRunActive,
 		BacklogItem:         data.BacklogItem,
 		backlogRunActive:    data.BacklogRunActive && data.BacklogItem != 0,
+		backlogRunEndedAt:   data.BacklogRunEndedAt,
 		taskRunIdleEdgeHeld: runGateActiveInData(data) && data.TaskRunIdleEdgeHeld,
 		taskRunTurnGateHeld: runGateActiveInData(data) && data.TaskRunTurnGateHeld,
 		// Gate on the run still being in flight, mirroring the write side and
