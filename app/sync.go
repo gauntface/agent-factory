@@ -647,6 +647,9 @@ func (m *home) updateInstanceFromSnapshot(inst *session.Instance, d session.Inst
 	if inst.ReconcileTaskRunState(d.TaskRunActive, d.TaskRunIdleEdgeHeld, d.TaskRunTurnGateHeld) {
 		changed = true
 	}
+	if inst.ReconcileBacklogRunState(d.BacklogRunActive) {
+		changed = true
+	}
 	// Mirror the daemon's authoritative LIVENESS onto the row (#960 PR 5, #1195):
 	// the daemon poll computes Running/Ready/Lost/Archived/LimitReached (the #935
 	// liveness) and the TUI renders it. Applied UNCONDITIONALLY — daemon liveness

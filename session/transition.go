@@ -622,19 +622,18 @@ func (i *Instance) transitionLocked(ev TransitionEvent) error {
 	// Only ever true→false: a capped task creates one session per event, so a
 	// session has exactly one run, and anything that happens to it afterwards
 	// (a user prompting it, an un-archive) is not the task's.
-	if i.taskRunActive {
+	//
+	// The backlog run marker shares this gate but is re-armed per delivery
+	// (ArmBacklogRun); endRunsLocked clears both markers.
+	if i.runGateActiveLocked() {
 		switch spec.run {
 		case runEnds:
-			i.taskRunActive = false
-			i.taskRunIdleEdgeHeld = false
-			i.taskRunTurnGateHeld = false
-			i.touchLocked()
 			// The completion transition IS the capture point for the adoption
 			// baseline (#3865): taken here, inside the same i.mu section that ends
 			// the run, nothing — not the rest of this transition, not the poll's
 			// later persistPollChange — can land a delivery that reads as though it
 			// had always been there. See session/adoption_fence.go.
-			i.captureAdoptionBaselineLocked()
+			i.endRunsLocked()
 		case runEndsOnIdleEdge:
 			// The AGENT's own axis, and the EDGE into it. Not ClassifyActivity — that
 			// calls an in-flight archive "pending", which would miss an agent going
@@ -713,11 +712,7 @@ func (i *Instance) transitionLocked(ev TransitionEvent) error {
 							i.Title, i.currentAgentNameLocked(),
 							time.Since(i.taskRunPromptAttemptAt).Round(time.Second))
 					}
-					i.taskRunActive = false
-					i.taskRunIdleEdgeHeld = false
-					i.taskRunTurnGateHeld = false
-					i.touchLocked()
-					i.captureAdoptionBaselineLocked()
+					i.endRunsLocked()
 				}
 			}
 		}
