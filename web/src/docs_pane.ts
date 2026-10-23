@@ -7,6 +7,7 @@
 
 import { errorText } from "./api.js";
 import { countOpenQuestions } from "./callouts.js";
+import { backlogItemsLabel, backlogItemsPrompt, type DocsBacklog } from "./docs_backlog.js";
 import { createDocsEditor, type DocsEditor } from "./docs_editor.js";
 export { createDocsEditor } from "./docs_editor.js";
 import {
@@ -52,6 +53,8 @@ export interface DocsPaneOptions {
   subscribe(fn: (change: ProposalChange) => void): () => void;
   /** Registers for proposal.push events; returns the unsubscribe. */
   subscribePush(fn: (status: PushStatus) => void): () => void;
+  /** The doc menu's backlog items; absent where the backlog is not known. */
+  backlog?: DocsBacklog;
 }
 
 export class DocsPane {
@@ -289,7 +292,7 @@ export class DocsPane {
     this.closeMenu();
     const remove = h("button", { type: "button", class: "af-docs-menuitem", role: "menuitem" }, "Delete");
     remove.addEventListener("click", () => this.deleteDoc(doc, remove));
-    this.docMenu.replaceChildren(remove);
+    this.docMenu.replaceChildren(...this.backlogMenuItems(), remove);
     this.docMenuTab = tab;
     const host = this.docMenu.parentElement!.getBoundingClientRect();
     const box = tab.getBoundingClientRect();
@@ -298,7 +301,32 @@ export class DocsPane {
     this.docMenu.style.left = `${Math.max(0, x - host.left)}px`;
     this.docMenu.style.top = `${Math.max(0, y - host.top)}px`;
     this.docMenu.hidden = false;
-    remove.focus();
+    (this.docMenu.firstElementChild as HTMLElement | null)?.focus();
+  }
+
+  private backlogMenuItems(): HTMLElement[] {
+    const backlog = this.opts.backlog;
+    if (!backlog) return [];
+    const items = backlog.items();
+    const make = h("button", { type: "button", class: "af-docs-menuitem", role: "menuitem" }, backlogItemsLabel(items));
+    make.addEventListener("click", () => {
+      make.disabled = true;
+      backlog.send(backlogItemsPrompt(this.opts.slug, items)).then(
+        () => this.closeDocMenu(true),
+        (e: unknown) => {
+          make.disabled = false;
+          this.docMenu.querySelector(".af-docs-menu-error")?.remove();
+          make.after(h("p", { class: "af-docs-menu-error" }, `Could not send the request to the agent: ${errorText(e)}`));
+        },
+      );
+    });
+    if (items.count === 0) return [make];
+    const open = h("button", { type: "button", class: "af-docs-menuitem", role: "menuitem" }, "Open in Backlog");
+    open.addEventListener("click", () => {
+      this.closeDocMenu(false);
+      backlog.open(items.first);
+    });
+    return [make, open];
   }
 
   private closeDocMenu(restoreFocus: boolean): void {

@@ -5,6 +5,7 @@
 // this module small: everything else about the tab lives in the lazy bundle.
 
 import { errorText } from "./api.js";
+import type { DocsBacklog } from "./docs_backlog.js";
 import type { ProposalChange, PushStatus } from "./proposal_api.js";
 
 export type DocsModule = typeof import("./docs_pane.js");
@@ -52,6 +53,7 @@ export interface DocsTabOptions {
   sessionId: string;
   slug: string;
   token: string;
+  backlog?: DocsBacklog;
 }
 
 /** Shows the Docs tab for one proposal in `host`. Returns its teardown. */

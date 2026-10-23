@@ -146,3 +146,46 @@ test("docs tab: right-click Delete removes a doc", async ({ page, request }) => 
   await expect.poll(() => existsSync(join(started.path, "goals.md"))).toBe(false);
   expect(existsSync(join(started.path, "api.md"))).toBe(true);
 });
+
+test("docs tab: the doc menu makes backlog items, then updates and opens them", async ({ page, request }) => {
+  const afBin = process.env.AF_BIN;
+  const mockRepo = process.env.AF_MOCK_REPO;
+  test.skip(!afBin || !mockRepo, "AF_BIN/AF_MOCK_REPO are set only by web-selftest-entry.sh");
+  const af = (input: string, ...args: string[]): string =>
+    execFileSync(afBin as string, args, { input, stdio: ["pipe", "pipe", "pipe"], encoding: "utf8" });
+
+  const title = "docs-backlog-probe";
+  const slug = "docs-backlog-plan";
+  af("", "sessions", "create", "--repo", mockRepo as string, "--name", title, "--program", "claude");
+  const started = JSON.parse(af("", "proposal", "start", slug, "--repo", mockRepo as string, "--session", title,
+    "--docs", "goals,steps")) as { tab_error?: string };
+  expect(started.tab_error ?? "", "start must create the Docs tab").toBe("");
+
+  const envelope = await (await request.post("/v1/Snapshot", { data: { repo_id: "" } })).json();
+  const session = envelope.data.instances.find((s: { title: string }) => s.title === title);
+  expect(session).toBeTruthy();
+  await page.goto(`/#/session/${session.id}`);
+  const pane = page.locator(`.af-docs[data-proposal="${slug}"]`);
+  await expect(pane.locator(".cm-content")).toBeVisible();
+  const menu = pane.locator(".af-docs-docmenu");
+  const steps = pane.locator(".af-docs-tab", { hasText: "steps" });
+
+  await steps.click({ button: "right" });
+  await expect(menu.getByRole("menuitem", { name: "Make backlog items" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "Open in Backlog" })).toHaveCount(0);
+
+  const batch = JSON.stringify({ proposal: slug, items: [
+    { key: slug, title: "Backlog probe", sequential: true },
+    { key: "pr-1", parent: slug, title: "First PR" },
+  ] });
+  const ids = JSON.parse(af(batch, "backlog", "add", "--file", "-", "--repo", mockRepo as string)) as
+    { ids: Record<string, number> };
+
+  await expect.poll(async () => {
+    await steps.click({ button: "right" });
+    return menu.getByRole("menuitem", { name: "Update backlog items" }).count();
+  }).toBe(1);
+  await menu.getByRole("menuitem", { name: "Open in Backlog" }).click();
+  await expect(page.locator(`.af-backlog-row[data-item-id="${ids.ids[slug]}"]`)).toBeVisible();
+  await expect(page.locator(".af-backlog-title-input")).toHaveValue("Backlog probe");
+});
