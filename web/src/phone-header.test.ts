@@ -30,6 +30,7 @@ class Element extends EventTarget {
   getAttribute(key: string) { return this.attrs.get(key) ?? null; }
   contains(node: Element): boolean { return node === this || this.children.some(child => child.contains(node)); }
   focus() { doc.activeElement = this; }
+  blur() { if (doc.activeElement === this) doc.activeElement = null; }
   click() { this.dispatchEvent(new Event("click")); }
 }
 const doc = Object.assign(new EventTarget(), {
@@ -93,7 +94,7 @@ test("phone overflow has native keyboard activation and Escape returns focus to 
 
 test("truncated session title retains the complete name for pointer and accessible text", () => {
   const title = "Review the focused-session header across all phone widths";
-  const chrome = components.terminalChrome({ title, copyLink() {}, handoff() {}, retry() {}, markDelivered() {}, newTab() {} });
+  const chrome = components.terminalChrome({ title, copyLink() {}, handoff() {}, retry() {}, markDelivered() {}, clearAttention() {}, newTab() {} });
   assert.equal(chrome.title.title, title, "ellipsis must have a full-name route");
   assert.equal(chrome.title.textContent, title);
   assert.equal(chrome.title.getAttribute("aria-label"), title);
@@ -169,4 +170,20 @@ test("phone panel actions can dismiss carried session state", () => {
   assert.equal(session.trigger.getAttribute("aria-expanded"), "false");
   outer.dispose();
   session.dispose();
+});
+
+test("attention chip shows only while the agent asks, and only its × dismisses it", () => {
+  let dismissed = 0;
+  const chip = components.attentionChip(() => { dismissed++; });
+  const el = chip.el as unknown as Element;
+  assert.equal(el.hidden, true, "no request, no chip");
+  chip.patch(true, "Pick A or B");
+  assert.equal(el.hidden, false);
+  assert.equal(el.title, "Needs attention: Pick A or B");
+  el.click();
+  assert.equal(dismissed, 0, "a click on the chip body is not a dismissal");
+  (chip.dismiss as unknown as Element).click();
+  assert.equal(dismissed, 1);
+  chip.patch(false, "");
+  assert.equal(el.hidden, true);
 });

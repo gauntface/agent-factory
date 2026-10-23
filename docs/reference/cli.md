@@ -2641,8 +2641,9 @@ dot on the row, and the reason in the row tooltip.
 Agents run this with --self when they need a decision or input they cannot
 get any other way, as the last step before they stop and wait.
 
-The request clears when the user types into the agent pane, opens the agent
-tab in the web UI, or when the agent starts work again after it went idle.
+The request clears when the user submits a line in the agent pane, dismisses
+it from the session header in the web UI, or when the agent starts work again
+after it went idle.
 --clear removes it now.
 
 ```
