@@ -706,6 +706,10 @@ af sessions tab-create my-session --kind docs --proposal auth-rework
   between conflict markers, and autosave waits until you remove them. If you
   close the tab or the page first, the doc saves with the markers in it, so no
   edit is lost and the agent sees both sides.
+- Right-click a doc tab (long-press on a phone) for its menu. **Make backlog
+  items** asks the agent to turn the proposal into draft backlog items; once
+  they exist it reads **Update backlog items**, and **Open in Backlog** shows
+  them. See [Backlog](backlog.md).
 
 The editor loads the first time a Docs tab opens. In the **TUI** a Docs tab
 shows a placeholder.
