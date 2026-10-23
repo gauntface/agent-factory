@@ -14,6 +14,7 @@ import { ItemPanel, entryField, stateChip } from "./backlog_panel.js";
 import { h } from "./dom.js";
 import { icon } from "./icon.js";
 import { recoveryScreen } from "./recovery.js";
+import { rowKind } from "./status.js";
 import type { SessionData } from "./types.js";
 
 export interface BacklogHost {
@@ -72,7 +73,14 @@ export class BacklogPane {
   }
 
   update(data: BacklogData, root: string | null, sessions: SessionData[]): void {
-    if (data === this.data && root === this.root && sessions === this.sessions) return;
+    if (data === this.data && root === this.root) {
+      if (sessions === this.sessions) return;
+      const before = this.runSig(this.sessions);
+      this.sessions = sessions;
+      if (this.runSig(sessions) === before) return;
+      this.render();
+      return;
+    }
     if (data !== this.data) this.pending = null;
     if (root !== this.root) {
       this.selected = null;
@@ -83,6 +91,15 @@ export class BacklogPane {
     this.root = root;
     this.sessions = sessions;
     this.render();
+  }
+
+  /** The selected item's runs as the panel shows them, to skip unrelated session events. */
+  private runSig(sessions: SessionData[]): string {
+    const it = this.selected !== null ? this.view()?.backlog.items.find((x) => x.id === this.selected) : undefined;
+    return JSON.stringify((it?.runs ?? []).map((r) => {
+      const s = sessions.find((x) => x.id === r.session_id);
+      return s ? [s.id, rowKind(s)] : null;
+    }));
   }
 
   /** Selects an item, as the Sessions view's item chip does. */
@@ -141,6 +158,8 @@ export class BacklogPane {
     }
     if (this.el.firstChild !== this.headSlot) this.el.replaceChildren(this.headSlot, this.main);
     if (this.selected !== null && !itemByID(v.backlog, this.selected)) this.selected = null;
+    const focusedRow = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>(".af-backlog-row");
+    if (focusedRow && this.focusId === null && this.listSlot.contains(focusedRow)) this.focusId = Number(focusedRow.dataset.itemId);
     const rows = listRows(v, { filter: this.filter, showDone: this.showDone, folded: this.folded, source: this.source });
     const list = h("ul", { class: "af-backlog-list", role: "tree" });
     list.setAttribute("aria-label", "Items");

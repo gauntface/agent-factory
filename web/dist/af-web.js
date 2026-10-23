@@ -16811,16 +16811,31 @@ async function getBudget(token2) {
 async function addItem(root2, input, token2) {
   const resp = await af("AddBacklogItems", {
     repo_path: root2,
-    items: [{ key: "new", title: input.title, ...input.parent ? { parent: input.parent } : {} }]
+    items: [{ key: "new", title: input.title, parent: input.parent || void 0 }]
   }, token2);
   return resp?.ids?.new ?? 0;
 }
 async function updateItem(root2, id, update, token2) {
-  const resp = await af("UpdateBacklogItem", { repo_path: root2, id, ...update }, token2);
+  const resp = await af("UpdateBacklogItem", {
+    repo_path: root2,
+    id,
+    title: update.title,
+    body: update.body,
+    waits_on: update.waits_on,
+    sequential: update.sequential
+  }, token2);
   return resp.item;
 }
 async function moveItem(root2, id, to, token2) {
-  await af("MoveBacklogItem", { repo_path: root2, id, ...to }, token2);
+  await af("MoveBacklogItem", {
+    repo_path: root2,
+    id,
+    before: "before" in to ? to.before : void 0,
+    after: "after" in to ? to.after : void 0,
+    into: "into" in to ? to.into : void 0,
+    top: "top" in to ? true : void 0,
+    bottom: "bottom" in to ? true : void 0
+  }, token2);
 }
 async function setItemStatus(root2, id, status, token2) {
   await af("SetBacklogItemStatus", { repo_path: root2, id, status }, token2);
@@ -17086,6 +17101,7 @@ var ItemPanel = class {
     if (!it) return;
     if (document.activeElement !== this.title) this.title.value = it.title;
     this.body.setText(it.body ?? "");
+    const restore = this.keepField();
     this.head.replaceChildren(stateChip(view, it.id));
     const q = openQuestion(it);
     const parts = [];
@@ -17107,6 +17123,21 @@ var ItemPanel = class {
       ].join(" \xB7 ")),
       h("div", { class: "af-backlog-msg-text" }, m.text)
     )));
+    restore();
+  }
+  /** Keeps the value and focus of a rebuilt field, found again by its label. */
+  keepField() {
+    const active = document.activeElement;
+    if (!(active instanceof HTMLInputElement) || !this.rest.contains(active)) return () => {
+    };
+    const label = active.getAttribute("aria-label");
+    const value = active.value;
+    return () => {
+      const next = label ? this.rest.querySelector(`input[aria-label="${CSS.escape(label)}"]`) : null;
+      if (!next) return;
+      next.value = value;
+      next.focus({ preventScroll: true });
+    };
   }
   actionsRow(view, it) {
     const row = h("div", { class: "af-backlog-actions" });
@@ -17339,7 +17370,14 @@ var BacklogPane = class {
   emptySlot = h("div", {});
   main;
   update(data, root2, sessions) {
-    if (data === this.data && root2 === this.root && sessions === this.sessions) return;
+    if (data === this.data && root2 === this.root) {
+      if (sessions === this.sessions) return;
+      const before = this.runSig(this.sessions);
+      this.sessions = sessions;
+      if (this.runSig(sessions) === before) return;
+      this.render();
+      return;
+    }
     if (data !== this.data) this.pending = null;
     if (root2 !== this.root) {
       this.selected = null;
@@ -17350,6 +17388,14 @@ var BacklogPane = class {
     this.root = root2;
     this.sessions = sessions;
     this.render();
+  }
+  /** The selected item's runs as the panel shows them, to skip unrelated session events. */
+  runSig(sessions) {
+    const it = this.selected !== null ? this.view()?.backlog.items.find((x) => x.id === this.selected) : void 0;
+    return JSON.stringify((it?.runs ?? []).map((r) => {
+      const s = sessions.find((x) => x.id === r.session_id);
+      return s ? [s.id, rowKind(s)] : null;
+    }));
   }
   /** Selects an item, as the Sessions view's item chip does. */
   select(id) {
@@ -17408,6 +17454,8 @@ var BacklogPane = class {
     }
     if (this.el.firstChild !== this.headSlot) this.el.replaceChildren(this.headSlot, this.main);
     if (this.selected !== null && !itemByID(v.backlog, this.selected)) this.selected = null;
+    const focusedRow = document.activeElement?.closest(".af-backlog-row");
+    if (focusedRow && this.focusId === null && this.listSlot.contains(focusedRow)) this.focusId = Number(focusedRow.dataset.itemId);
     const rows = listRows(v, { filter: this.filter, showDone: this.showDone, folded: this.folded, source: this.source });
     const list = h("ul", { class: "af-backlog-list", role: "tree" });
     list.setAttribute("aria-label", "Items");

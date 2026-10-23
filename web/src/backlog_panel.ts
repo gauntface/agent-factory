@@ -131,6 +131,7 @@ export class ItemPanel {
     if (!it) return;
     if (document.activeElement !== this.title) this.title.value = it.title;
     this.body.setText(it.body ?? "");
+    const restore = this.keepField();
     this.head.replaceChildren(stateChip(view, it.id));
     const q = openQuestion(it);
     const parts: HTMLElement[] = [];
@@ -146,6 +147,21 @@ export class ItemPanel {
         m.author === "user" ? "you" : m.author.startsWith("agent:") ? "agent" : m.author, formatTime(m.at),
         ...(m.closed ? [m.closed === "answered in session" ? "Answered in session" : `Closed · ${m.closed}`] : [])].join(" · ")),
       h("div", { class: "af-backlog-msg-text" }, m.text))));
+    restore();
+  }
+
+  /** Keeps the value and focus of a rebuilt field, found again by its label. */
+  private keepField(): () => void {
+    const active = document.activeElement;
+    if (!(active instanceof HTMLInputElement) || !this.rest.contains(active)) return () => {};
+    const label = active.getAttribute("aria-label");
+    const value = active.value;
+    return () => {
+      const next = label ? this.rest.querySelector<HTMLInputElement>(`input[aria-label="${CSS.escape(label)}"]`) : null;
+      if (!next) return;
+      next.value = value;
+      next.focus({ preventScroll: true });
+    };
   }
 
   private actionsRow(view: BacklogView, it: Item): HTMLElement {

@@ -19,10 +19,14 @@ export interface NewItem {
   parent?: number;
 }
 
+interface AddResponse {
+  ids?: { [key: string]: number };
+}
+
 export async function addItem(root: string, input: NewItem, token: string): Promise<number> {
-  const resp = await af<{ ids?: Record<string, number> }>("AddBacklogItems", {
+  const resp = await af<AddResponse>("AddBacklogItems", {
     repo_path: root,
-    items: [{ key: "new", title: input.title, ...(input.parent ? { parent: input.parent } : {}) }],
+    items: [{ key: "new", title: input.title, parent: input.parent || undefined }],
   }, token);
   return resp?.ids?.new ?? 0;
 }
@@ -35,12 +39,27 @@ export interface ItemUpdate {
 }
 
 export async function updateItem(root: string, id: number, update: ItemUpdate, token: string): Promise<Item> {
-  const resp = await af<{ item: Item }>("UpdateBacklogItem", { repo_path: root, id, ...update }, token);
+  const resp = await af<{ item: Item }>("UpdateBacklogItem", {
+    repo_path: root,
+    id,
+    title: update.title,
+    body: update.body,
+    waits_on: update.waits_on,
+    sequential: update.sequential,
+  }, token);
   return resp.item;
 }
 
 export async function moveItem(root: string, id: number, to: MoveTarget, token: string): Promise<void> {
-  await af<unknown>("MoveBacklogItem", { repo_path: root, id, ...to }, token);
+  await af<unknown>("MoveBacklogItem", {
+    repo_path: root,
+    id,
+    before: "before" in to ? to.before : undefined,
+    after: "after" in to ? to.after : undefined,
+    into: "into" in to ? to.into : undefined,
+    top: "top" in to ? true : undefined,
+    bottom: "bottom" in to ? true : undefined,
+  }, token);
 }
 
 export async function setItemStatus(root: string, id: number, status: Status, token: string): Promise<void> {
