@@ -2037,6 +2037,7 @@
       "af backlog done --pr": "backlog.status",
       "af backlog note --self": "backlog.items",
       "af backlog ask --self": "backlog.questions",
+      "af backlog answer --question": "backlog.questions",
       "af backlog drop --help": "meta.discovery",
       "af backlog runner --help": "meta.discovery",
       "af backlog budget --help": "meta.discovery",
@@ -2333,13 +2334,6 @@
       "web_rpcs: keyed by RPC method -> json field."
     ],
     "requests": {
-    "PostBacklogMessageRequest": {
-      "cli": {
-        "question_id": {
-          "ok": "af backlog answer answers the item's open question, the oldest when there are several; question_id names one, for the web answer box in backlog PR 8."
-        }
-      }
-    },
       "SnapshotRequest": {
         "cli": {
           "created_after": {

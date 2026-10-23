@@ -23,13 +23,15 @@ type Host interface {
 	// flight plus item sessions with an active run or that af will restore.
 	SlotsUsed(repoID string) int
 	// SetAttention mirrors an item's open question on its session; reason ""
-	// clears it. Best effort: the thread is the source of truth.
+	// clears it. Best effort: the thread is the source of truth. The service
+	// calls it under the backlog lock, so mirrors follow the thread's order.
 	SetAttention(repoID, sessionID, reason string)
 	// AnswerTarget reports whether an answer can reach the session.
 	AnswerTarget(repoID, sessionID string) AnswerTarget
-	// DeliverAnswer sends prompt to the item's session in the background,
-	// restoring the session first when restore is set.
-	DeliverAnswer(repoID string, id int, sessionID, prompt string, restore bool)
+	// DeliverAnswer sends a pending answer to the item's session in the
+	// background, restoring the session first when it is not running, and
+	// records the outcome on the answer.
+	DeliverAnswer(repoID string, a PendingAnswer)
 }
 
 // AnswerTarget is where an answer can go.
@@ -298,16 +300,16 @@ func (s *Service) SetItemStatus(req SetItemStatusRequest) (*ItemResponse, error)
 		if req.PR != "" {
 			b.Item(req.ID).PR = req.PR
 		}
+		still := b.questionSessions()
+		for id, sessionID := range asked {
+			if _, open := still[id]; !open {
+				s.host.SetAttention(p.id, sessionID, "")
+			}
+		}
 		return changed, nil
 	})
 	if err != nil {
 		return nil, err
-	}
-	still := b.questionSessions()
-	for id, sessionID := range asked {
-		if _, open := still[id]; !open {
-			s.host.SetAttention(p.id, sessionID, "")
-		}
 	}
 	return &ItemResponse{Item: *b.Item(req.ID)}, nil
 }

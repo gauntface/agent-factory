@@ -99,20 +99,9 @@ func (i *Instance) noteAttentionLivenessLocked() {
 	case LiveRunning:
 		if i.attention.SeenIdle {
 			i.attention = nil
-			i.attentionAnswered = true
 		}
 	case LivenessUnset:
 	default:
 		i.attention = nil
 	}
-}
-
-// TakeAttentionAnswered reports whether an attention request was cleared
-// because the agent started work again after it went idle, and resets that.
-func (i *Instance) TakeAttentionAnswered() bool {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	answered := i.attentionAnswered
-	i.attentionAnswered = false
-	return answered
 }

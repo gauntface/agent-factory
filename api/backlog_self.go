@@ -224,11 +224,14 @@ var backlogAskCmd = &cobra.Command{
 	},
 }
 
+var backlogAnswerQuestion int
+
 var backlogAnswerCmd = &cobra.Command{
-	Use:   "answer <id> <text>",
+	Use:   "answer <id> [--question <n>] <text>",
 	Short: "Answer an item's open question",
-	Long: "Answer the item's open question. af adds the answer to the thread and sends it to " +
-		"the item's session, restoring the session first if it is archived. If the session is " +
+	Long: "Answer the item's oldest open question, or the one --question names. af adds the " +
+		"answer to the thread and sends it to the item's session, restoring the session first " +
+		"if it is archived, and waiting while a client is attached to it. If the session is " +
 		"gone, the answer stays in the thread.",
 	Args: cobra.MinimumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -245,12 +248,13 @@ var backlogAnswerCmd = &cobra.Command{
 				return nil, err
 			}
 			return postBacklogMessage(daemon.PostBacklogMessageRequest{RepoID: t.repoID, RepoPath: t.repoPath,
-				ID: id, Kind: backlog.KindAnswer, Text: strings.Join(args[1:], " ")})
+				ID: id, Kind: backlog.KindAnswer, Text: strings.Join(args[1:], " "), QuestionID: backlogAnswerQuestion})
 		})
 	},
 }
 
 func init() {
+	backlogAnswerCmd.Flags().IntVar(&backlogAnswerQuestion, "question", 0, "The `id` of the question to answer, from \"af backlog show\"; default the oldest open one")
 	backlogAskCmd.Flags().BoolVar(&backlogAskSelf, "self", false, "Ask on the item of the session this runs in")
 	backlogDoneCmd.Flags().BoolVar(&backlogDoneSelf, "self", false, "From inside an item session: the work is finished; send the item to review")
 	backlogDoneCmd.Flags().StringVar(&backlogDonePR, "pr", "", "With --self, the `url` of the pull request for the work")

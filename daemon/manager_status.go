@@ -522,7 +522,6 @@ func (m *Manager) observeTaskRunWhilePaused(repoID, key string, instance *sessio
 	// unpaused tick applies it, instead of losing the edge entirely (#2595).
 	m.deferTaskSessionLifecycleWhilePaused(repoID, instance, taskRunWasActive)
 	m.noteBacklogRunEnd(repoID, instance, backlogRunWasActive)
-	m.noteBacklogAnsweredOnRun(repoID, instance)
 }
 
 // RefreshStatuses recomputes every started instance's status the way the TUI
@@ -956,7 +955,6 @@ func (m *Manager) refreshInstanceStatus(repoID string, instance *session.Instanc
 	m.applyDeferredTaskSessionLifecycle(repoID, instance)
 	m.noteBacklogRunEnd(repoID, instance, backlogRunWasActive)
 	m.drainBacklogDeferredArchive(repoID, instance)
-	m.noteBacklogAnsweredOnRun(repoID, instance)
 }
 
 // SaveInstances writes the manager's authoritative in-memory instances to disk

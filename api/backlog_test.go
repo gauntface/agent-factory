@@ -27,7 +27,7 @@ func (backlogTestHost) SetAttention(_, _, _ string) {}
 func (backlogTestHost) AnswerTarget(_, _ string) backlog.AnswerTarget {
 	return backlog.TargetLive
 }
-func (backlogTestHost) DeliverAnswer(string, int, string, string, bool) {}
+func (backlogTestHost) DeliverAnswer(string, backlog.PendingAnswer) {}
 func backlogRoute[Req, Resp any](call func(Req) (Resp, error)) func([]byte) (any, error) {
 	return func(raw []byte) (any, error) {
 		r, err := decodeInto[Req](raw)

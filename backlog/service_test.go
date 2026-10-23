@@ -19,14 +19,7 @@ type testHost struct {
 	// attention is each session's mirrored attention reason.
 	attention map[string]string
 	target    AnswerTarget
-	delivered []delivery
-}
-
-type delivery struct {
-	id        int
-	sessionID string
-	prompt    string
-	restore   bool
+	delivered []PendingAnswer
 }
 
 func (h *testHost) SetAttention(_, sessionID, reason string) {
@@ -36,8 +29,8 @@ func (h *testHost) SetAttention(_, sessionID, reason string) {
 	h.attention[sessionID] = reason
 }
 func (h *testHost) AnswerTarget(string, string) AnswerTarget { return h.target }
-func (h *testHost) DeliverAnswer(_ string, id int, sessionID, prompt string, restore bool) {
-	h.delivered = append(h.delivered, delivery{id, sessionID, prompt, restore})
+func (h *testHost) DeliverAnswer(_ string, a PendingAnswer) {
+	h.delivered = append(h.delivered, a)
 }
 
 func (h *testHost) Facts(string) Facts          { return h.facts }

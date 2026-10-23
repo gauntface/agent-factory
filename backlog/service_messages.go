@@ -64,12 +64,12 @@ func (s *Service) ask(p *project, req PostMessageRequest) (*MessageResponse, err
 			return nil, err
 		}
 		msg = *m
+		s.host.SetAttention(p.id, req.SessionID, b.OpenQuestionText(req.ID))
 		return []int{req.ID}, nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	s.host.SetAttention(p.id, req.SessionID, msg.Text)
 	return &MessageResponse{Message: msg}, nil
 }
 
@@ -86,19 +86,35 @@ func (s *Service) answer(p *project, req PostMessageRequest) (*MessageResponse, 
 		return nil, p.named(&NotFoundError{ID: req.ID})
 	}
 	sessionID, target := "", TargetGone
-	if last := it.lastRun(); last != nil && last.State == RunStarted && last.SessionID != "" {
-		sessionID = last.SessionID
-		target = s.host.AnswerTarget(p.id, sessionID)
+	if last := it.lastRun(); last != nil {
+		if last.State == RunStarting {
+			return nil, fmt.Errorf("%s is starting a new session; answer once it is up", FormatID(req.ID))
+		}
+		if last.State == RunStarted && last.SessionID != "" {
+			sessionID = last.SessionID
+			target = s.host.AnswerTarget(p.id, sessionID)
+		}
 	}
 	var out Answered
+	var pending PendingAnswer
 	b, err = s.update(p, func(b *Backlog) ([]int, error) {
 		var err error
 		if out, err = b.Answer(req.ID, req.QuestionID, req.Text, target != TargetGone, s.now()); err != nil {
 			return nil, err
 		}
-		if target != TargetGone && out.SessionID != sessionID {
+		if target == TargetGone {
+			return []int{req.ID}, nil
+		}
+		if out.SessionID != sessionID {
 			return nil, fmt.Errorf("%s changed while answering; retry", FormatID(req.ID))
 		}
+		next := ""
+		if out.Next != nil && target == TargetLive {
+			next = out.Next.Text
+		}
+		s.host.SetAttention(p.id, sessionID, next)
+		pending = PendingAnswer{ID: req.ID, AnswerID: out.Answer.ID, SessionID: sessionID,
+			Prompt: AnswerPrompt(b.Item(req.ID), out.Answer.Text)}
 		return []int{req.ID}, nil
 	})
 	if err != nil {
@@ -107,11 +123,6 @@ func (s *Service) answer(p *project, req PostMessageRequest) (*MessageResponse, 
 	if target == TargetGone {
 		return nil, GoneError(req.ID)
 	}
-	next := ""
-	if out.Next != nil {
-		next = out.Next.Text
-	}
-	s.host.SetAttention(p.id, sessionID, next)
-	s.host.DeliverAnswer(p.id, req.ID, sessionID, AnswerPrompt(b.Item(req.ID), out.Answer.Text), target == TargetRestore)
+	s.host.DeliverAnswer(p.id, pending)
 	return &MessageResponse{Message: out.Answer}, nil
 }

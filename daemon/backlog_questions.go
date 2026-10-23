@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"errors"
 	"time"
 
 	"github.com/sachiniyer/agent-factory/agentproto"
@@ -15,9 +16,21 @@ var restoreBacklogSession = func(m *Manager, req RestoreSessionRequest) (session
 	return restored, err
 }
 
-// backlogAnswerHoldPoll is how often a held answer checks whether the user
-// detached from the session.
-var backlogAnswerHoldPoll = 2 * time.Second
+// backlogAnswerWait blocks while a held answer waits for the user to detach or
+// a usage limit to reset. It reports false when the daemon is stopping. A
+// package var so tests can see the hold and end it.
+var backlogAnswerWait = func(stop <-chan struct{}) bool {
+	t := time.NewTimer(2 * time.Second)
+	defer t.Stop()
+	select {
+	case <-stop:
+		return false
+	case <-t.C:
+		return true
+	}
+}
+
+var errBacklogAnswerHeld = errors.New("held")
 
 func (h backlogHost) SetAttention(repoID, sessionID, reason string) {
 	req := SetAttentionRequest{ID: sessionID, RepoID: repoID, Reason: reason, Clear: reason == ""}
@@ -31,102 +44,171 @@ func (h backlogHost) AnswerTarget(repoID, sessionID string) backlog.AnswerTarget
 	if !ok || s.view.UserKilled || s.view.InFlightOp == session.OpKilling {
 		return backlog.TargetGone
 	}
-	switch s.view.Liveness {
-	case session.LiveArchived, session.LiveLost, session.LiveDead:
+	if backlogNeedsRestore(s) {
 		return backlog.TargetRestore
 	}
 	return backlog.TargetLive
 }
 
-func (h backlogHost) DeliverAnswer(repoID string, id int, sessionID, prompt string, restore bool) {
+func backlogNeedsRestore(s itemSession) bool {
+	switch s.view.Liveness {
+	case session.LiveArchived, session.LiveLost, session.LiveDead:
+		return true
+	}
+	return false
+}
+
+func (h backlogHost) DeliverAnswer(repoID string, a backlog.PendingAnswer) {
 	m := h.m
+	m.backlog.reserve(repoID)
 	launched := m.launchBackgroundMutation(func(stop <-chan struct{}) {
-		m.deliverBacklogAnswer(stop, repoID, id, sessionID, prompt, restore)
+		m.deliverBacklogAnswer(stop, repoID, a)
 	})
 	if !launched {
-		m.backlogAnswerNotDelivered(repoID, id, "af is shutting down")
+		m.backlog.release(repoID)
+		m.backlogAnswerFailed(repoID, a, "af is shutting down")
 	}
 }
 
-// deliverBacklogAnswer restores the item session if asked, holds while a client
-// is attached full screen, then arms the run and sends the answer.
-func (m *Manager) deliverBacklogAnswer(stop <-chan struct{}, repoID string, id int, sessionID, prompt string, restore bool) {
-	if restore {
-		restored, err := restoreBacklogSession(m, RestoreSessionRequest{ID: sessionID, RepoID: repoID})
+// deliverBacklogAnswer finishes a pending answer. The caller reserved a slot
+// for it; the slot passes to the run marker once it is armed. A restore comes
+// first. The run is armed before any hold, so a held answer shows Working and
+// keeps its slot, and the send takes the per-target lock task deliveries use.
+// A client attached full screen or a usage limit holds the send.
+func (m *Manager) deliverBacklogAnswer(stop <-chan struct{}, repoID string, a backlog.PendingAnswer) {
+	reserved := true
+	release := func() {
+		if reserved {
+			reserved = false
+			m.backlog.release(repoID)
+		}
+	}
+	defer release()
+	s, ok := m.itemSessions(repoID)[a.SessionID]
+	if !ok || s.view.UserKilled || s.view.InFlightOp == session.OpKilling {
+		m.backlogAnswerFailed(repoID, a, "the session is gone")
+		return
+	}
+	if backlogNeedsRestore(s) {
+		restored, err := restoreBacklogSession(m, RestoreSessionRequest{ID: a.SessionID, RepoID: repoID})
 		if err != nil {
-			m.backlogAnswerNotDelivered(repoID, id, "af could not restore the session: "+err.Error())
+			m.backlogAnswerFailed(repoID, a, "af could not restore the session: "+err.Error())
 			return
 		}
 		m.publishEvent(agentproto.EventSessionRestored, restored)
+		if s, ok = m.itemSessions(repoID)[a.SessionID]; !ok {
+			m.backlogAnswerFailed(repoID, a, "the session is gone")
+			return
+		}
+		m.syncBacklogAttention(repoID, a)
 	}
-	var inst *session.Instance
-	for {
-		s, ok := m.itemSessions(repoID)[sessionID]
-		if !ok {
-			m.backlogAnswerNotDelivered(repoID, id, "the session is gone")
-			return
-		}
-		inst = s.instance
-		if !m.isPollPaused(repoID, inst.Title, inst.ID) {
-			break
-		}
-		t := time.NewTimer(backlogAnswerHoldPoll)
-		select {
-		case <-stop:
-			t.Stop()
-			m.backlogAnswerNotDelivered(repoID, id, "af stopped while the session was attached")
-			return
-		case <-t.C:
-		}
+	inst := s.instance
+	if inst.TaskRunActive() {
+		m.backlogAnswerFailed(repoID, a, "the session is running a task")
+		return
 	}
 	if !inst.ArmBacklogRun(time.Now()) {
-		m.backlogAnswerNotDelivered(repoID, id, "the session is not an item session")
+		m.backlogAnswerFailed(repoID, a, "the session is not an item session")
 		return
 	}
 	m.persistAndPublishInstance(repoID, inst)
-	if err := sendBacklogPrompt(m, SendPromptRequest{ID: inst.ID, Title: inst.Title, RepoID: repoID, Prompt: prompt}); err != nil {
-		m.disarmBacklogRun(repoID, inst)
-		m.backlogAnswerNotDelivered(repoID, id, err.Error())
+	release()
+	for {
+		err := m.sendBacklogAnswer(repoID, inst, a.Prompt)
+		if err == nil {
+			m.backlogAnswerDelivered(repoID, a)
+			return
+		}
+		if !errors.Is(err, errBacklogAnswerHeld) {
+			m.disarmBacklogRun(repoID, inst)
+			m.backlogAnswerFailed(repoID, a, err.Error())
+			return
+		}
+		if !backlogAnswerWait(stop) {
+			m.disarmBacklogRun(repoID, inst)
+			m.backlogAnswerFailed(repoID, a, "af stopped while the answer was held")
+			return
+		}
+		if _, ok := m.itemSessions(repoID)[a.SessionID]; !ok {
+			m.backlogAnswerFailed(repoID, a, "the session is gone")
+			return
+		}
 	}
 }
 
-func (m *Manager) backlogAnswerNotDelivered(repoID string, id int, reason string) {
-	svc := m.backlogService()
-	_, err := svc.Apply(backlog.ProjectRef{ID: repoID}, func(b *backlog.Backlog) ([]int, error) {
-		_, err := b.AddNote(id, backlog.AuthorAF, "The answer was not delivered: "+reason+". It is kept in the thread.", svc.Now())
-		return []int{id}, err
+// sendBacklogAnswer sends under the per-target lock, or returns
+// errBacklogAnswerHeld while a client is attached or the session is parked at
+// a usage limit.
+func (m *Manager) sendBacklogAnswer(repoID string, inst *session.Instance, prompt string) error {
+	unlock := m.lockTarget(repoID, inst.Title)
+	defer unlock()
+	if m.isPollPaused(repoID, inst.Title, inst.ID) || inst.GetLiveness() == session.LiveLimitReached {
+		return errBacklogAnswerHeld
+	}
+	return sendBacklogPrompt(m, SendPromptRequest{ID: inst.ID, Title: inst.Title, RepoID: repoID, Prompt: prompt})
+}
+
+// syncBacklogAttention mirrors the item's oldest open question on a session
+// that was just restored, under the backlog lock.
+func (m *Manager) syncBacklogAttention(repoID string, a backlog.PendingAnswer) {
+	_, err := m.backlogService().Apply(backlog.ProjectRef{ID: repoID}, func(b *backlog.Backlog) ([]int, error) {
+		if text := b.OpenQuestionText(a.ID); text != "" {
+			backlogHost{m: m}.SetAttention(repoID, a.SessionID, text)
+		}
+		return []int{}, nil
 	})
 	if err != nil {
-		m.warn().Printf("record undelivered answer on %s: %v", backlog.FormatID(id), err)
+		m.warn().Printf("backlog attention after restoring session %s: %v", a.SessionID, err)
 	}
 }
 
-// noteBacklogAnsweredOnRun closes the open question of an item session whose
-// agent started work again after it asked and went idle: the user answered in
-// the terminal.
-func (m *Manager) noteBacklogAnsweredOnRun(repoID string, instance *session.Instance) {
-	if instance.TakeAttentionAnswered() && instance.BacklogItem != 0 {
-		m.noteBacklogAnsweredInSession(repoID, instance)
+func (m *Manager) backlogAnswerDelivered(repoID string, a backlog.PendingAnswer) {
+	svc := m.backlogService()
+	if _, err := svc.Apply(backlog.ProjectRef{ID: repoID}, func(b *backlog.Backlog) ([]int, error) {
+		return []int{a.ID}, b.AnswerDelivered(a.ID, a.AnswerID, svc.Now())
+	}); err != nil {
+		m.warn().Printf("record delivered answer on %s: %v", backlog.FormatID(a.ID), err)
 	}
 }
 
-// noteBacklogAnsweredInSession closes the item's open questions as answered in
-// session. A running item gets its run armed again, so the next idle edge ends
-// the run as if af had delivered the answer.
-func (m *Manager) noteBacklogAnsweredInSession(repoID string, instance *session.Instance) {
-	if instance.BacklogItem == 0 {
+func (m *Manager) backlogAnswerFailed(repoID string, a backlog.PendingAnswer, reason string) {
+	svc := m.backlogService()
+	if _, err := svc.Apply(backlog.ProjectRef{ID: repoID}, func(b *backlog.Backlog) ([]int, error) {
+		return []int{a.ID}, b.AnswerFailed(a.ID, a.AnswerID, reason, svc.Now())
+	}); err != nil {
+		m.warn().Printf("record undelivered answer on %s: %v", backlog.FormatID(a.ID), err)
+	}
+}
+
+// noteBacklogSubmitted closes the item's oldest open question as answered in
+// session when the user submits a line in the agent pane, and arms the run if
+// the item is running without one.
+func (m *Manager) noteBacklogSubmitted(instance *session.Instance) {
+	if instance == nil || instance.BacklogItem == 0 {
+		return
+	}
+	repoID, ok := m.repoIDForInstance(instance)
+	if !ok {
 		return
 	}
 	sessionID := instance.ID
 	m.launchBackgroundMutation(func(<-chan struct{}) {
+		b, err := backlog.Load(repoID)
+		if err != nil {
+			return
+		}
+		if it := b.ItemForSession(sessionID); it == nil || it.OpenQuestion() == nil {
+			return
+		}
 		svc := m.backlogService()
 		running := false
-		_, err := svc.Apply(backlog.ProjectRef{ID: repoID}, func(b *backlog.Backlog) ([]int, error) {
+		_, err = svc.Apply(backlog.ProjectRef{ID: repoID}, func(b *backlog.Backlog) ([]int, error) {
 			id := b.AnsweredInSession(sessionID, svc.Now())
 			if id == 0 {
 				return []int{}, nil
 			}
 			running = b.Item(id).Status == backlog.StatusRunning
+			backlogHost{m: m}.SetAttention(repoID, sessionID, b.OpenQuestionText(id))
 			return []int{id}, nil
 		})
 		if err != nil {
@@ -137,4 +219,41 @@ func (m *Manager) noteBacklogAnsweredInSession(repoID string, instance *session.
 			m.persistAndPublishInstance(repoID, instance)
 		}
 	})
+}
+
+// isSubmittedInput reports whether a typed frame ends a line: the user sent
+// what they typed.
+func isSubmittedInput(p []byte) bool {
+	if !isTypedInput(p) {
+		return false
+	}
+	for _, c := range p {
+		if c == '\r' || c == '\n' {
+			return true
+		}
+	}
+	return false
+}
+
+// redeliverBacklogAnswers finishes the answers a daemon restart left pending.
+// It returns the sessions they go to, so recovery does not end their runs.
+func (m *Manager) redeliverBacklogAnswers(repoID string, b *backlog.Backlog) map[string]bool {
+	out := map[string]bool{}
+	for _, a := range b.PendingAnswers() {
+		if it := b.Item(a.ID); it == nil || !answeredBefore(it, a.AnswerID, daemonProcessStart) {
+			continue
+		}
+		out[a.SessionID] = true
+		backlogHost{m: m}.DeliverAnswer(repoID, a)
+	}
+	return out
+}
+
+func answeredBefore(it *backlog.Item, answerID int, t time.Time) bool {
+	for _, msg := range it.Thread {
+		if msg.ID == answerID {
+			return msg.At.Before(t)
+		}
+	}
+	return false
 }

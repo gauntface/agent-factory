@@ -165,6 +165,20 @@ func TestBacklogAskAndAnswer(t *testing.T) {
 	if _, err := runBacklogCmd(t, "answer", "1", "again"); err == nil || !strings.Contains(err.Error(), "no open question") {
 		t.Fatal(err)
 	}
+	backlogSelfSession = func() (*session.InstanceData, error) { return self, nil }
+	for _, text := range []string{"first", "second"} {
+		if _, err := runBacklogCmd(t, "ask", "--self", text); err != nil {
+			t.Fatal(err)
+		}
+	}
+	backlogSelfSession = func() (*session.InstanceData, error) { return nil, errors.New("not in an af session") }
+	out, err = runBacklogCmd(t, "answer", "1", "--question", "4", "to the second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := decodeOut[backlog.Message](t, out); a.Answers != 4 {
+		t.Fatalf("%+v", a)
+	}
 }
 
 func TestBacklogAskOutsideItemSession(t *testing.T) {

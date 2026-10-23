@@ -80,7 +80,7 @@ func TestServiceAnswerDelivers(t *testing.T) {
 	if h.attention["s1"] != "" {
 		t.Fatalf("attention not cleared: %q", h.attention["s1"])
 	}
-	want := delivery{1, "s1", "The user answered your question on B-1: Postgres", false}
+	want := PendingAnswer{ID: 1, AnswerID: out.Message.ID, SessionID: "s1", Prompt: "The user answered your question on B-1: Postgres"}
 	if len(h.delivered) != 1 || h.delivered[0] != want {
 		t.Fatalf("%+v", h.delivered)
 	}
@@ -88,6 +88,12 @@ func TestServiceAnswerDelivers(t *testing.T) {
 	it := b.Item(1)
 	if it.Status != StatusRunning || it.OpenQuestion() != nil || it.Thread[0].Closed != ClosedAnswered {
 		t.Fatalf("%+v", it)
+	}
+	if a := it.Thread[1]; a.Delivery != DeliveryPending || a.PrevStatus != StatusRunning {
+		t.Fatalf("%+v", a)
+	}
+	if p := b.PendingAnswers(); len(p) != 1 || p[0] != want {
+		t.Fatalf("pending %+v", p)
 	}
 	_, err = s.PostMessage(PostMessageRequest{RepoID: repoID, ID: 1, Kind: KindAnswer, Text: "again"})
 	if err == nil || err.Error() != `B-1 has no open question — use "af backlog note" to add a note` {
@@ -104,12 +110,22 @@ func TestServiceAnswerResumesReviewAndRestores(t *testing.T) {
 	if _, err := s.PostMessage(PostMessageRequest{RepoID: repoID, ID: 1, Kind: KindAnswer, Text: "yes"}); err != nil {
 		t.Fatal(err)
 	}
-	if len(h.delivered) != 1 || !h.delivered[0].restore {
+	if len(h.delivered) != 1 {
 		t.Fatalf("%+v", h.delivered)
 	}
 	b, _ := Load(repoID)
 	if st := b.Item(1).Status; st != StatusRunning {
 		t.Fatal(st)
+	}
+	if err := b.AnswerFailed(1, h.delivered[0].AnswerID, "no worktree", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	it := b.Item(1)
+	if it.Status != StatusReview || it.Thread[1].Delivery != DeliveryFailed || len(b.PendingAnswers()) != 0 {
+		t.Fatalf("%+v", it)
+	}
+	if note := it.Thread[len(it.Thread)-1]; note.Author != AuthorAF || !strings.Contains(note.Text, "no worktree") {
+		t.Fatalf("%+v", note)
 	}
 }
 
@@ -153,6 +169,9 @@ func TestServiceAnswerNamedQuestion(t *testing.T) {
 	}
 	if h.attention["s1"] != "one" {
 		t.Fatalf("attention %q, want the question still open", h.attention["s1"])
+	}
+	if _, err := s.PostMessage(PostMessageRequest{RepoID: repoID, ID: 1, Kind: KindAnswer, Text: "x", QuestionID: second.ID}); err == nil {
+		t.Error("an answered question accepted a second answer")
 	}
 	out, err = s.PostMessage(PostMessageRequest{RepoID: repoID, ID: 1, Kind: KindAnswer, Text: "y"})
 	if err != nil || out.Message.Answers != first.ID || h.attention["s1"] != "" {
@@ -211,8 +230,10 @@ func TestAnsweredInSession(t *testing.T) {
 	if _, err := b.Ask(1, "old", "q", now); err == nil {
 		t.Fatal("an old run asked")
 	}
-	if _, err := b.Ask(1, "s1", "q", now); err != nil {
-		t.Fatal(err)
+	for _, q := range []string{"q", "r"} {
+		if _, err := b.Ask(1, "s1", q, now); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if got := b.AnsweredInSession("old", now); got != 0 {
 		t.Fatal("an old run closed the question")
@@ -220,8 +241,9 @@ func TestAnsweredInSession(t *testing.T) {
 	if got := b.AnsweredInSession("s1", now); got != 1 {
 		t.Fatal(got)
 	}
-	if c := b.Item(1).Thread[0].Closed; c != ClosedAnsweredInSession {
-		t.Fatal(c)
+	th := b.Item(1).Thread
+	if th[0].Closed != ClosedAnsweredInSession || th[1].Closed != "" || b.OpenQuestionText(1) != "r" {
+		t.Fatalf("only the oldest closes: %+v", th)
 	}
 }
 
@@ -230,5 +252,45 @@ func TestItemPromptSaysAsk(t *testing.T) {
 	it, _ := b.Add(NewItem{Title: "A"}, time.Now())
 	if p := b.ItemPrompt(it, ""); !strings.Contains(p, `af backlog ask --self`) {
 		t.Fatal(p)
+	}
+}
+
+func TestServiceAnswerWhileStarting(t *testing.T) {
+	s, h := newTestService(t)
+	mustAdd(t, s, ItemInput{Key: "a", Title: "A"})
+	withRun(t, 1, StatusRunning)
+	ask(t, s, "q")
+	if _, err := Update(repoID, func(b *Backlog) error {
+		it := b.Item(1)
+		it.Runs = append(it.Runs, RunRef{State: RunStarting})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h.target = TargetLive
+	_, err := s.PostMessage(PostMessageRequest{RepoID: repoID, ID: 1, Kind: KindAnswer, Text: "a"})
+	if err == nil || !strings.Contains(err.Error(), "starting a new session") {
+		t.Fatal(err)
+	}
+	b, _ := Load(repoID)
+	if len(b.Item(1).Thread) != 1 {
+		t.Fatal("a refused answer was written")
+	}
+}
+
+func TestAnswerDelivered(t *testing.T) {
+	b := New()
+	it, _ := b.Add(NewItem{Title: "A"}, time.Now())
+	it.Status = StatusReview
+	it.Runs = []RunRef{{SessionID: "s1", State: RunStarted}}
+	if _, err := b.Ask(1, "s1", "q", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	out, err := b.Answer(1, 0, "a", true, time.Now())
+	if err != nil || b.Item(1).Status != StatusRunning || out.Answer.PrevStatus != StatusReview {
+		t.Fatal(out, err)
+	}
+	if err := b.AnswerDelivered(1, out.Answer.ID, time.Now()); err != nil || len(b.PendingAnswers()) != 0 {
+		t.Fatal(err, b.PendingAnswers())
 	}
 }

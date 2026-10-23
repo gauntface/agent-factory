@@ -371,10 +371,6 @@ type Instance struct {
 	rootRecreateContext RootRecreateContext
 
 	attention *Attention
-	// attentionAnswered records that the agent started work again after it
-	// asked and went idle, which cleared the attention request. In memory
-	// only; TakeAttentionAnswered reads and resets it.
-	attentionAnswered bool
 
 	// userKilled is the kill-intent tombstone (#1108): set (and persisted)
 	// before an explicit kill's teardown begins, so a record that survives a

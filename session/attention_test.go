@@ -28,12 +28,8 @@ func TestAttentionClearsOnlyWhenWorkStartsAfterIdle(t *testing.T) {
 	require.True(t, i.HasAttention(), "going idle is the agent waiting, not an answer")
 	require.True(t, i.Attention().SeenIdle)
 
-	require.False(t, i.TakeAttentionAnswered())
-
 	moveLiveness(i, LiveRunning)
 	require.False(t, i.HasAttention(), "work after idle is the user's answer")
-	require.True(t, i.TakeAttentionAnswered())
-	require.False(t, i.TakeAttentionAnswered(), "the answer is taken once")
 }
 
 func TestAttentionClearsWhenTheAgentStops(t *testing.T) {
@@ -42,7 +38,6 @@ func TestAttentionClearsWhenTheAgentStops(t *testing.T) {
 		i.SetAttention("", time.Unix(100, 0))
 		moveLiveness(i, lv)
 		require.False(t, i.HasAttention(), "liveness %v", lv)
-		require.False(t, i.TakeAttentionAnswered(), "a stop is not an answer: %v", lv)
 	}
 }
 

@@ -109,20 +109,23 @@ func (m *Manager) clearAttentionOnInput(instance *session.Instance) {
 		return
 	}
 	m.publishEvent(agentproto.EventSessionUpdated, data)
-	m.noteBacklogAnsweredInSession(repoID, instance)
 }
 
 // attentionClearingBinding clears the session's attention request when the
-// user types into the agent pane.
+// user types into the agent pane, and reports a submitted line.
 type attentionClearingBinding struct {
 	ptyTabBinding
-	clear func()
+	clear     func()
+	submitted func()
 }
 
 func (b attentionClearingBinding) input(p []byte) error {
 	err := b.ptyTabBinding.input(p)
 	if err == nil && isTypedInput(p) {
 		b.clear()
+		if b.submitted != nil && isSubmittedInput(p) {
+			b.submitted()
+		}
 	}
 	return err
 }
