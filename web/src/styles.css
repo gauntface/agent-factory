@@ -1293,6 +1293,8 @@ button:disabled,
   white-space: nowrap;
 }
 
+.af-term-attention[hidden] { display: none; }
+
 .af-term-attention-bell {
   animation: af-attention-blink 1.2s steps(2, jump-none) infinite;
 }
