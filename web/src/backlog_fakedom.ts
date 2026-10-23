@@ -209,6 +209,9 @@ export class FakeElement extends FakeNode {
     const sibs = this.parentNode?.children ?? [];
     return sibs[sibs.indexOf(this) + step] ?? null;
   }
+  get firstElementChild(): FakeElement | null {
+    return this.children[0] ?? null;
+  }
   get nextElementSibling(): FakeElement | null {
     return this.sibling(1);
   }
