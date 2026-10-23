@@ -16672,6 +16672,14 @@ function needsYouCount(views) {
   for (const v of views) n += v.backlog.items.filter((it) => openQuestion(it)).length;
   return n;
 }
+function needsYouByRoot(views) {
+  const out = /* @__PURE__ */ new Map();
+  for (const [root2, v] of views) {
+    const n = needsYouCount([v]);
+    if (n > 0) out.set(root2, n);
+  }
+  return out;
+}
 function sources(b) {
   return [...new Set(b.items.map((it) => it.source?.proposal ?? "").filter(Boolean))];
 }
@@ -18901,6 +18909,9 @@ var AppShell = class {
   sessionItemSig = "[]";
   chipsChanged = false;
   lastBacklog;
+  needsYou = /* @__PURE__ */ new Map();
+  needsYouSig = "";
+  needsYouChanged = false;
   configPane;
   lastView = null;
   lastTasks = null;
@@ -19140,11 +19151,15 @@ var AppShell = class {
         this.sessionItemMap = items;
         this.chipsChanged = true;
       }
-      const n = needsYouCount(state.backlog.views.values());
-      this.backlogBadge.hidden = n === 0;
-      this.backlogBadge.textContent = String(n);
-      this.backlogBadge.setAttribute("aria-label", needsYouLabel(n));
+      const needs = needsYouByRoot(state.backlog.views);
+      const needsSig = JSON.stringify([...needs]);
+      if (needsSig !== this.needsYouSig) {
+        this.needsYouSig = needsSig;
+        this.needsYou = needs;
+        this.needsYouChanged = true;
+      }
     }
+    setNeedsYouBadge(this.backlogBadge, state.selectedProject ? this.needsYou.get(state.selectedProject) ?? 0 : 0);
     if (state.backlog) this.backlogPane.update(state.backlog, state.selectedProject, state.sessions);
     this.configPane.update(state.config, state.configPath, state.configStatus, state.accounts, state.themeChoice);
     const sessionsChanged = this.lastSessions !== state.sessions;
@@ -19153,7 +19168,8 @@ var AppShell = class {
     if (selectionChanged && state.selectedId) {
       this.setNav(false);
     }
-    if (this.lastProjectSessions !== state.sessions || this.lastProjectTasks !== state.tasks || this.lastRegisteredProjects !== state.registeredProjects || projectChanged) {
+    if (this.lastProjectSessions !== state.sessions || this.lastProjectTasks !== state.tasks || this.lastRegisteredProjects !== state.registeredProjects || this.needsYouChanged || projectChanged) {
+      this.needsYouChanged = false;
       this.lastProjectSessions = state.sessions;
       this.lastProjectTasks = state.tasks;
       this.lastRegisteredProjects = state.registeredProjects;
@@ -19514,7 +19530,7 @@ var AppShell = class {
     }
     for (const p of summaries) {
       const record = state.registeredProjects.find((r) => r.root === p.root);
-      children.push(this.projectItem(p, p.root === current, record));
+      children.push(this.projectItem(p, p.root === current, record, p.root === current ? 0 : this.needsYou.get(p.root) ?? 0));
     }
     const footChildren = [];
     const add = h("button", { type: "button", class: "af-ghost af-project-add" }, "+ Add project");
@@ -19583,7 +19599,7 @@ var AppShell = class {
    *  registration behind the row, when there is one — a registration whose
    *  recorded root is gone (path_exists=false) is marked missing, the state the
    *  footer Rebind action repairs. */
-  projectItem(p, current, record) {
+  projectItem(p, current, record, needsYou) {
     const cls = `af-project-item${current ? " af-project-item-current" : ""}`;
     const check = h("span", { class: "af-project-check" }, ...current ? [icon("check")] : []);
     check.setAttribute("aria-hidden", "true");
@@ -19594,6 +19610,11 @@ var AppShell = class {
       dot.style.setProperty("--af-swatch", dotColor);
       dot.setAttribute("aria-hidden", "true");
       name.prepend(dot, " ");
+    }
+    if (needsYou > 0) {
+      const badge = h("span", { class: "af-viewtab-badge af-project-item-badge" });
+      setNeedsYouBadge(badge, needsYou);
+      name.append(badge);
     }
     const label = h(
       "span",
@@ -20492,6 +20513,12 @@ function refreshIdleReasonAges(root2, now = /* @__PURE__ */ new Date()) {
       );
     }
   }
+}
+function setNeedsYouBadge(el2, n) {
+  el2.hidden = n === 0;
+  if (el2.textContent === String(n)) return;
+  el2.textContent = String(n);
+  el2.setAttribute("aria-label", needsYouLabel(n));
 }
 
 // src/tab_delete_target.ts
