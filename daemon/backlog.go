@@ -20,6 +20,36 @@ type routeServices struct {
 type backlogState struct {
 	once sync.Once
 	svc  *backlog.Service
+	// slots counts the item-session creates in flight per project. In memory
+	// only: a restart has none, and its starting runs are recovered from records.
+	mu          sync.Mutex
+	slots       map[string]int
+	recoverOnce sync.Once
+}
+
+func (s *backlogState) reserve(repoID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.slots == nil {
+		s.slots = map[string]int{}
+	}
+	s.slots[repoID]++
+}
+
+func (s *backlogState) release(repoID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.slots[repoID] <= 1 {
+		delete(s.slots, repoID)
+		return
+	}
+	s.slots[repoID]--
+}
+
+func (s *backlogState) reserved(repoID string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.slots[repoID]
 }
 
 func (m *Manager) backlogService() *backlog.Service {
@@ -34,11 +64,15 @@ type backlogHost struct {
 	m *Manager
 }
 
-// Facts reports nothing live: no item session exists until the backlog can
-// start sessions.
-func (h backlogHost) Facts(string) backlog.Facts {
-	return func(string) backlog.SessionFacts { return backlog.SessionFacts{} }
+func (h backlogHost) Facts(repoID string) backlog.Facts {
+	sessions := h.m.itemSessions(repoID)
+	return func(id string) backlog.SessionFacts {
+		s, ok := sessions[id]
+		return backlogSessionFacts(s, ok)
+	}
 }
+
+func (h backlogHost) SlotsUsed(repoID string) int { return h.m.backlogSlotsUsed(repoID) }
 
 func (h backlogHost) ProjectName(repoID string) string {
 	if root, err := registeredProjectRootForRepoID(repoID); err == nil && root != "" {

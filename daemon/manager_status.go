@@ -295,7 +295,7 @@ func (m *Manager) noteTaskRunTurnEvidence(key string, instance *session.Instance
 	// EMPTY frame does feed it — a scoped agent needs an indicator-absent
 	// capture before a present one can prove the turn, and for the timed
 	// agents an empty frame merely clears the row baseline (#5221 review).
-	if !instance.TaskRunActive() || !obs.Captured {
+	if !instance.RunGateActive() || !obs.Captured {
 		return false
 	}
 	content := obs.Content
@@ -350,7 +350,7 @@ func (m *Manager) sweepTaskRunTurnWatches() {
 	m.mu.Lock()
 	live := make(map[string]struct{}, size)
 	for key, inst := range m.instances {
-		if inst.TaskRunActive() {
+		if inst.RunGateActive() {
 			repoID, _ := splitDaemonInstanceKey(key)
 			live[stableSessionKey(repoID, inst)] = struct{}{}
 		}
@@ -435,6 +435,7 @@ func (m *Manager) observeTaskRunWhilePaused(repoID, key string, instance *sessio
 	before := instance.GetLiveness()
 	beforeReset, _ := instance.LimitResetAt()
 	taskRunWasActive := instance.TaskRunActive()
+	backlogRunWasActive := instance.BacklogRunActive()
 	// Paired with the op axis, and skipped on, for the same reason as the plain poll
 	// (#2997). This is a SECOND path out of refreshInstanceStatus and it returns
 	// before that one's paired check, so it needs its own: the op skip up there ran
@@ -512,7 +513,7 @@ func (m *Manager) observeTaskRunWhilePaused(repoID, key string, instance *sessio
 	// Ready→Ready observation moves no liveness, and nothing else on this
 	// path writes — a restart would resurrect the finished run into its held
 	// concurrency slot until the fallback matured again (#5221 review).
-	if taskRunWasActive && !instance.TaskRunActive() {
+	if (taskRunWasActive && !instance.TaskRunActive()) || (backlogRunWasActive && !instance.BacklogRunActive()) {
 		churnCheckpoint = true
 	}
 	m.persistPollChangeWithIdleEvidence(repoID, instance, before, beforeReset, projectionChanged, churnCheckpoint)
@@ -520,6 +521,7 @@ func (m *Manager) observeTaskRunWhilePaused(repoID, key string, instance *sessio
 	// attach owns this session's tmux. Park the declared lifecycle so the first
 	// unpaused tick applies it, instead of losing the edge entirely (#2595).
 	m.deferTaskSessionLifecycleWhilePaused(repoID, instance, taskRunWasActive)
+	m.noteBacklogRunEnd(repoID, instance, backlogRunWasActive, false)
 }
 
 // RefreshStatuses recomputes every started instance's status the way the TUI
@@ -696,7 +698,7 @@ func (m *Manager) refreshInstanceStatus(repoID string, instance *session.Instanc
 		// observeTaskRunWhilePaused for why it can end a run but never conclude
 		// death, and taskRunPollBackstop for why this is not a return to per-tick
 		// probing.
-		if instance.TaskRunActive() && m.taskRunBackstopDue(stableSessionKey(repoID, instance)) {
+		if (instance.TaskRunActive() || instance.BacklogRunActive()) && m.taskRunBackstopDue(stableSessionKey(repoID, instance)) {
 			m.observeTaskRunWhilePaused(repoID, key, instance)
 			return
 		}
@@ -743,6 +745,7 @@ func (m *Manager) refreshInstanceStatus(repoID string, instance *session.Instanc
 	// the completion edge observable: taskRunActive flips true→false exactly once,
 	// inside a Transition below, and nothing else in the tick reports it (#2595).
 	taskRunWasActive := instance.TaskRunActive()
+	backlogRunWasActive := instance.BacklogRunActive()
 	// Snapshot dismisses a pending trust prompt then reads the pane in one probe
 	// (the exact order the poll used to run CheckAndHandleTrustPrompt then
 	// HasUpdated). Content is the capture handed back so the idle branch runs the
@@ -936,7 +939,7 @@ func (m *Manager) refreshInstanceStatus(repoID string, instance *session.Instanc
 	// nothing below writes either — a restart would resurrect the finished
 	// run into its held concurrency slot until the fallback matured again
 	// (#5221 review).
-	if taskRunWasActive && !instance.TaskRunActive() {
+	if (taskRunWasActive && !instance.TaskRunActive()) || (backlogRunWasActive && !instance.BacklogRunActive()) {
 		settlementCheckpoint = true
 	}
 	// Persist a liveness OR usage-limit reset-time change (#1146); see limit.go.
@@ -950,6 +953,7 @@ func (m *Manager) refreshInstanceStatus(repoID string, instance *session.Instanc
 	// And drain a lifecycle owed from a run that finished while this session was
 	// attached, now that it is being polled normally again.
 	m.applyDeferredTaskSessionLifecycle(repoID, instance)
+	m.noteBacklogRunEnd(repoID, instance, backlogRunWasActive, true)
 }
 
 // SaveInstances writes the manager's authoritative in-memory instances to disk

@@ -14,10 +14,13 @@ type testHost struct {
 	name    string
 	changed [][]int
 	lookups int
+	slots   int
+	facts   Facts
 }
 
-func (h *testHost) Facts(string) Facts          { return nil }
+func (h *testHost) Facts(string) Facts          { return h.facts }
 func (h *testHost) ProjectName(string) string   { h.lookups++; return h.name }
+func (h *testHost) SlotsUsed(string) int        { return h.slots }
 func (h *testHost) Changed(_ string, ids []int) { h.changed = append(h.changed, ids) }
 func (h *testHost) last() []int                 { return h.changed[len(h.changed)-1] }
 func ptr[T any](v T) *T                         { return &v }

@@ -105,9 +105,12 @@ func (i *Instance) toInstanceDataLocked() InstanceData {
 	// reintroduce the bug it fixes — a session whose run is live must read as active
 	// whether it is Running, limit-parked, mid-archive, or Lost.
 	data.TaskRunActive = i.taskRunActive
-	data.TaskRunIdleEdgeHeld = i.taskRunActive && i.taskRunIdleEdgeHeld
-	data.TaskRunTurnGateHeld = i.taskRunActive && i.taskRunTurnGateHeld
-	if i.taskRunActive {
+	data.BacklogItem = i.BacklogItem
+	data.BacklogRunActive = i.backlogRunActive
+	gate := i.runGateActiveLocked()
+	data.TaskRunIdleEdgeHeld = gate && i.taskRunIdleEdgeHeld
+	data.TaskRunTurnGateHeld = gate && i.taskRunTurnGateHeld
+	if gate {
 		// Same gating as the held flag: a finished run's last turn observation
 		// is not evidence for anything, and persisting it would let a later run
 		// on this row inherit a boundary it never crossed.
@@ -365,8 +368,10 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 		// disk or the cap would re-decide it from a Lost state that cannot tell a
 		// finished run from an interrupted one.
 		taskRunActive:       data.TaskRunActive,
-		taskRunIdleEdgeHeld: data.TaskRunActive && data.TaskRunIdleEdgeHeld,
-		taskRunTurnGateHeld: data.TaskRunActive && data.TaskRunTurnGateHeld,
+		BacklogItem:         data.BacklogItem,
+		backlogRunActive:    data.BacklogRunActive && data.BacklogItem != 0,
+		taskRunIdleEdgeHeld: runGateActiveInData(data) && data.TaskRunIdleEdgeHeld,
+		taskRunTurnGateHeld: runGateActiveInData(data) && data.TaskRunTurnGateHeld,
 		// Gate on the run still being in flight, mirroring the write side and
 		// the held flag: a finished run's stale observation cannot release the
 		// next run's delivery window.
