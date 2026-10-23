@@ -8,6 +8,7 @@
 import { errorText } from "./api.js";
 import { countOpenQuestions } from "./callouts.js";
 import { createDocsEditor, type DocsEditor } from "./docs_editor.js";
+export { createDocsEditor } from "./docs_editor.js";
 import {
   changeAction,
   nextQuestionDoc,

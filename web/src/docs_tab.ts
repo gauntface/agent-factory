@@ -12,7 +12,7 @@ type DocsModule = typeof import("./docs_pane.js");
 let docsModule: Promise<DocsModule> | null = null;
 
 /** Loads the Docs bundle once. A failed load is forgotten, so Retry fetches again. */
-function loadDocsModule(): Promise<DocsModule> {
+export function loadDocsModule(): Promise<DocsModule> {
   if (!docsModule) {
     // A computed specifier keeps esbuild from inlining the Docs bundle here.
     const url = new URL("./lazy/docs-editor.js", import.meta.url).href;

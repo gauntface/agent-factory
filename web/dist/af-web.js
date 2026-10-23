@@ -7294,7 +7294,7 @@ async function startAccountLogin(agent, name, token2) {
 }
 
 // src/nav.ts
-var VIEWS = ["sessions", "tasks", "config"];
+var VIEWS = ["sessions", "backlog", "tasks", "config"];
 function cycleView(current, delta) {
   const i = VIEWS.indexOf(current);
   const n = VIEWS.length;
@@ -7794,28 +7794,28 @@ function terminalChrome(opts) {
   menu.trigger.replaceChildren(icon("ellipsis"));
   menu.trigger.title = "More session actions";
   const action = (label, className, run) => {
-    const button = h("button", { type: "button", class: `af-ghost af-term-action ${className}` }, label);
-    button.addEventListener("click", () => {
+    const button2 = h("button", { type: "button", class: `af-ghost af-term-action ${className}` }, label);
+    button2.addEventListener("click", () => {
       menu.close();
       run();
     });
-    return button;
+    return button2;
   };
   const newTabButton = (kind, label, glyph, name) => {
-    const button = h(
+    const button2 = h(
       "button",
       { type: "button", class: `af-ghost af-term-action af-term-new af-term-new-${kind}`, title: name },
       icon(glyph),
       h("span", { class: "af-term-new-label" }, label)
     );
-    button.setAttribute("aria-label", name);
-    button.hidden = true;
-    button.addEventListener("click", () => {
+    button2.setAttribute("aria-label", name);
+    button2.hidden = true;
+    button2.addEventListener("click", () => {
       menu.close();
-      button.blur();
+      button2.blur();
       opts.newTab(kind);
     });
-    return button;
+    return button2;
   };
   const newTerminal = newTabButton("shell", "Terminal", "terminal", "New terminal tab");
   const newVSCode = newTabButton("vscode", "VS Code", "panels", "New VS Code tab");
@@ -7873,7 +7873,7 @@ function viewNavigation(onSelect) {
   const el2 = h("div", { class: "af-viewnav", role: "tablist" });
   el2.setAttribute("aria-label", "Views");
   const tabs = /* @__PURE__ */ new Map();
-  const labels = { sessions: "Sessions", tasks: "Tasks", config: "Config" };
+  const labels = { sessions: "Sessions", backlog: "Backlog", tasks: "Tasks", config: "Config" };
   for (const view of VIEWS) {
     const tab = h("button", { type: "button", class: "af-viewtab", role: "tab" }, labels[view]);
     tab.dataset.view = view;
@@ -7962,11 +7962,11 @@ function emptyAccountsState() {
 var ACCOUNT_INPUT_ATTR = "data-account-input";
 var ACCOUNTS_NOTE = "Sign in with the agent\u2019s login flow. Follow the URL in the pane.";
 function renderAccountsSection(state, actions2, registration = { open: false, agent: "" }) {
-  const section = h("section", { class: "af-accounts" });
-  section.setAttribute("aria-label", "Accounts");
+  const section2 = h("section", { class: "af-accounts" });
+  section2.setAttribute("aria-label", "Accounts");
   if (state.loaded === false && !state.error) {
-    section.append(h("p", {}, "Connecting\u2026"));
-    return section;
+    section2.append(h("p", {}, "Connecting\u2026"));
+    return section2;
   }
   const head = h(
     "div",
@@ -7974,22 +7974,22 @@ function renderAccountsSection(state, actions2, registration = { open: false, ag
     h("span", { class: "af-accounts-title" }, "Accounts"),
     h("span", { class: "af-view-count" }, String(state.entries.length))
   );
-  section.append(head, h("p", { class: "af-accounts-note" }, ACCOUNTS_NOTE));
+  section2.append(head, h("p", { class: "af-accounts-note" }, ACCOUNTS_NOTE));
   if (state.error !== "") {
-    section.append(
+    section2.append(
       h("p", { class: "af-accounts-error", role: "alert" }, `Accounts could not be read: ${state.error}`)
     );
-    return section;
+    return section2;
   }
   if (state.agents.length === 0) {
-    section.append(
+    section2.append(
       h(
         "p",
         { class: "af-accounts-empty" },
         "No agents support accounts."
       )
     );
-    return section;
+    return section2;
   }
   const list = h("div", { class: "af-accounts-list" });
   for (const agent of state.agents) {
@@ -8019,7 +8019,7 @@ function renderAccountsSection(state, actions2, registration = { open: false, ag
   agentSelect.addEventListener("change", sync);
   sync();
   add.append(h("summary", {}, "Add account"), h("label", { class: "af-modal-field" }, "Agent", agentSelect), ...forms);
-  section.append(list, add);
+  section2.append(list, add);
   if (state.entries.length === 0 && !registration.open) {
     add.hidden = true;
     const empty = recoveryScreen({ condition: "No accounts", action: "Add account", run: () => {
@@ -8029,9 +8029,9 @@ function renderAccountsSection(state, actions2, registration = { open: false, ag
       registration.open = true;
       add.querySelector(".af-accounts-register:not([hidden]) input")?.focus();
     } });
-    section.prepend(empty);
+    section2.prepend(empty);
   }
-  return section;
+  return section2;
 }
 function renderAccountRow(entry, status, actions2) {
   const row = h("div", { class: "af-accounts-row" });
@@ -8049,13 +8049,13 @@ function renderAccountRow(entry, status, actions2) {
       h("span", { class: "af-accounts-dir" }, entry.dir)
     )
   );
-  const button = h(
+  const button2 = h(
     "button",
     { type: "button", class: "af-ghost af-accounts-login" },
     entry.logged_in ? "Log in again" : "Log in"
   );
-  button.addEventListener("click", () => actions2.login(entry.agent, entry.name));
-  row.append(button);
+  button2.addEventListener("click", () => actions2.login(entry.agent, entry.name));
+  row.append(button2);
   if (entry.registration_only) {
     row.append(
       h(
@@ -8090,9 +8090,9 @@ function renderRegisterRow(agent, status, actions2) {
       submit();
     }
   });
-  const button = h("button", { type: "button", class: "af-ghost af-accounts-add" }, "Register");
-  button.addEventListener("click", submit);
-  row.append(h("div", { class: "af-accounts-label" }, field("Name", input)), button);
+  const button2 = h("button", { type: "button", class: "af-ghost af-accounts-add" }, "Register");
+  button2.addEventListener("click", submit);
+  row.append(h("div", { class: "af-accounts-label" }, field("Name", input)), button2);
   appendStatus(row, status, agent, "");
   return row;
 }
@@ -9247,10 +9247,10 @@ var TerminalKeybar = class {
       row.className = "af-keybar-row";
       this.rows.push(row);
       for (const key of keys) {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.textContent = key;
-        button.setAttribute("aria-label", key === "^C" ? "Interrupt (^C)" : key);
+        const button2 = document.createElement("button");
+        button2.type = "button";
+        button2.textContent = key;
+        button2.setAttribute("aria-label", key === "^C" ? "Interrupt (^C)" : key);
         const act = () => {
           if (!this.focused || !this.phone.matches) return;
           if (key === "Arrows" || key === "More keys") this.arrows = key === "Arrows";
@@ -9259,12 +9259,12 @@ var TerminalKeybar = class {
           else this.sendUserInput(this.modifiers.key(key, this.applicationCursor()), { keybar: true });
           this.paint();
         };
-        button.addEventListener("pointerdown", (event) => keybarPointerDown(event, act));
-        button.addEventListener("click", (event) => {
+        button2.addEventListener("pointerdown", (event) => keybarPointerDown(event, act));
+        button2.addEventListener("click", (event) => {
           if (event.detail === 0) act();
         });
-        if (key === "Ctrl" || key === "Alt") this.buttons.set(key, button);
-        row.append(button);
+        if (key === "Ctrl" || key === "Alt") this.buttons.set(key, button2);
+        row.append(button2);
       }
       this.bar.append(row);
     }
@@ -9530,13 +9530,13 @@ var TerminalKeybar = class {
     this.rows.forEach((row, index) => {
       row.hidden = index !== (this.arrows ? 1 : 0);
     });
-    for (const [key, button] of this.buttons) {
+    for (const [key, button2] of this.buttons) {
       const state = this.modifiers.state(key);
-      button.dataset.state = state;
-      button.setAttribute("aria-pressed", String(state !== "off"));
-      button.setAttribute("aria-description", state === "locked" ? "Locked; tap to release" : state === "once" ? "Next key" : "Double tap to lock");
-      button.title = state === "locked" ? `${key} locked \xB7 Tap to release` : `${key} \xB7 Double tap to lock`;
-      button.textContent = state === "locked" ? `\u25B8 ${key}` : key;
+      button2.dataset.state = state;
+      button2.setAttribute("aria-pressed", String(state !== "off"));
+      button2.setAttribute("aria-description", state === "locked" ? "Locked; tap to release" : state === "once" ? "Next key" : "Double tap to lock");
+      button2.title = state === "locked" ? `${key} locked \xB7 Tap to release` : `${key} \xB7 Double tap to lock`;
+      button2.textContent = state === "locked" ? `\u25B8 ${key}` : key;
     }
   }
   layout = () => {
@@ -10006,15 +10006,15 @@ function wordRangeAtColumn(cells, col) {
   if (!partOfWord(col)) {
     return null;
   }
-  let start = col;
-  while (start > 0 && partOfWord(start - 1)) {
-    start -= 1;
+  let start2 = col;
+  while (start2 > 0 && partOfWord(start2 - 1)) {
+    start2 -= 1;
   }
   let end = col;
   while (end + 1 < cells.length && partOfWord(end + 1)) {
     end += 1;
   }
-  return { start, length: end - start + 1 };
+  return { start: start2, length: end - start2 + 1 };
 }
 function lineContentColumns(cells) {
   let last = -1;
@@ -12798,9 +12798,9 @@ function projectSummaries(sessions, tasks, registeredRoots = []) {
     if (!root2) {
       continue;
     }
-    const arr = byRoot.get(root2) ?? [];
-    arr.push(s);
-    byRoot.set(root2, arr);
+    const arr2 = byRoot.get(root2) ?? [];
+    arr2.push(s);
+    byRoot.set(root2, arr2);
   }
   const taskCounts = /* @__PURE__ */ new Map();
   for (const t of tasks) {
@@ -13015,16 +13015,16 @@ function rebindTargetAfterAwait(inputs) {
   return { kind: "rebind", idx: inputs.targetIdx };
 }
 function tabRebindRefusalNotice(reason, verb) {
-  const done = verb === "create" ? "Tab created" : "Tab closed";
+  const done2 = verb === "create" ? "Tab created" : "Tab closed";
   switch (reason) {
     case "session-gone":
-      return `${done} \xB7 its session is gone now`;
+      return `${done2} \xB7 its session is gone now`;
     case "selection-moved":
-      return `${done} on the session you left \xB7 this pane kept its tab`;
+      return `${done2} on the session you left \xB7 this pane kept its tab`;
     case "layout-moved":
-      return `${done} \xB7 the layout changed meanwhile, so the pane kept its tab`;
+      return `${done2} \xB7 the layout changed meanwhile, so the pane kept its tab`;
     case "tab-gone":
-      return verb === "create" ? `${done}, but it is no longer in the tab list \xB7 the pane kept its tab` : `${done} \xB7 the tab the pane would have moved to is gone too`;
+      return verb === "create" ? `${done2}, but it is no longer in the tab list \xB7 the pane kept its tab` : `${done2} \xB7 the tab the pane would have moved to is gone too`;
   }
 }
 
@@ -13560,12 +13560,12 @@ function previewOriginReachable(origin, fresh = false) {
     frame.setAttribute("referrerpolicy", "no-referrer");
     frame.setAttribute("aria-hidden", "true");
     frame.style.display = "none";
-    let done = false;
+    let done2 = false;
     const finish = (ok) => {
-      if (done) {
+      if (done2) {
         return;
       }
-      done = true;
+      done2 = true;
       window.clearTimeout(timer);
       window.removeEventListener("message", onMessage);
       frame.remove();
@@ -15601,7 +15601,7 @@ var TasksPane = class {
     }
     if (focusedId && focusedName) {
       const row = this.el.querySelector(`[data-task-id="${CSS.escape(focusedId)}"]`);
-      const control = [...row?.querySelectorAll("button") ?? []].find((button) => (button.getAttribute("aria-label") || button.textContent) === focusedName);
+      const control = [...row?.querySelectorAll("button") ?? []].find((button2) => (button2.getAttribute("aria-label") || button2.textContent) === focusedName);
       control?.focus({ preventScroll: true });
     }
   }
@@ -16442,18 +16442,18 @@ function docsShortcuts(tabs, open) {
   return docsTabIndexes(tabs).map((index) => {
     const tab = tabs[index];
     const name = `Open ${tabDisplayLabel(tab)}`;
-    const button = h(
+    const button2 = h(
       "button",
       { type: "button", class: "af-ghost af-term-action af-term-docs", title: name },
       icon(tabIcon(tab.kind))
     );
-    button.setAttribute("aria-label", name);
-    button.dataset.tabIndex = String(index);
-    button.addEventListener("click", () => {
-      button.blur();
+    button2.setAttribute("aria-label", name);
+    button2.dataset.tabIndex = String(index);
+    button2.addEventListener("click", () => {
+      button2.blur();
       open(index);
     });
-    return button;
+    return button2;
   });
 }
 
@@ -16533,6 +16533,1066 @@ function orderChildren(parent, children) {
   }
 }
 
+// src/backlog_model.ts
+var STATE_LABELS = {
+  done: "Done",
+  dropped: "Dropped",
+  needs_you: "Needs you",
+  in_review: "In review",
+  working: "Working",
+  starting: "Starting",
+  stopped: "Stopped",
+  waiting: "Waiting",
+  queued: "Queued",
+  draft: "Draft"
+};
+var STATE_GLYPHS = {
+  done: "\u2713",
+  dropped: "\xD7",
+  needs_you: "?",
+  in_review: "\u270E",
+  working: "\u25CF",
+  starting: "\u25CC",
+  stopped: "\u25A0",
+  waiting: "\u23F8",
+  queued: "\u25B8",
+  draft: "\u25CB"
+};
+var FILTERS = [
+  { filter: "all", label: "All" },
+  { filter: "needs_you", label: "Needs you" },
+  { filter: "in_review", label: "In review" },
+  { filter: "working", label: "Working" },
+  { filter: "queued", label: "Queued" },
+  { filter: "waiting", label: "Waiting" },
+  { filter: "draft", label: "Draft" }
+];
+var FILTER_STATES = {
+  needs_you: ["needs_you"],
+  in_review: ["in_review"],
+  working: ["working", "starting"],
+  queued: ["queued"],
+  waiting: ["waiting"],
+  draft: ["draft"]
+};
+function formatID(id) {
+  return `B-${id}`;
+}
+function isRecord(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function arr(v) {
+  return Array.isArray(v) ? v : [];
+}
+function parseItem(v) {
+  const it = isRecord(v) ? v : {};
+  return { ...it, waits_on: arr(it.waits_on), runs: arr(it.runs), thread: arr(it.thread) };
+}
+function parseBacklogView(d) {
+  const v = isRecord(d) ? d : {};
+  const b = isRecord(v.backlog) ? v.backlog : {};
+  const settings = isRecord(b.settings) ? b.settings : { runner: false, max_running: 1, on_done: "keep" };
+  const runner = isRecord(v.runner) ? v.runner : { state: "off", used: 0, max: 1 };
+  return {
+    backlog: {
+      schema_version: Number(b.schema_version) || 0,
+      next_id: Number(b.next_id) || 1,
+      settings,
+      items: arr(b.items).map(parseItem)
+    },
+    states: isRecord(v.states) ? v.states : {},
+    runner
+  };
+}
+function itemByID(b, id) {
+  return b.items.find((it) => it.id === id);
+}
+function childrenOf(b, id) {
+  return b.items.filter((it) => (it.parent ?? 0) === id);
+}
+function isParent(b, id) {
+  return b.items.some((it) => it.parent === id);
+}
+function isAncestor(b, anc, id) {
+  const seen = /* @__PURE__ */ new Set();
+  for (let it = itemByID(b, id); it && it.parent && !seen.has(it.id); it = itemByID(b, it.parent)) {
+    seen.add(it.id);
+    if (it.parent === anc) return true;
+  }
+  return false;
+}
+function derivedOf(view, id) {
+  return view.states[String(id)] ?? { state: "draft" };
+}
+function openQuestion(it) {
+  const thread = it.thread ?? [];
+  const answered = new Set(thread.filter((m) => m.kind === "answer" && m.answers).map((m) => m.answers));
+  return thread.find((m) => m.kind === "question" && !m.closed && !answered.has(m.id));
+}
+function needsYouCount(views) {
+  let n = 0;
+  for (const v of views) n += v.backlog.items.filter((it) => openQuestion(it)).length;
+  return n;
+}
+function sources(b) {
+  return [...new Set(b.items.map((it) => it.source?.proposal ?? "").filter(Boolean))];
+}
+function sessionItems(views) {
+  const out = /* @__PURE__ */ new Map();
+  for (const [root2, v] of views) {
+    for (const it of v.backlog.items) {
+      for (const run of it.runs ?? []) {
+        if (run.session_id) out.set(run.session_id, { root: root2, id: it.id, title: it.title });
+      }
+    }
+  }
+  return out;
+}
+function closedState(s) {
+  return s === "done" || s === "dropped";
+}
+function listRows(view, opts) {
+  const b = view.backlog;
+  const kids = /* @__PURE__ */ new Map();
+  for (const it of b.items) {
+    const p = it.parent ?? 0;
+    kids.set(p, [...kids.get(p) ?? [], it.id]);
+  }
+  const wanted = opts.filter === "all" ? null : FILTER_STATES[opts.filter];
+  const matchMemo = /* @__PURE__ */ new Map();
+  const matches = (id) => {
+    const memo = matchMemo.get(id);
+    if (memo !== void 0) return memo;
+    matchMemo.set(id, false);
+    const it = itemByID(b, id);
+    const own = (wanted === null || wanted.includes(derivedOf(view, id).state)) && (!opts.source || it?.source?.proposal === opts.source);
+    const r = own || (kids.get(id) ?? []).some(matches);
+    matchMemo.set(id, r);
+    return r;
+  };
+  const needsBelow = (id) => (kids.get(id) ?? []).reduce((n, c) => {
+    const it = itemByID(b, c);
+    return n + (it && openQuestion(it) ? 1 : 0) + needsBelow(c);
+  }, 0);
+  const rows = [];
+  const walk = (parent, depth) => {
+    for (const id of kids.get(parent) ?? []) {
+      const item = itemByID(b, id);
+      if (!item) continue;
+      const derived = derivedOf(view, id);
+      if (!opts.showDone && closedState(derived.state)) continue;
+      if (!matches(id)) continue;
+      const hasKids = (kids.get(id) ?? []).length > 0;
+      const folded = hasKids && opts.folded.has(id);
+      let reason = derived.reason ?? "";
+      if (hasKids) {
+        const n = needsBelow(id);
+        if (n > 0) reason = reason ? `${reason} \xB7 ${n} needs you` : `${n} needs you`;
+      }
+      rows.push({ item, depth, derived, parent: hasKids, folded, reason });
+      if (hasKids && !folded) walk(id, depth + 1);
+    }
+  };
+  walk(0, 0);
+  return rows;
+}
+function siblings(b, id) {
+  const it = itemByID(b, id);
+  return it ? childrenOf(b, it.parent ?? 0) : [];
+}
+function canBeParent(it) {
+  return it.status !== "running" && (it.runs ?? []).length === 0;
+}
+function keyboardMove(b, id, dir) {
+  const it = itemByID(b, id);
+  if (!it) return null;
+  const sibs = siblings(b, id);
+  const i = sibs.findIndex((s) => s.id === id);
+  switch (dir) {
+    case "up":
+      return i > 0 ? { before: sibs[i - 1].id } : null;
+    case "down":
+      return i >= 0 && i < sibs.length - 1 ? { after: sibs[i + 1].id } : null;
+    case "in": {
+      const prev = i > 0 ? sibs[i - 1] : void 0;
+      return prev && canBeParent(prev) ? { into: prev.id } : null;
+    }
+    case "out":
+      return it.parent ? { after: it.parent } : null;
+  }
+}
+function dropMove(b, dragId, targetId, zone) {
+  const target = itemByID(b, targetId);
+  if (!target || !itemByID(b, dragId) || dragId === targetId || isAncestor(b, dragId, targetId)) return null;
+  if (zone === "into") return canBeParent(target) ? { into: targetId } : null;
+  return zone === "before" ? { before: targetId } : { after: targetId };
+}
+function subtreeEnd(items, i, b) {
+  const root2 = items[i].id;
+  let j = i + 1;
+  while (j < items.length && isAncestor(b, root2, items[j].id)) j++;
+  return j;
+}
+function applyMove(b, id, to) {
+  const it = itemByID(b, id);
+  if (!it) return null;
+  let parent = it.parent ?? 0;
+  let anchor = 0;
+  if ("before" in to || "after" in to) {
+    anchor = "before" in to ? to.before : to.after;
+    const a = itemByID(b, anchor);
+    if (!a) return null;
+    parent = a.parent ?? 0;
+  } else if ("into" in to) {
+    anchor = to.into;
+    parent = to.into;
+  }
+  if (anchor === id || anchor !== 0 && isAncestor(b, id, anchor)) return null;
+  if (parent !== 0) {
+    const p = itemByID(b, parent);
+    if (!p || !canBeParent(p)) return null;
+  }
+  const items = b.items.map((x) => ({ ...x }));
+  const start2 = items.findIndex((x) => x.id === id);
+  const end = subtreeEnd(items, start2, b);
+  const block = items.splice(start2, end - start2);
+  block[0].parent = parent || void 0;
+  const moved = { ...b, items };
+  const indexOf = (x) => items.findIndex((y) => y.id === x);
+  const bottomOf = (p) => p === 0 ? items.length : subtreeEnd(items, indexOf(p), moved);
+  let at;
+  if ("before" in to) at = indexOf(to.before);
+  else if ("after" in to) at = subtreeEnd(items, indexOf(to.after), moved);
+  else if ("top" in to) at = parent === 0 ? 0 : indexOf(parent) + 1;
+  else at = bottomOf(parent);
+  items.splice(at, 0, ...block);
+  if (parent !== 0) {
+    const p = items.find((x) => x.id === parent);
+    if (p) p.status = "draft";
+  }
+  return moved;
+}
+function neededBy(b, id) {
+  return b.items.filter((it) => (it.waits_on ?? []).includes(id));
+}
+var ACTION_LABELS = {
+  queue: "Queue",
+  draft: "Back to draft",
+  done: "Mark done",
+  drop: "Drop",
+  reopen: "Reopen",
+  delete: "Delete"
+};
+function itemActions(b, it, derived) {
+  if (isParent(b, it.id)) {
+    const out2 = [];
+    if (b.items.some((c) => isAncestor(b, it.id, c.id) && c.status === "draft" && !isParent(b, c.id))) out2.push("queue");
+    if (!closedState(derived.state)) out2.push("drop");
+    return out2;
+  }
+  const out = [];
+  const s = it.status;
+  if (s === "draft" || s === "review") out.push("queue");
+  if (s === "queued" || s === "review") out.push("draft");
+  if (s !== "done" && s !== "dropped") out.push("done", "drop");
+  else out.push("reopen");
+  if (s === "draft" && (it.runs ?? []).length === 0 && (it.thread ?? []).length === 0) out.push("delete");
+  return out;
+}
+
+// src/backlog_api.ts
+async function getBacklog(root2, token2) {
+  return parseBacklogView(await af("GetBacklog", { repo_path: root2 }, token2));
+}
+async function getBudget(token2) {
+  const resp = await af("GetBudget", {}, token2);
+  return resp?.budget ?? { limit: 0, spent: 0, max_per_run: 0 };
+}
+async function addItem(root2, input, token2) {
+  const resp = await af("AddBacklogItems", {
+    repo_path: root2,
+    items: [{ key: "new", title: input.title, ...input.parent ? { parent: input.parent } : {} }]
+  }, token2);
+  return resp?.ids?.new ?? 0;
+}
+async function updateItem(root2, id, update, token2) {
+  const resp = await af("UpdateBacklogItem", { repo_path: root2, id, ...update }, token2);
+  return resp.item;
+}
+async function moveItem(root2, id, to, token2) {
+  await af("MoveBacklogItem", { repo_path: root2, id, ...to }, token2);
+}
+async function setItemStatus(root2, id, status, token2) {
+  await af("SetBacklogItemStatus", { repo_path: root2, id, status }, token2);
+}
+async function deleteItem(root2, id, token2) {
+  await af("DeleteBacklogItem", { repo_path: root2, id }, token2);
+}
+async function addNote(root2, id, text, token2) {
+  const resp = await af("PostBacklogMessage", { repo_path: root2, id, kind: "note", text }, token2);
+  return resp.message;
+}
+
+// src/backlog_body.ts
+var SAVE_DELAY_MS = 800;
+var BodyEditor = class {
+  constructor(save, label) {
+    this.save = save;
+    this.el = document.createElement("div");
+    this.el.className = "af-backlog-body";
+    const fallback = document.createElement("pre");
+    fallback.className = "af-backlog-body-text";
+    this.el.append(fallback);
+    loadDocsModule().then((mod) => {
+      if (this.disposed) return;
+      this.el.replaceChildren();
+      this.editor = mod.createDocsEditor(this.el, { text: this.text, label, onChange: (t) => this.changed(t) });
+    }, () => {
+      fallback.textContent = this.text;
+    });
+  }
+  el;
+  editor = null;
+  text = "";
+  timer = null;
+  disposed = false;
+  /** Shows the stored body. An edit the user is typing is kept. */
+  setText(text) {
+    if (this.timer !== null || text === this.text) return;
+    this.text = text;
+    if (this.editor) {
+      if (this.editor.getText() !== text) this.editor.setText(text);
+    } else {
+      const pre = this.el.querySelector("pre");
+      if (pre) pre.textContent = text;
+    }
+  }
+  changed(text) {
+    this.text = text;
+    if (this.timer !== null) clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.flush(), SAVE_DELAY_MS);
+  }
+  flush() {
+    if (this.timer === null) return;
+    clearTimeout(this.timer);
+    this.timer = null;
+    this.save(this.text);
+  }
+  dispose() {
+    this.flush();
+    this.disposed = true;
+    this.editor?.destroy();
+  }
+};
+
+// src/backlog_cycle.ts
+var start = (id) => `${id}s`;
+var done = (id) => `${id}d`;
+var nodeID = (n) => Number(n.slice(0, -1));
+var isDone = (n) => n.endsWith("d");
+function edges(b) {
+  const g = /* @__PURE__ */ new Map();
+  const add = (from, to) => {
+    g.set(from, [...g.get(from) ?? [], to]);
+  };
+  const exists = new Set(b.items.map((it) => it.id));
+  const prevChild = /* @__PURE__ */ new Map();
+  for (const it of b.items) {
+    for (const w of it.waits_on ?? []) {
+      if (exists.has(w)) add(start(it.id), done(w));
+    }
+    const p = it.parent ?? 0;
+    if (p !== 0 && exists.has(p)) {
+      add(start(it.id), start(p));
+      const prev = prevChild.get(p);
+      if (prev !== void 0 && itemByID(b, p)?.sequential) add(start(it.id), done(prev));
+      prevChild.set(p, it.id);
+      add(done(p), done(it.id));
+    }
+  }
+  for (const it of b.items) {
+    if (!isParent(b, it.id)) add(done(it.id), start(it.id));
+  }
+  return g;
+}
+function findPath(g, from, to) {
+  const prev = /* @__PURE__ */ new Map([[from, from]]);
+  const queue = [from];
+  while (queue.length > 0) {
+    let n = queue.shift();
+    if (n === to) {
+      const path = [];
+      for (; n !== from; n = prev.get(n)) path.push(n);
+      path.push(from);
+      return path.reverse();
+    }
+    for (const m of g.get(n) ?? []) {
+      if (!prev.has(m)) {
+        prev.set(m, n);
+        queue.push(m);
+      }
+    }
+  }
+  return null;
+}
+function collapse(path) {
+  const ids = [];
+  for (const n of path) {
+    const id = nodeID(n);
+    if (ids.length === 0 || ids[ids.length - 1] !== id) ids.push(id);
+  }
+  return ids;
+}
+function isWaitEdge(b, from, to) {
+  if (isDone(from) || !isDone(to) || nodeID(from) === nodeID(to)) return false;
+  return (itemByID(b, nodeID(from))?.waits_on ?? []).includes(nodeID(to));
+}
+function allWaitEdges(b, path) {
+  for (let k = 0; k + 1 < path.length; k++) {
+    const from = path[k];
+    const to = path[k + 1];
+    if (nodeID(from) === nodeID(to) && isDone(from) && !isDone(to)) continue;
+    if (!isWaitEdge(b, from, to)) return false;
+  }
+  return true;
+}
+var formatPath = (ids) => ids.map(formatID).join(" \u2192 ");
+function waitsOnBlock(b, id, target) {
+  if (!itemByID(b, id) || !itemByID(b, target)) return `${formatID(target)} not found`;
+  const a = formatID(id);
+  const t = formatID(target);
+  if (id === target) return `${a} cannot wait on itself`;
+  if (isAncestor(b, target, id)) return `${a} cannot wait on ${t}: ${t} contains it`;
+  if (isAncestor(b, id, target)) return `${a} cannot wait on ${t}: ${t} is inside it`;
+  const g = edges(b);
+  const from = done(target);
+  const to = start(id);
+  g.set(to, [...g.get(to) ?? [], from]);
+  const path = findPath(g, from, to);
+  if (path === null) return null;
+  const ids = [id, ...collapse(path)];
+  if (!allWaitEdges(b, path)) return `${a} cannot wait on ${t}: that would make a wait cycle (${formatPath(ids)})`;
+  return `${a} cannot wait on ${t}: ${t} already waits on ${a} (${formatPath(ids)})`;
+}
+
+// src/backlog_panel.ts
+var ACTION_STATUS = {
+  queue: "queued",
+  draft: "draft",
+  done: "done",
+  drop: "dropped",
+  reopen: "draft"
+};
+function stateChip(view, id, reason = derivedOf(view, id).reason ?? "") {
+  const d = derivedOf(view, id);
+  const chip = h(
+    "span",
+    { class: `af-backlog-chip af-backlog-state-${d.state}` },
+    h("span", { class: "af-backlog-glyph", ariaHidden: "true" }, STATE_GLYPHS[d.state]),
+    STATE_LABELS[d.state]
+  );
+  return reason ? h("span", { class: "af-backlog-state" }, chip, h("span", { class: "af-backlog-reason" }, reason)) : chip;
+}
+function section(title, ...children) {
+  return h("section", { class: "af-backlog-section" }, h("h3", { class: "af-backlog-section-title" }, title), ...children);
+}
+function button(label, run, cls = "af-ghost") {
+  const b = h("button", { type: "button", class: cls }, label);
+  b.addEventListener("click", run);
+  return b;
+}
+function entryField(placeholder, label, submit) {
+  const input = h("input", { type: "text", class: "af-backlog-entry", placeholder });
+  input.setAttribute("aria-label", label);
+  input.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || e.isComposing) return;
+    const text = input.value.trim();
+    if (!text) return;
+    e.preventDefault();
+    input.value = "";
+    submit(text);
+  });
+  return input;
+}
+var ItemPanel = class {
+  constructor(id, actions2) {
+    this.id = id;
+    this.actions = actions2;
+    this.title = h("input", { type: "text", class: "af-backlog-title-input" });
+    this.title.setAttribute("aria-label", "Title");
+    const commitTitle = () => {
+      const it = this.item();
+      const t = this.title.value.trim();
+      if (!it) return;
+      if (t && t !== it.title) actions2.update(id, { title: t });
+      else this.title.value = it.title;
+    };
+    this.title.addEventListener("change", commitTitle);
+    this.title.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.isComposing) this.title.blur();
+    });
+    this.body = new BodyEditor((text) => actions2.update(id, { body: text }), "Body");
+    this.note = h("textarea", { class: "af-backlog-note", rows: 2, placeholder: "Add a note\u2026" });
+    this.note.setAttribute("aria-label", "Note");
+    const addNote2 = button("Add note", () => {
+      const text = this.note.value.trim();
+      if (!text) return;
+      this.note.value = "";
+      actions2.note(id, text);
+    });
+    this.head = h("div", { class: "af-backlog-panel-state" });
+    this.rest = h("div", { class: "af-backlog-panel-rest" });
+    this.bodySection = section("Body", this.body.el);
+    this.threadList = h("ol", { class: "af-backlog-thread" });
+    const close = h("button", { type: "button", class: "af-ghost af-backlog-close", title: "Close" }, icon("x"));
+    close.setAttribute("aria-label", "Close item");
+    close.addEventListener("click", () => actions2.close());
+    const top = h(
+      "div",
+      { class: "af-backlog-panel-top" },
+      h("span", { class: "af-backlog-id" }, formatID(id)),
+      this.title,
+      close
+    );
+    this.el = h(
+      "aside",
+      { class: "af-backlog-panel" },
+      top,
+      this.head,
+      this.rest,
+      section("Thread", this.threadList, h("div", { class: "af-backlog-note-row" }, this.note, addNote2))
+    );
+    this.el.setAttribute("aria-label", `Item ${formatID(id)}`);
+  }
+  el;
+  title;
+  body;
+  note;
+  head;
+  rest;
+  bodySection;
+  threadList;
+  pickerQuery = "";
+  pickerOpen = false;
+  view = null;
+  sessions = [];
+  item() {
+    return this.view ? itemByID(this.view.backlog, this.id) : void 0;
+  }
+  render(view, sessions) {
+    this.view = view;
+    this.sessions = sessions;
+    const it = this.item();
+    if (!it) return;
+    if (document.activeElement !== this.title) this.title.value = it.title;
+    this.body.setText(it.body ?? "");
+    this.head.replaceChildren(stateChip(view, it.id));
+    const q = openQuestion(it);
+    const parts = [];
+    if (q) parts.push(h("div", { class: "af-backlog-question", role: "status" }, icon("circle-question"), h("span", {}, q.text)));
+    parts.push(this.actionsRow(view, it), this.bodySection, this.waitsSection(view, it));
+    const children = this.childrenSection(view, it);
+    if (children) parts.push(children);
+    parts.push(this.runsSection(it));
+    if (it.source?.proposal) parts.push(h("p", { class: "af-backlog-source" }, icon("file-text"), `From proposal ${it.source.proposal}`));
+    this.rest.replaceChildren(...parts);
+    this.threadList.replaceChildren(...(it.thread ?? []).map((m) => h(
+      "li",
+      { class: `af-backlog-msg af-backlog-msg-${m.kind}` },
+      h("div", { class: "af-backlog-msg-meta" }, [
+        m.kind === "note" ? "Note" : m.kind === "question" ? "Question" : "Answer",
+        m.author === "user" ? "you" : m.author.startsWith("agent:") ? "agent" : m.author,
+        formatTime(m.at),
+        ...m.closed ? [m.closed === "answered in session" ? "Answered in session" : `Closed \xB7 ${m.closed}`] : []
+      ].join(" \xB7 ")),
+      h("div", { class: "af-backlog-msg-text" }, m.text)
+    )));
+  }
+  actionsRow(view, it) {
+    const row = h("div", { class: "af-backlog-actions" });
+    for (const a of itemActions(view.backlog, it, derivedOf(view, it.id))) {
+      row.append(button(ACTION_LABELS[a], () => {
+        if (a === "delete") this.actions.remove(it.id);
+        else this.actions.status(it.id, ACTION_STATUS[a]);
+      }, a === "queue" ? "af-primary" : "af-ghost"));
+    }
+    row.append(this.moveMenu(view, it));
+    return row;
+  }
+  moveMenu(view, it) {
+    const b = view.backlog;
+    const others = b.items.filter((o) => o.id !== it.id && !isAncestor(b, it.id, o.id));
+    const pick = (label, opts, to) => {
+      const sel = h(
+        "select",
+        { class: "af-backlog-move-select" },
+        h("option", { value: "" }, label),
+        ...opts.map((o) => h("option", { value: String(o.id) }, `${formatID(o.id)} ${o.title}`))
+      );
+      sel.setAttribute("aria-label", label);
+      sel.addEventListener("change", () => {
+        if (sel.value) this.actions.move(it.id, to(Number(sel.value)));
+      });
+      return sel;
+    };
+    const panel = h(
+      "div",
+      { class: "af-backlog-move-panel" },
+      button("Top", () => this.actions.move(it.id, { top: true })),
+      button("Bottom", () => this.actions.move(it.id, { bottom: true })),
+      pick("Above\u2026", others, (id) => ({ before: id })),
+      pick(
+        "Into\u2026",
+        others.filter((o) => o.id !== it.parent && o.status !== "running" && (o.runs ?? []).length === 0),
+        (id) => ({ into: id })
+      )
+    );
+    const details = h("details", { class: "af-backlog-move" }, h("summary", { class: "af-ghost" }, "Move\u2026"), panel);
+    return details;
+  }
+  waitsSection(view, it) {
+    const b = view.backlog;
+    const chips = h("div", { class: "af-backlog-chips" });
+    for (const w of it.waits_on ?? []) {
+      const target = itemByID(b, w);
+      const remove = h("button", { type: "button", class: "af-backlog-chip-x", title: `Remove ${formatID(w)}` }, icon("x"));
+      remove.setAttribute("aria-label", `Remove ${formatID(w)}`);
+      remove.addEventListener("click", () => this.actions.update(it.id, { waits_on: (it.waits_on ?? []).filter((x) => x !== w) }));
+      const state = target ? STATE_LABELS[derivedOf(view, w).state] : "missing";
+      chips.append(h(
+        "span",
+        { class: "af-backlog-link" },
+        h("span", {}, `${formatID(w)} ${target?.title ?? ""}`),
+        h("span", { class: "af-backlog-reason" }, state),
+        remove
+      ));
+    }
+    const add = button("Add", () => {
+      this.pickerOpen = !this.pickerOpen;
+      this.render(view, this.sessions);
+      this.el.querySelector(".af-backlog-picker input")?.focus();
+    });
+    add.setAttribute("aria-expanded", String(this.pickerOpen));
+    chips.append(add);
+    const parts = [chips];
+    if (this.pickerOpen) parts.push(this.picker(view, it));
+    const needed = neededBy(b, it.id);
+    if (needed.length > 0) {
+      parts.push(h(
+        "div",
+        { class: "af-backlog-needed" },
+        h("span", { class: "af-backlog-label" }, "Needed by"),
+        ...needed.map((n) => this.itemLink(n))
+      ));
+    }
+    return section("Waits on", ...parts);
+  }
+  picker(view, it) {
+    const b = view.backlog;
+    const input = h("input", { type: "search", class: "af-backlog-entry", placeholder: "Search by id or title\u2026", value: this.pickerQuery });
+    input.setAttribute("aria-label", "Search items to wait on");
+    const list = h("ul", { class: "af-backlog-picker-list" });
+    const fill = () => {
+      const q = this.pickerQuery.trim().toLowerCase().replace(/^b-/, "");
+      const options = b.items.filter((o) => o.id !== it.id && !(it.waits_on ?? []).includes(o.id) && (q === "" || String(o.id).startsWith(q) || o.title.toLowerCase().includes(q)));
+      list.replaceChildren(...options.map((o) => {
+        const block = waitsOnBlock(b, it.id, o.id);
+        const opt = h(
+          "button",
+          { type: "button", class: "af-backlog-option", disabled: block !== null },
+          h("span", {}, `${formatID(o.id)} ${o.title}`),
+          ...block ? [h("span", { class: "af-backlog-reason" }, block)] : []
+        );
+        opt.addEventListener("click", () => {
+          this.pickerOpen = false;
+          this.pickerQuery = "";
+          this.actions.update(it.id, { waits_on: [...it.waits_on ?? [], o.id] });
+        });
+        return h("li", {}, opt);
+      }));
+      if (options.length === 0) list.append(h("li", { class: "af-backlog-reason" }, "No matching items"));
+    };
+    input.addEventListener("input", () => {
+      this.pickerQuery = input.value;
+      fill();
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        this.pickerOpen = false;
+        this.render(view, this.sessions);
+      }
+    });
+    fill();
+    return h("div", { class: "af-backlog-picker" }, input, list);
+  }
+  itemLink(o) {
+    const b = h("button", { type: "button", class: "af-backlog-item-link" }, `${formatID(o.id)} ${o.title}`);
+    b.addEventListener("click", () => this.actions.select(o.id));
+    return b;
+  }
+  childrenSection(view, it) {
+    const b = view.backlog;
+    const parent = isParent(b, it.id);
+    if (!parent && (it.status === "running" || (it.runs ?? []).length > 0)) return null;
+    const parts = [];
+    if (parent) {
+      parts.push(h(
+        "ul",
+        { class: "af-backlog-children" },
+        ...childrenOf(b, it.id).map((c) => h("li", {}, this.itemLink(c), stateChip(view, c.id, "")))
+      ));
+      const sw = h("input", { type: "checkbox", checked: it.sequential === true });
+      sw.setAttribute("role", "switch");
+      sw.addEventListener("change", () => this.actions.update(it.id, { sequential: sw.checked }));
+      parts.push(h("label", { class: "af-backlog-switch" }, sw, "Run children in order"));
+    }
+    parts.push(entryField("Add child\u2026", `Add a child to ${formatID(it.id)}`, (title) => this.actions.addChild(it.id, title)));
+    return section("Children", ...parts);
+  }
+  runsSection(it) {
+    const runs = it.runs ?? [];
+    const parts = [];
+    if (it.pr) {
+      const a = h("a", { class: "af-backlog-pr", href: it.pr, target: "_blank", rel: "noopener noreferrer" }, icon("external-link"), "Pull request");
+      parts.push(a);
+    }
+    if (runs.length === 0) parts.push(h("p", { class: "af-backlog-reason" }, "No runs yet"));
+    const list = h("ul", { class: "af-backlog-runs" });
+    for (const run of [...runs].reverse()) {
+      const s = run.session_id ? this.sessions.find((x) => x.id === run.session_id) : void 0;
+      const live = s ? ROW_KIND_LABELS[rowKind(s)] : run.state === "starting" ? "Starting" : run.state === "failed" ? "Failed" : "Gone";
+      const by = run.started_by === "runner" ? "runner" : "you";
+      const meta = [`Started by ${by}`, formatTime(run.started_at), live].join(" \xB7 ");
+      const btns = h("div", { class: "af-backlog-run-actions" });
+      if (s?.id) {
+        const sid = s.id;
+        btns.append(button("Open", () => this.actions.openSession(sid)));
+        const kind = rowKind(s);
+        if (kind === "archived" || kind === "lost" || kind === "dead") btns.append(button("Restore", () => this.actions.restoreSession(sid)));
+        if (!isArchived(s)) btns.append(button("Archive", () => this.actions.archiveSession(sid)));
+      }
+      list.append(h(
+        "li",
+        { class: "af-backlog-run" },
+        h(
+          "div",
+          { class: "af-backlog-run-main" },
+          h("div", { class: "af-backlog-run-title" }, run.title || run.session_id),
+          h("div", { class: "af-backlog-reason" }, meta)
+        ),
+        btns
+      ));
+    }
+    parts.push(list);
+    return section("Runs", ...parts);
+  }
+  dispose() {
+    this.body.dispose();
+  }
+};
+
+// src/backlog_pane.ts
+var EMPTY_COPY = "No items yet \xB7 Add one below, or ask an agent to make items from a proposal.";
+function usd(v) {
+  return `$${v.toFixed(2)}`;
+}
+function runnerText(view, budget) {
+  const r = view.runner;
+  const state = r.state === "off" ? "Runner off" : r.state === "stopped" ? "Runner stopped" : "Runner on";
+  const parts = [r.reason ?? "", `${r.used} of ${r.max} working`];
+  if (budget) parts.push(`${usd(budget.spent)} of ${usd(budget.limit)}`);
+  return { state, warn: r.state === "stopped", parts: parts.filter(Boolean) };
+}
+var BacklogPane = class {
+  constructor(host) {
+    this.host = host;
+    this.el = h("section", { class: "af-backlog" });
+    this.el.setAttribute("aria-label", "Backlog");
+    this.newItem = entryField("New item\u2026", "New item title", (title) => this.mutate((t) => addItem(this.root ?? "", { title }, t)));
+    const listWrap = h(
+      "div",
+      { class: "af-backlog-listwrap" },
+      this.filterSlot,
+      this.listSlot,
+      this.emptySlot,
+      h("div", { class: "af-backlog-new" }, icon("plus"), this.newItem)
+    );
+    this.main = h("div", { class: "af-backlog-main" }, listWrap);
+  }
+  el;
+  data = null;
+  root = null;
+  sessions = [];
+  selected = null;
+  filter = "all";
+  source = null;
+  showDone = false;
+  folded = /* @__PURE__ */ new Set();
+  pending = null;
+  panel = null;
+  dragId = null;
+  focusId = null;
+  newItem;
+  headSlot = h("div", { class: "af-backlog-head" });
+  filterSlot = h("div", {});
+  listSlot = h("div", {});
+  emptySlot = h("div", {});
+  main;
+  update(data, root2, sessions) {
+    if (data === this.data && root2 === this.root && sessions === this.sessions) return;
+    if (data !== this.data) this.pending = null;
+    if (root2 !== this.root) {
+      this.selected = null;
+      this.source = null;
+      this.folded.clear();
+    }
+    this.data = data;
+    this.root = root2;
+    this.sessions = sessions;
+    this.render();
+  }
+  /** Selects an item, as the Sessions view's item chip does. */
+  select(id) {
+    this.selected = id;
+    this.render();
+  }
+  view() {
+    const v = this.root ? this.data?.views.get(this.root) : void 0;
+    if (v && this.pending && this.pending.root === this.root) return { ...v, backlog: this.pending.backlog };
+    return v;
+  }
+  mutate(run, onError) {
+    const token2 = this.host.token();
+    if (token2 === null || !this.root) return;
+    run(token2).then(() => this.host.refresh(), (e) => {
+      onError?.();
+      this.host.notify(errorText(e));
+      void this.host.refresh();
+    });
+  }
+  move(id, to) {
+    const v = this.view();
+    const root2 = this.root;
+    if (!v || !root2) return;
+    const next = applyMove(v.backlog, id, to);
+    if (next) {
+      this.pending = { root: root2, backlog: next };
+      this.focusId = id;
+      this.render();
+    }
+    this.mutate((t) => moveItem(root2, id, to, t), () => {
+      this.pending = null;
+      this.render();
+    });
+  }
+  render() {
+    const v = this.view();
+    const error = this.root ? this.data?.errors.get(this.root) : void 0;
+    if (this.root === null || !v) {
+      this.closePanel();
+      this.el.classList.remove("af-backlog-has-panel");
+      if (this.root === null) {
+        this.el.replaceChildren(recoveryScreen({ condition: "No project registered", action: "Add project", run: () => this.host.addProject?.() }));
+      } else if (error) {
+        this.el.replaceChildren(recoveryScreen({
+          condition: "Backlog unavailable",
+          detail: error,
+          failed: true,
+          action: "Retry",
+          run: () => void this.host.refresh()
+        }));
+      } else {
+        this.el.replaceChildren(h("p", { class: "af-backlog-empty" }, "Loading backlog\u2026"));
+      }
+      return;
+    }
+    if (this.el.firstChild !== this.headSlot) this.el.replaceChildren(this.headSlot, this.main);
+    if (this.selected !== null && !itemByID(v.backlog, this.selected)) this.selected = null;
+    const rows = listRows(v, { filter: this.filter, showDone: this.showDone, folded: this.folded, source: this.source });
+    const list = h("ul", { class: "af-backlog-list", role: "tree" });
+    list.setAttribute("aria-label", "Items");
+    for (const row of rows) list.append(this.row(v, row));
+    this.headSlot.replaceChildren(...this.runnerBar(v).childNodes);
+    this.filterSlot.replaceChildren(this.filters(v));
+    this.listSlot.replaceChildren(list);
+    this.emptySlot.replaceChildren();
+    if (v.backlog.items.length === 0) this.emptySlot.append(h("p", { class: "af-backlog-empty" }, EMPTY_COPY));
+    else if (rows.length === 0) this.emptySlot.append(h("p", { class: "af-backlog-empty" }, "No items match this filter"));
+    if (this.selected !== null) {
+      if (this.panel?.id !== this.selected) {
+        this.closePanel();
+        this.panel = new ItemPanel(this.selected, this.panelActions());
+        this.main.append(this.panel.el);
+      }
+      this.panel?.render(v, this.sessions);
+    } else {
+      this.closePanel();
+    }
+    this.el.classList.toggle("af-backlog-has-panel", this.selected !== null);
+    if (this.focusId !== null) {
+      list.querySelector(`[data-item-id="${this.focusId}"]`)?.focus({ preventScroll: true });
+      this.focusId = null;
+    }
+  }
+  closePanel() {
+    this.panel?.dispose();
+    this.panel?.el.remove();
+    this.panel = null;
+  }
+  runnerBar(v) {
+    const r = runnerText(v, this.data?.budget ?? null);
+    const bar = h(
+      "div",
+      { class: "af-backlog-runner" },
+      h("span", { class: `af-backlog-runner-state${r.warn ? " af-backlog-warn" : ""}` }, r.state),
+      ...r.parts.flatMap((p) => [" \xB7 ", p])
+    );
+    const budget = this.data?.budget;
+    if (budget && budget.limit > 0) {
+      const fill = h("span", { class: "af-backlog-meter-fill" });
+      fill.style.width = `${Math.min(100, budget.spent / budget.limit * 100)}%`;
+      const meter = h("span", { class: "af-backlog-meter", role: "img" }, fill);
+      meter.setAttribute("aria-label", `${usd(budget.spent)} of ${usd(budget.limit)} spent`);
+      bar.append(" ", meter);
+    }
+    if (budget) bar.title = `All projects \xB7 API prices \xB7 ${usd(budget.max_per_run)} cap per run`;
+    return h("div", {}, h("span", { class: "af-backlog-heading" }, "Backlog"), bar);
+  }
+  filters(v) {
+    const row = h("div", { class: "af-backlog-filters", role: "group" });
+    row.setAttribute("aria-label", "Filter items");
+    const chip = (label, on, click) => {
+      const b = h("button", { type: "button", class: `af-backlog-filter${on ? " af-backlog-filter-on" : ""}` }, label);
+      b.setAttribute("aria-pressed", String(on));
+      b.addEventListener("click", () => {
+        click();
+        this.render();
+      });
+      return b;
+    };
+    for (const f of FILTERS) row.append(chip(f.label, this.filter === f.filter, () => {
+      this.filter = f.filter;
+    }));
+    for (const s of sources(v.backlog)) {
+      row.append(chip(`From ${s}`, this.source === s, () => {
+        this.source = this.source === s ? null : s;
+      }));
+    }
+    row.append(chip("Show done", this.showDone, () => {
+      this.showDone = !this.showDone;
+    }));
+    return row;
+  }
+  row(v, row) {
+    const it = row.item;
+    const li = h("li", { class: `af-backlog-row${it.id === this.selected ? " af-backlog-row-selected" : ""}`, tabIndex: 0, draggable: true });
+    li.dataset.itemId = String(it.id);
+    li.style.paddingLeft = `calc(var(--af-space-2) + var(--af-space-4) * ${row.depth})`;
+    li.setAttribute("role", "treeitem");
+    li.setAttribute("aria-level", String(row.depth + 1));
+    li.setAttribute("aria-selected", String(it.id === this.selected));
+    if (row.parent) li.setAttribute("aria-expanded", String(!row.folded));
+    const handle = h("span", { class: "af-backlog-handle", ariaHidden: "true", title: "Drag to reorder" }, "\u283F");
+    const fold = h("button", { type: "button", class: "af-backlog-fold", hidden: !row.parent, tabIndex: -1 }, row.folded ? "\u25B8" : "\u25BE");
+    fold.setAttribute("aria-label", row.folded ? `Expand ${formatID(it.id)}` : `Collapse ${formatID(it.id)}`);
+    fold.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (this.folded.has(it.id)) this.folded.delete(it.id);
+      else this.folded.add(it.id);
+      this.focusId = it.id;
+      this.render();
+    });
+    li.append(
+      handle,
+      fold,
+      h("span", { class: "af-backlog-id" }, formatID(it.id)),
+      h("span", { class: "af-backlog-row-title" }, it.title),
+      stateChip(v, it.id, row.reason)
+    );
+    li.addEventListener("click", () => this.select(it.id));
+    li.addEventListener("keydown", (e) => this.rowKey(e, v, it.id, li));
+    this.wireDrag(li, v.backlog, it.id);
+    return li;
+  }
+  rowKey(e, v, id, li) {
+    if (e.target !== li) return;
+    const dirs = { ArrowUp: "up", ArrowDown: "down", ArrowRight: "in", ArrowLeft: "out" };
+    if (e.altKey && dirs[e.key]) {
+      e.preventDefault();
+      const to = keyboardMove(v.backlog, id, dirs[e.key]);
+      if (to) this.move(id, to);
+      return;
+    }
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      this.select(id);
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const next = e.key === "ArrowDown" ? li.nextElementSibling : li.previousElementSibling;
+      next?.focus();
+    }
+  }
+  wireDrag(li, b, id) {
+    const zoneAt = (e) => {
+      const r = li.getBoundingClientRect();
+      const y = (e.clientY - r.top) / Math.max(1, r.height);
+      const target = itemByID(b, id);
+      const nestable = target && target.status !== "running" && (target.runs ?? []).length === 0;
+      if (nestable && y > 0.3 && y < 0.7) return "into";
+      return y < 0.5 ? "before" : "after";
+    };
+    const clear = () => li.classList.remove("af-backlog-drop-before", "af-backlog-drop-after", "af-backlog-drop-into");
+    li.addEventListener("dragstart", (e) => {
+      this.dragId = id;
+      e.dataTransfer?.setData("text/plain", formatID(id));
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+    });
+    li.addEventListener("dragend", () => {
+      this.dragId = null;
+    });
+    li.addEventListener("dragover", (e) => {
+      if (this.dragId === null || dropMove(b, this.dragId, id, zoneAt(e)) === null) return;
+      e.preventDefault();
+      clear();
+      li.classList.add(`af-backlog-drop-${zoneAt(e)}`);
+    });
+    li.addEventListener("dragleave", clear);
+    li.addEventListener("drop", (e) => {
+      clear();
+      const drag = this.dragId;
+      this.dragId = null;
+      if (drag === null) return;
+      e.preventDefault();
+      const to = dropMove(b, drag, id, zoneAt(e));
+      if (to) this.move(drag, to);
+    });
+  }
+  panelActions() {
+    const root2 = () => this.root ?? "";
+    return {
+      update: (id, u) => this.mutate((t) => updateItem(root2(), id, u, t)),
+      status: (id, s) => this.mutate((t) => setItemStatus(root2(), id, s, t)),
+      remove: (id) => {
+        this.selected = null;
+        this.mutate((t) => deleteItem(root2(), id, t));
+      },
+      move: (id, to) => this.move(id, to),
+      note: (id, text) => this.mutate((t) => addNote(root2(), id, text, t)),
+      addChild: (parent, title) => this.mutate((t) => addItem(root2(), { title, parent }, t)),
+      select: (id) => this.select(id),
+      close: () => {
+        const id = this.selected;
+        this.selected = null;
+        this.focusId = id;
+        this.render();
+      },
+      openSession: (id) => this.host.openSession(id),
+      archiveSession: (id) => this.host.archiveSession(id),
+      restoreSession: (id) => this.host.restoreSession(id)
+    };
+  }
+};
+
 // src/ui.ts
 function isActionableSession(s) {
   return typeof s.id === "string" && s.id !== "" && (s.lifecycle_action === "archive" || s.lifecycle_action === "restore");
@@ -16550,11 +17610,11 @@ function retryActionForSession(s) {
   }
   return null;
 }
-function patchRetryButton(button, action) {
-  button.hidden = action === null;
+function patchRetryButton(button2, action) {
+  button2.hidden = action === null;
   if (action) {
-    button.textContent = action.label;
-    button.title = action.title;
+    button2.textContent = action.label;
+    button2.title = action.title;
   }
 }
 function markDeliveredActionForSession(s) {
@@ -16699,7 +17759,7 @@ function loginView(state, actions2) {
     disabled: state.connecting
   });
   input.setAttribute("aria-label", "Daemon bearer token");
-  const button = h(
+  const button2 = h(
     "button",
     { type: "submit", class: "af-primary", disabled: state.connecting },
     state.connecting ? "Connecting\u2026" : "Connect"
@@ -16709,7 +17769,7 @@ function loginView(state, actions2) {
     { class: "af-login-form" },
     h("label", { class: "af-field-label", htmlFor: "af-token" }, "Daemon token"),
     input,
-    button
+    button2
   );
   form.addEventListener("submit", (e) => {
     e.preventDefault();
@@ -16749,12 +17809,12 @@ function noAuthLoginView(state, actions2) {
   if (state.loginCondition === "expired") {
     return expiredTokenlessView(state, actions2);
   }
-  const button = h(
+  const button2 = h(
     "button",
     { type: "submit", class: "af-primary", disabled: state.connecting },
     state.connecting ? "Connecting\u2026" : "Connect"
   );
-  const form = h("form", { class: "af-login-form" }, button);
+  const form = h("form", { class: "af-login-form" }, button2);
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     actions2.connect("");
@@ -16782,7 +17842,7 @@ function expiredTokenlessView(state, actions2) {
     disabled: state.connecting
   });
   input.setAttribute("aria-label", "Daemon bearer token");
-  const button = h(
+  const button2 = h(
     "button",
     { type: "submit", class: "af-primary", disabled: state.connecting },
     state.connecting ? "Connecting\u2026" : "Connect"
@@ -16792,7 +17852,7 @@ function expiredTokenlessView(state, actions2) {
     { class: "af-login-form" },
     h("label", { class: "af-field-label", htmlFor: "af-token" }, "Daemon token"),
     input,
-    button
+    button2
   );
   form.addEventListener("submit", (e) => {
     e.preventDefault();
@@ -16826,6 +17886,7 @@ var AppShell = class {
     const { el: viewNav, tabs } = viewNavigation((view) => this.switchView(view));
     this.viewTabs = tabs;
     this.viewNav = viewNav;
+    tabs.get("backlog")?.append(this.backlogBadge);
     this.projectSwitchName = h("span", { class: "af-project-switch-name" }, "\u2014");
     const switchGlyph = icon("folder-git", "af-project-glyph");
     const switchCaret = icon("chevron-down", "af-project-caret");
@@ -16937,6 +17998,20 @@ var AppShell = class {
       trigger: (task) => this.actions.triggerTask(task),
       remove: (task) => this.actions.removeTask(task)
     });
+    this.backlogPane = new BacklogPane(this.actions.backlog ?? {
+      token: () => null,
+      refresh: async () => {
+      },
+      notify: () => {
+      },
+      openSession: () => {
+      },
+      archiveSession: () => {
+      },
+      restoreSession: () => {
+      }
+    });
+    this.backlogPane.el.hidden = true;
     this.configPane = new ConfigPane({
       save: (key, value) => this.actions.setConfigValue(key, value),
       openAssistant: () => this.actions.openConfigAssistant(),
@@ -16947,7 +18022,7 @@ var AppShell = class {
       setTheme: (choice) => this.actions.setTheme(choice),
       disconnect: () => this.actions.disconnect()
     });
-    const viewport = h("div", { class: "af-viewport" }, this.sessionsBody, this.tasksPane.el, this.configPane.el);
+    const viewport = h("div", { class: "af-viewport" }, this.sessionsBody, this.backlogPane.el, this.tasksPane.el, this.configPane.el);
     this.toast = h("div", { class: "af-toast" });
     this.toast.setAttribute("role", "alert");
     this.el = h("main", { class: "af-app" }, header, viewport, this.toast, this.modalHost);
@@ -17005,6 +18080,12 @@ var AppShell = class {
   appControls;
   sessionsBody;
   tasksPane;
+  backlogPane;
+  backlogBadge = h("span", { class: "af-viewtab-badge", hidden: true });
+  sessionItemMap = /* @__PURE__ */ new Map();
+  sessionItemSig = "[]";
+  chipsChanged = false;
+  lastBacklog;
   configPane;
   lastView = null;
   lastTasks = null;
@@ -17220,6 +18301,7 @@ var AppShell = class {
       this.lastView = state.view;
       this.sessionsBody.hidden = state.view !== "sessions";
       this.tasksPane.el.hidden = state.view !== "tasks";
+      this.backlogPane.el.hidden = state.view !== "backlog";
       this.configPane.el.hidden = state.view !== "config";
       for (const [v, tab] of this.viewTabs) {
         tab.classList.toggle("af-viewtab-active", v === state.view);
@@ -17234,6 +18316,21 @@ var AppShell = class {
       this.lastTasksProject = state.selectedProject;
       this.tasksPane.update(state.tasks, state.selectedProject, state.tasksError);
     }
+    if (state.backlog && state.backlog !== this.lastBacklog) {
+      this.lastBacklog = state.backlog;
+      const items = sessionItems(state.backlog.views);
+      const sig = JSON.stringify([...items].map(([sid, it]) => [sid, it.id, it.title]));
+      if (sig !== this.sessionItemSig) {
+        this.sessionItemSig = sig;
+        this.sessionItemMap = items;
+        this.chipsChanged = true;
+      }
+      const n = needsYouCount(state.backlog.views.values());
+      this.backlogBadge.hidden = n === 0;
+      this.backlogBadge.textContent = String(n);
+      this.backlogBadge.setAttribute("aria-label", `${n} need you`);
+    }
+    if (state.backlog) this.backlogPane.update(state.backlog, state.selectedProject, state.sessions);
     this.configPane.update(state.config, state.configPath, state.configStatus, state.accounts, state.themeChoice);
     const sessionsChanged = this.lastSessions !== state.sessions;
     const selectionChanged = this.lastSelectedId !== state.selectedId;
@@ -17252,7 +18349,9 @@ var AppShell = class {
     this.lastSelectedId = state.selectedId;
     const filterChanged = this.lastStatusFilter !== state.statusFilter;
     this.lastStatusFilter = state.statusFilter;
-    if (sessionsChanged || selectionChanged || projectChanged || filterChanged || restoresChanged) {
+    const chipsChanged = this.chipsChanged;
+    this.chipsChanged = false;
+    if (sessionsChanged || selectionChanged || projectChanged || filterChanged || restoresChanged || chipsChanged) {
       if (!this.railPainted && prioritizeTerminal) {
         this.pendingInitialRail = state;
         if (this.initialRailFrame === null) {
@@ -17351,7 +18450,13 @@ var AppShell = class {
     const rows = this.railRows.reconcile(
       state.selectedProject ? visible : [],
       sessionKey,
-      (s) => JSON.stringify([s, s.id === state.selectedId, this.pendingRestores?.has(s.id ?? "") === true]),
+      (s) => JSON.stringify([
+        s,
+        s.id === state.selectedId,
+        this.pendingRestores?.has(s.id ?? "") === true,
+        this.sessionItemMap.get(s.id ?? "")?.id ?? 0,
+        this.sessionItemMap.get(s.id ?? "")?.title ?? ""
+      ]),
       (s, previous) => {
         const key = sessionKey(s);
         const oldMenu = this.railMenus.get(key);
@@ -17365,7 +18470,8 @@ var AppShell = class {
           s.id === state.selectedId,
           (id) => this.runRailExit(() => this.actions.open(id)),
           (target) => this.rowActions(target, s.id === state.selectedId),
-          previous
+          previous,
+          this.itemChip(s.id ?? "")
         );
         if (wasOpen) this.railMenus.get(key)?.open();
         if (focusedName) restoreChangedFocus = () => row.querySelector(`[aria-label="${CSS.escape(focusedName)}"]`)?.focus({ preventScroll: true });
@@ -17711,6 +18817,24 @@ var AppShell = class {
   dismissCarriedActions() {
     if (this.el.classList.contains("af-session-first")) this.appControls.dismiss();
     else this.terminalChrome?.menu.dismiss();
+  }
+  /** The B-12 chip of an item session; a click opens the item in the Backlog view. */
+  itemChip(sessionId) {
+    const item = this.sessionItemMap.get(sessionId);
+    if (!item) return void 0;
+    const chip = h(
+      "button",
+      { type: "button", class: "af-backlog-session-chip", title: `Open ${formatID(item.id)} ${item.title}` },
+      formatID(item.id)
+    );
+    chip.setAttribute("aria-label", `Open item ${formatID(item.id)}`);
+    chip.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.actions.switchProject(item.root);
+      this.backlogPane.select(item.id);
+      this.switchView("backlog");
+    });
+    return chip;
   }
   /** One user-owned view transition for both appbar tabs and document shortcuts. */
   switchView(view) {
@@ -18136,8 +19260,8 @@ var AppShell = class {
       "click",
       (e) => {
         const target = e.target instanceof Element ? e.target.closest(".af-tab") : null;
-        const button = target && bar.contains(target) ? target : null;
-        const targetIntent = button ? tabRenameIntents.get(button) : void 0;
+        const button2 = target && bar.contains(target) ? target : null;
+        const targetIntent = button2 ? tabRenameIntents.get(button2) : void 0;
         if (e.detail === 1) {
           firstIdentity = targetIntent?.identity() ?? null;
           return;
@@ -18421,12 +19545,12 @@ function tabButton(tab, index, active, shown, canRename, canClose, actions2, ope
 function beginTabRename(btn, tab, actions2, editedId, editedSessionId) {
   const input = h("input", { type: "text", class: "af-tab-edit", value: tab.name });
   input.setAttribute("aria-label", `Rename tab ${tabLabel(tab)}`);
-  let done = false;
+  let done2 = false;
   const finish = (commit) => {
-    if (done) {
+    if (done2) {
       return;
     }
-    done = true;
+    done2 = true;
     const next = input.value.trim();
     input.replaceWith(btn);
     if (commit && next !== "" && next !== tab.name) {
@@ -18458,14 +19582,14 @@ function inertRowReason(s) {
   }
   return cause === "" ? "cannot be opened" : `cannot be opened \xB7 ${cause}`;
 }
-function sessionRow(s, selected, openSession, buildActions, previous) {
+function sessionRow(s, selected, openSession, buildActions, previous, itemChip) {
   const status = rowStatus(s);
   const operator = operatorKind(s);
   const creating = isCreating(s);
   const actionable = isActionableSession(s);
   const killable = isKillableSession(s);
   const managed = actionable || killable;
-  const title = h("div", { class: "af-row-title" }, rowTitle(s));
+  const title = h("div", { class: "af-row-title" }, ...itemChip ? [itemChip] : [], rowTitle(s));
   const idleDetail = idleReasonDetail(s);
   const branchParts = [];
   if (selected && idleDetail) {
@@ -18559,7 +19683,7 @@ function captureTabDeleteTarget(target) {
 }
 
 // src/proposal_api.ts
-function isRecord(v) {
+function isRecord2(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 function str(v) {
@@ -18567,7 +19691,7 @@ function str(v) {
 }
 var PUSH_STATES = ["idle", "countdown", "waiting_agent", "held", "sent"];
 function parsePushStatus(d) {
-  if (!isRecord(d) || typeof d.state !== "string" || !PUSH_STATES.includes(d.state)) {
+  if (!isRecord2(d) || typeof d.state !== "string" || !PUSH_STATES.includes(d.state)) {
     return null;
   }
   const due = typeof d.due_in_ms === "number" && Number.isFinite(d.due_in_ms) ? Math.max(0, d.due_in_ms) : null;
@@ -18581,14 +19705,14 @@ function parsePushStatus(d) {
   };
 }
 function parseProposalPush(ev) {
-  if (!isRecord(ev) || ev.type !== "proposal.push") {
+  if (!isRecord2(ev) || ev.type !== "proposal.push") {
     return null;
   }
   const status = parsePushStatus(ev.data);
   return status && status.sessionId !== "" && status.slug !== "" ? status : null;
 }
 function parseProposalChange(ev) {
-  if (!isRecord(ev) || ev.type !== "proposal.changed" || !isRecord(ev.data)) {
+  if (!isRecord2(ev) || ev.type !== "proposal.changed" || !isRecord2(ev.data)) {
     return null;
   }
   const d = ev.data;
@@ -18598,6 +19722,53 @@ function parseProposalChange(ev) {
   }
   return { repoId: str(d.repo_id), slug, doc: str(d.doc), commit: str(d.commit), author: str(d.author) };
 }
+
+// src/backlog_data.ts
+var EMPTY_BACKLOG_DATA = { views: /* @__PURE__ */ new Map(), errors: /* @__PURE__ */ new Map(), budget: null };
+var BacklogLoader = class {
+  constructor(opts) {
+    this.opts = opts;
+  }
+  generation = 0;
+  timer = null;
+  /** Refetches every project. A later call wins over one still in flight. */
+  async refresh() {
+    const token2 = this.opts.token();
+    if (token2 === null) return;
+    const gen = ++this.generation;
+    const roots = [...new Set(this.opts.roots().filter(Boolean))];
+    const [results, budget] = await Promise.all([
+      Promise.all(roots.map((root2) => getBacklog(root2, token2).then((view) => ({ root: root2, view, error: "" })).catch((e) => ({ root: root2, view: null, error: errorText(e) })))),
+      getBudget(token2).catch(() => this.opts.current().budget)
+    ]);
+    if (gen !== this.generation || this.opts.token() !== token2) return;
+    const prev = this.opts.current().views;
+    const views = /* @__PURE__ */ new Map();
+    const errors = /* @__PURE__ */ new Map();
+    for (const r of results) {
+      if (r.view) views.set(r.root, r.view);
+      else {
+        errors.set(r.root, r.error);
+        const old = prev.get(r.root);
+        if (old) views.set(r.root, old);
+      }
+    }
+    this.opts.commit({ views, errors, budget });
+  }
+  /** Coalesces a burst of events into one refetch. */
+  request() {
+    if (this.timer !== null) return;
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      void this.refresh();
+    }, 150);
+  }
+  reset() {
+    this.generation++;
+    if (this.timer !== null) clearTimeout(this.timer);
+    this.timer = null;
+  }
+};
 
 // src/index.ts
 var initialThemeChoice = bootStampTheme();
@@ -18628,6 +19799,7 @@ var store = new Store({
   tabError: null,
   tasks: [],
   registeredProjects: [],
+  backlog: EMPTY_BACKLOG_DATA,
   themeChoice: initialThemeChoice,
   // Resume the persisted filter (feat: hide archived by default) before first paint,
   // for the same reason the theme is boot-stamped: rendering the default set first
@@ -18636,6 +19808,27 @@ var store = new Store({
   statusFilter: loadFilter()
 });
 var token = null;
+var backlogLoader = new BacklogLoader({
+  token: () => token,
+  roots: () => {
+    const state = store.get();
+    const roots = projectSummaries(state.sessions, state.tasks, projectRoots(state.registeredProjects)).map((p) => p.root);
+    return state.selectedProject ? [state.selectedProject, ...roots] : roots;
+  },
+  current: () => store.get().backlog ?? EMPTY_BACKLOG_DATA,
+  commit: (backlog) => store.set({ backlog })
+});
+var backlogPhase = store.get().phase;
+store.subscribe((state) => {
+  if (state.phase === backlogPhase) return;
+  backlogPhase = state.phase;
+  if (state.phase === "app") {
+    void backlogLoader.refresh();
+  } else {
+    backlogLoader.reset();
+    if (state.backlog !== EMPTY_BACKLOG_DATA) store.set({ backlog: EMPTY_BACKLOG_DATA });
+  }
+});
 var connectionGeneration = 0;
 var pendingRestoreResync = false;
 var stream = null;
@@ -18898,6 +20091,16 @@ function resolveRoute() {
     replaceRoute(id ? { session: id } : null);
   }
 }
+function openBacklogSession(id) {
+  const session = store.get().sessions.find((s) => s.id === id);
+  if (!session?.id) {
+    showTransientNotice("That session is gone");
+    return;
+  }
+  if (session.worktree?.repo_path) switchProject(session.worktree.repo_path);
+  setStatusFilter(operatorKind(session), true);
+  openFromRail(session.id);
+}
 function moveSelection(id) {
   createSelectionIntent.navigate();
   clearTabError();
@@ -18944,6 +20147,9 @@ function switchView(view) {
   store.set({ view, focus: "rail" });
   if (view === "tasks") {
     refreshTasks();
+  }
+  if (view === "backlog") {
+    void backlogLoader.refresh();
   }
   if (view === "config") {
     refreshConfig();
@@ -20128,6 +21334,21 @@ var actions = {
     void bootstrap();
   },
   retryTasks: refreshTasks,
+  backlog: {
+    token: () => token,
+    refresh: () => backlogLoader.refresh(),
+    notify: (message) => showTransientNotice(message),
+    openSession: openBacklogSession,
+    archiveSession: (id) => {
+      const s = store.get().sessions.find((x) => x.id === id);
+      if (s && isActionableSession(s)) openConfirm("archive", s);
+    },
+    restoreSession: (id) => {
+      const s = store.get().sessions.find((x) => x.id === id);
+      if (s && isActionableSession(s)) openConfirm("restore", s);
+    },
+    addProject: () => openAddProject()
+  },
   notice: surfaceNotice,
   paneDropHintAt: (x, y) => splitView.showTabDropHintAt(x, y),
   clearPaneDropHint: () => splitView.clearTabDropHint(),
@@ -20236,6 +21457,10 @@ function onEvent(ev) {
   if (ev.type === "proposal.push") {
     const status = parseProposalPush(ev);
     if (status) publishProposalPush(status);
+    return;
+  }
+  if (ev.type === "backlog.changed" || ev.type === "backlog.spend" || ev.type === "backlog.runner") {
+    backlogLoader.request();
     return;
   }
   if (ev.type === "task.created" || ev.type === "task.updated" || ev.type === "task.removed") {
