@@ -2815,6 +2815,11 @@
           "ok": "The web names a project by repo_path, the root it scopes every view by; the daemon resolves it to the repo id."
         }
       },
+      "RunBacklog": {
+        "repo_id": {
+          "ok": "The web names a project by repo_path, the root it scopes every view by; the daemon resolves it to the repo id."
+        }
+      },
       "SetAttention": {
         "reason": {
           "ok": "The web only clears a request (clear: true). A reason belongs to setting one, which agents do with `af sessions attention --self`."
