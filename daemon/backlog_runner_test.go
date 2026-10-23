@@ -26,12 +26,11 @@ func ptrTo[T any](v T) *T { return &v }
 func runnerTestManager(t *testing.T) (*Manager, string) {
 	t.Helper()
 	m, repoID, repoPath := backlogTestManager(t)
-	p, err := config.RegisterProject(repoPath)
-	if err != nil {
+	if _, err := config.RegisterProject(repoPath); err != nil {
 		t.Fatal(err)
 	}
-	if p.ID != repoID {
-		t.Fatalf("registered project %s, want %s", p.ID, repoID)
+	if root, err := registeredProjectRootForRepoID(repoID); err != nil || root == "" {
+		t.Fatalf("project %s not found after registering: %q %v", repoID, root, err)
 	}
 	return m, repoID
 }
