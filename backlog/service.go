@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sachiniyer/agent-factory/config"
+	"github.com/sachiniyer/agent-factory/planusage"
 )
 
 // Host is what the service needs from the daemon.
@@ -29,6 +30,8 @@ type Host interface {
 	SetAttention(repoID, sessionID, reason string)
 	// AnswerTarget reports whether an answer can reach the session.
 	AnswerTarget(repoID, sessionID string) AnswerTarget
+	// Usage returns the plan windows from the last metering pass.
+	Usage() planusage.Usage
 	// DeliverAnswer sends a pending answer to the item's session in the
 	// background, restoring the session first when it is not running, and
 	// records the outcome on the answer.
@@ -383,7 +386,7 @@ func (s *Service) GetBudget(GetBudgetRequest) (*BudgetResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &BudgetResponse{Budget: *b}, nil
+	return &BudgetResponse{Budget: *b, Usage: s.host.Usage()}, nil
 }
 
 func (s *Service) SetBudget(req SetBudgetRequest) (*BudgetResponse, error) {
@@ -391,5 +394,5 @@ func (s *Service) SetBudget(req SetBudgetRequest) (*BudgetResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &BudgetResponse{Budget: *b}, nil
+	return &BudgetResponse{Budget: *b, Usage: s.host.Usage()}, nil
 }
