@@ -33,7 +33,7 @@ import (
 // generated plugin artifacts must never carry a verbatim copy of the "you are
 // running inside af" opening, which is false for the audience that installed
 // them.
-const afUsageReference = afUsageIntroInside + "\n\n" + afUsageDispatched + "\n\n" + afUsageBody + "\n\n" + afUsageAttentionInside + "\n\n" + afUsageProposalsInside + "\n\n" + afUsageOutroInside + "\n\n" + afUsageOutro
+const afUsageReference = afUsageIntroInside + "\n\n" + afUsageDispatched + "\n\n" + afUsageBody + "\n\n" + afUsageAttentionInside + "\n\n" + afUsageProposalsInside + "\n\n" + afUsageBacklogInside + "\n\n" + afUsageOutroInside + "\n\n" + afUsageOutro
 
 // AfPluginUsageReference is afUsageReference reframed for an agent that is NOT
 // running inside af: the same body and the same command reference, but an
@@ -120,6 +120,12 @@ Tasks (deliver a prompt on a cron schedule, or whenever a long-running watch scr
   af tasks remove <id-or-name>
 Without --target-session each run creates a fresh session; {{line}} in a watch prompt is replaced by the emitted stdout line. On update, setting one trigger clears the other, --target-session "" reverts to session-per-run, and --project-path moves the task to another project (--repo still scopes its current project). A task is bound to one project at creation and "tasks add" echoes the binding as project_path — check it matches the project you meant, and never create a task from a scratch clone of a repo, which binds the automation to the clone instead of the real project. The background daemon runs all schedules; "af daemon install" / "af daemon uninstall" manage its login autostart.
 
+Backlog (one project's work items in a strict order; ids are B-12 or 12; items you add are always drafts, and only the user queues them):
+  af backlog list [--all] [--state <s>]                Items in order, as a tree, with each one's state (--all includes done and dropped)
+  af backlog show <id>                                 One item: body, state and reason, waits-on, children, runs, and thread
+  af backlog add <title> [--body -] [--parent <id>] [--waits-on <id>,…]  Add one draft item
+  af backlog add --file <path or ->                    Add or update many items at once from JSON: {"proposal": "<slug>", "items": [{"key", "title", "body", "parent", "waits_on", "sequential"}]}; parent and waits_on take a key or an item id, and with "proposal" set an item with the same proposal and key is updated, not added again
+
 Root-agent configuration (global unless --project <id-or-path> selects a personal project override):
   af config set root_agent <compact-json>             Merge the enabled/program profile as one table
   af config set root_agent.enabled <bool>             Enable or disable the singleton profile
@@ -137,9 +143,17 @@ const afUsageAttentionInside = `Asking for the user: the user watches many sessi
 // skill update. Proposal commands need a session, so plugins do not get it.
 const afUsageProposalsInside = `Proposals: when the user asks you to make a proposal (a plan or design written as docs you edit together), run "af proposal start <slug>" with a short lowercase-dashed slug. When the user asks you to work on an existing proposal, run "af proposal list" to find it and "af proposal attach <slug>". Both print the proposal's path and a "rules" field: follow those rules for the rest of the work. Do not write proposal docs into the repository yourself; af keeps them outside the worktree.`
 
+// afUsageBacklogInside is inside-only: --self resolves the calling session, so
+// it works only in a session af started for a backlog item.
+const afUsageBacklogInside = `Backlog items: when af started your session for a backlog item (your first prompt says "You are working on backlog item B-12"), report through that item, not only in your reply:
+  af backlog done --self [--pr <url>]                  The work is finished; the item goes to the user for review. Pass --pr when you opened a pull request
+  af backlog ask --self <text>                         Ask the user a question on the item, then stop and wait; the answer arrives in this session as a prompt
+  af backlog note --self <text>                        Add a note to the item's thread; nobody is notified
+From an item session af refuses queue, draft, start, run, done <id>, drop, delete, answer, and changing the runner or budget: those are the user's. If you need one of them, ask with "af backlog ask --self". Do not create other af sessions from an item session; their use is not counted against the backlog.`
+
 // afSkillDescriptionInside is AfSkillDescription for an agent inside an af
 // session, where proposal commands work.
-const afSkillDescriptionInside = "Manage Agent Factory (af) sessions, tabs, scheduled tasks, proposals, and the daemon via the af CLI"
+const afSkillDescriptionInside = "Manage Agent Factory (af) sessions, tabs, scheduled tasks, proposals, the backlog, and the daemon via the af CLI"
 
 // afProposalTrigger is the activation text for proposal requests. Agents load a
 // skill body only when the request matches its description, and "make a

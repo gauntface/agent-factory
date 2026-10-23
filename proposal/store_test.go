@@ -497,3 +497,12 @@ func TestRulesExplainPushedEdits(t *testing.T) {
 		t.Fatalf("rule 2 must explain pushed edits:\n%s", r)
 	}
 }
+
+func TestRulesMakeBacklogItemsKeyedByTheProposal(t *testing.T) {
+	r := Rules("p", "/x/p")
+	for _, want := range []string{`"af backlog add --file -"`, `{"proposal": "p"`, `key "p" and "sequential": true`, `"parent": "p"`, "Every item is a draft", "updated, not added again"} {
+		if !strings.Contains(r, want) {
+			t.Fatalf("rule 9 must say %s:\n%s", want, r)
+		}
+	}
+}
