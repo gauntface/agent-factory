@@ -149,7 +149,7 @@ const afUsageBacklogInside = `Backlog items: when af started your session for a 
   af backlog done --self [--pr <url>]                  The work is finished; the item goes to the user for review. Pass --pr when you opened a pull request
   af backlog ask --self <text>                         Ask the user a question on the item, then stop and wait; the answer arrives in this session as a prompt
   af backlog note --self <text>                        Add a note to the item's thread; nobody is notified
-From an item session af refuses queue, draft, review, reopen, start, run, done <id>, drop, delete, answer, and changing the runner or budget: those are the user's. If you need one of them, ask with "af backlog ask --self". Do not create other af sessions from an item session; their use is not counted against the backlog.`
+From an item session af refuses queue, draft, review, reopen, start, run, done <id>, drop, delete, answer, and changing the runner or budget: those are the user's. If you need one of them, ask with "af backlog ask --self". Do not create other af sessions from an item session; the cap per run does not count their use.`
 
 // afSkillDescriptionInside is AfSkillDescription for an agent inside an af
 // session, where proposal commands work.

@@ -1,6 +1,6 @@
 // Package planusage reads the Claude plan usage that Claude Code reports to
 // its status line, and meters what Claude Code transcripts cost at API prices
-// so the backlog's share of each plan window can be told apart from the rest.
+// so a run's part of a plan window, and the backlog's dollar spend, are known.
 package planusage
 
 import (

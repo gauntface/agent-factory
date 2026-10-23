@@ -16,7 +16,7 @@ const (
 	BacklogFileName      = "backlog.json"
 	BudgetFileName       = "budget.json"
 	BacklogSchemaVersion = 1
-	BudgetSchemaVersion  = 1
+	BudgetSchemaVersion  = 2
 )
 
 // ErrBusy is returned when another writer held a store's lock too long. The
@@ -71,26 +71,25 @@ func Update(repoID string, fn func(*Backlog) error) (*Backlog, error) {
 	return updateFile(path, backlogStore, fn)
 }
 
-// Budget is the share of the user's Claude plan the runner may use, for all
-// projects. Percents are of a plan window; USDLimit is a dollar limit at API
-// prices for accounts with no plan readings.
+// Budget is when the runner may use the user's Claude plan, for all projects.
+// Limit is the total plan % (from any use) under which the runner starts
+// items, in both plan windows; MaxPerRun is a % of the 5-hour window. USDLimit
+// is a dollar limit at API prices for accounts with no plan readings.
 type Budget struct {
 	SchemaVersion int     `json:"schema_version"`
-	Share         float64 `json:"share"`
-	StopAt        float64 `json:"stop_at"`
+	Limit         float64 `json:"limit"`
 	MaxPerRun     float64 `json:"max_per_run"`
 	USDLimit      float64 `json:"usd_limit"`
 	USDSpent      float64 `json:"usd_spent"`
 }
 
 const (
-	DefaultShare     = 50
-	DefaultStopAt    = 90
+	DefaultLimit     = 50
 	DefaultMaxPerRun = 10
 )
 
 func NewBudget() *Budget {
-	return &Budget{SchemaVersion: BudgetSchemaVersion, Share: DefaultShare, StopAt: DefaultStopAt, MaxPerRun: DefaultMaxPerRun}
+	return &Budget{SchemaVersion: BudgetSchemaVersion, Limit: DefaultLimit, MaxPerRun: DefaultMaxPerRun}
 }
 
 // LoadBudget reads the global budget. A missing file is the default budget.
@@ -118,6 +117,8 @@ type store[T any] struct {
 	empty    func() *T
 	finish   func(*T) error
 	setStamp func(*T, int)
+	// migrate holds the migrators from version 1 up, by source version.
+	migrate map[int]config.SchemaMigrator
 }
 
 var backlogStore = store[Backlog]{
@@ -134,12 +135,57 @@ var budgetStore = store[Budget]{
 	empty:    NewBudget,
 	finish:   func(*Budget) error { return nil },
 	setStamp: func(b *Budget, v int) { b.SchemaVersion = v },
+	migrate:  map[int]config.SchemaMigrator{1: budgetToLimit},
+}
+
+// oldDefaultStopAt is the stop_at default of a version 1 budget.
+const oldDefaultStopAt = 90
+
+// budgetToLimit migrates a version 1 budget, with the backlog's share of the
+// plan and a stop_at, to one limit on total plan use: the old stop_at when the user
+// changed it, else the default. A hand-written file with no schema_version
+// that already has a limit keeps it.
+func budgetToLimit(raw []byte) ([]byte, error) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return nil, err
+	}
+	if obj == nil {
+		return nil, errors.New("the file must hold a JSON object")
+	}
+	limit := float64(DefaultLimit)
+	if v, ok := obj["stop_at"]; ok {
+		var stopAt float64
+		if err := json.Unmarshal(v, &stopAt); err != nil {
+			return nil, fmt.Errorf("stop_at: %w", err)
+		}
+		if stopAt != oldDefaultStopAt {
+			limit = stopAt
+		}
+	}
+	_, hasStopAt := obj["stop_at"]
+	if _, ok := obj["limit"]; !ok || hasStopAt {
+		l, err := json.Marshal(limit)
+		if err != nil {
+			return nil, err
+		}
+		obj["limit"] = l
+	}
+	delete(obj, "share")
+	delete(obj, "stop_at")
+	obj[config.SchemaVersionField] = json.RawMessage("2")
+	return json.MarshalIndent(obj, "", "  ")
 }
 
 func (s store[T]) plan(path string) config.SchemaMigrationPlan {
 	reg := config.NewSchemaMigrationRegistry()
 	if err := reg.Register(config.LegacySchemaVersion, stampVersion(1)); err != nil {
 		panic(err)
+	}
+	for from, m := range s.migrate {
+		if err := reg.Register(from, m); err != nil {
+			panic(err)
+		}
 	}
 	return config.SchemaMigrationPlan{
 		StoreName:           s.name,

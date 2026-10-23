@@ -1,15 +1,11 @@
 package planusage
 
-import (
-	"math"
-	"time"
-)
+import "time"
 
-// PlanWindow is one plan window: the plan percent used by everything, the
-// part attributed to the backlog, and when the window resets.
+// PlanWindow is one plan window: the plan percent used by everything and when
+// the window resets.
 type PlanWindow struct {
-	Plan    float64 `json:"plan"`
-	Backlog float64 `json:"backlog"`
+	Plan float64 `json:"plan"`
 	// All is the metered cost of everything in the window, in US dollars at
 	// API prices: a run's % of the window is its window cost / All × Plan.
 	All float64 `json:"all_cost"`
@@ -55,7 +51,7 @@ func AccountUsageOf(r *Reading, a *AccountMeter, overrides map[string]Price, now
 	}
 	at := r.ReadAt
 	out.ReadingAt = &at
-	out.Windows = Attribute(r, a, now)
+	out.Windows = WindowsOf(r, a, now)
 	return out
 }
 
@@ -106,20 +102,20 @@ func nonNil[V any](m map[string]V) map[string]V {
 	return m
 }
 
-// Attribute computes the plan windows from a reading and the account's meter:
-// backlog% = plan% × backlog cost / all cost, over the window's span ending at
-// its reset. A window past its reset counts as 0 until a new reading.
-func Attribute(r *Reading, a *AccountMeter, now time.Time) Windows {
+// WindowsOf computes the plan windows from a reading and the account's meter,
+// whose cost over the window's span ending at its reset is the window's
+// all_cost. A window past its reset counts as 0 until a new reading.
+func WindowsOf(r *Reading, a *AccountMeter, now time.Time) Windows {
 	if r == nil {
 		return Windows{}
 	}
 	return Windows{
-		FiveHour: attribute(r.FiveHour, FiveHourSpan, a, now),
-		SevenDay: attribute(r.SevenDay, SevenDaySpan, a, now),
+		FiveHour: windowOf(r.FiveHour, FiveHourSpan, a, now),
+		SevenDay: windowOf(r.SevenDay, SevenDaySpan, a, now),
 	}
 }
 
-func attribute(l *Limit, span time.Duration, a *AccountMeter, now time.Time) PlanWindow {
+func windowOf(l *Limit, span time.Duration, a *AccountMeter, now time.Time) PlanWindow {
 	if l == nil {
 		return PlanWindow{}
 	}
@@ -127,12 +123,8 @@ func attribute(l *Limit, span time.Duration, a *AccountMeter, now time.Time) Pla
 	if !now.Before(reset) {
 		return PlanWindow{}
 	}
-	all, backlog := a.costIn(reset.Add(-span), reset)
-	w := PlanWindow{Plan: l.UsedPercentage, All: all, ResetsAt: &reset}
-	if all > 0 && backlog > 0 {
-		w.Backlog = math.Min(w.Plan, w.Plan*backlog/all)
-	}
-	return w
+	all, _ := a.costIn(reset.Add(-span), reset)
+	return PlanWindow{Plan: l.UsedPercentage, All: all, ResetsAt: &reset}
 }
 
 // SetBacklogCosts fills each window's BacklogCost from the account's meter: the
