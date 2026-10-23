@@ -247,7 +247,9 @@ func injectSystemPrompt(resolved string, target skillTarget) string {
 		// and claude's --plugin-dir is repeatable, so one in a user's
 		// program_overrides is additive rather than a conflict.
 		out := resolved + " --plugin-dir " + shellQuote(pluginDir)
-		if settings := planTapSettings(); settings != "" {
+		if hasSettingsFlag(resolved) {
+			log.WarningLog.Printf("plan usage: the claude command already passes --settings, so af does not add its status line tap")
+		} else if settings := planTapSettings(target.root); settings != "" {
 			out += " --settings " + shellQuote(settings)
 		}
 		return out

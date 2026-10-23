@@ -22,8 +22,8 @@ const (
 	// meterInterval is how often the poll loop meters transcripts, and the
 	// least time between two backlog.spend events.
 	meterInterval = 30 * time.Second
-	// meterFreshFor is how old a pass may be before an on-demand read meters
-	// again.
+	// meterFreshFor is how old a result may be before an on-demand read
+	// starts a pass in the background.
 	meterFreshFor = 5 * time.Second
 )
 
@@ -56,8 +56,16 @@ func (s *meterState) due(now time.Time) bool {
 
 // MeterBacklog starts a metering pass on its own goroutine when one is due.
 func (m *Manager) MeterBacklog() {
+	if m.backlog.meter.due(time.Now()) {
+		m.startMeterPass()
+	}
+}
+
+// startMeterPass runs a metering pass on its own goroutine unless one is
+// already running.
+func (m *Manager) startMeterPass() {
 	st := &m.backlog.meter
-	if !st.due(time.Now()) || !st.inFlight.CompareAndSwap(false, true) {
+	if !st.inFlight.CompareAndSwap(false, true) {
 		return
 	}
 	if !m.launchBackgroundMutation(func(<-chan struct{}) {
@@ -70,28 +78,26 @@ func (m *Manager) MeterBacklog() {
 	}
 }
 
-// backlogUsage meters now unless a pass just finished or one is running, and
-// returns the plan windows.
+// backlogUsage returns the last metering result at once. A stale result
+// starts a pass in the background; before the first pass ends the result says
+// it is still metering. A request never reads transcripts itself: the first
+// pass can read a week of them.
 func (m *Manager) backlogUsage() planusage.Usage {
 	st := &m.backlog.meter
-	if usage, fresh := st.last(time.Now()); fresh {
-		return usage
+	usage, fresh := st.last(time.Now())
+	if !fresh {
+		m.startMeterPass()
 	}
-	if st.mu.TryLock() {
-		if _, admitted := m.beginBackgroundMutation(); admitted {
-			m.meterPassLocked(time.Now())
-			m.backgroundMutationWG.Done()
-		}
-		st.mu.Unlock()
-	}
-	usage, _ := st.last(time.Now())
 	return usage
 }
 
 func (s *meterState) last(now time.Time) (planusage.Usage, bool) {
 	s.usageMu.Lock()
 	defer s.usageMu.Unlock()
-	return s.usage, !s.finished.IsZero() && now.Sub(s.finished) < meterFreshFor
+	if s.finished.IsZero() {
+		return planusage.Usage{Metering: true, Runs: map[string]float64{}}, false
+	}
+	return s.usage, now.Sub(s.finished) < meterFreshFor
 }
 
 // itemRun is one started run of an item, with its session when it still exists.
@@ -146,9 +152,15 @@ func (m *Manager) meterPassLocked(now time.Time) {
 	if cfg := m.Config(); cfg != nil {
 		overrides = cfg.Backlog.Prices
 	}
-	usage := planusage.Usage{Runs: map[string]float64{}, Unmeterable: map[string]string{}}
+	state, err := planusage.LoadMeter()
+	if err != nil {
+		m.warn().Printf("plan meter: %v", err)
+		return
+	}
+	usage := planusage.Usage{Runs: map[string]float64{}, Unmeterable: map[string]string{}, Accounts: map[string]planusage.AccountUsage{}}
 	updates := map[string]map[string]map[string]backlog.Meter{}
 	var backlogDirs []string
+	metered := map[string]bool{}
 	for _, r := range m.startedItemRuns(home) {
 		usage.Runs[r.run.SessionID] = r.run.Cost()
 		running := r.item.Status == backlog.StatusRunning
@@ -167,7 +179,10 @@ func (m *Manager) meterPassLocked(now time.Time) {
 			continue
 		}
 		backlogDirs = append(backlogDirs, dirs...)
-		rm := backlog.MeterRun(r.item.ID, r.run, planusage.TranscriptFiles(dirs), overrides, now)
+		metered[r.run.SessionID] = true
+		seen := state.RunSeenFor(r.run.SessionID)
+		planusage.PruneSeen(seen, now)
+		rm := backlog.MeterRun(r.item.ID, r.run, planusage.TranscriptFiles(dirs), seen, overrides, now)
 		usage.Runs[r.run.SessionID] = rm.Cost()
 		if running && rm.Unmeterable != "" {
 			usage.Unmeterable[r.run.SessionID] = rm.Unmeterable
@@ -187,7 +202,11 @@ func (m *Manager) meterPassLocked(now time.Time) {
 			m.warn().Printf("plan meter: storing run costs of project %s: %v", repoID, err)
 		}
 	}
-	m.meterAccounts(home, backlogDirs, overrides, now, &usage)
+	state.KeepRunSeen(metered)
+	m.meterAccounts(home, state, backlogDirs, overrides, now, &usage)
+	if err := state.Save(); err != nil {
+		m.warn().Printf("plan meter: %v", err)
+	}
 	st.usageMu.Lock()
 	st.usage, st.finished = usage, now
 	st.usageMu.Unlock()
@@ -199,8 +218,9 @@ func (m *Manager) meterPassLocked(now time.Time) {
 }
 
 // meterAccounts meters every transcript under each Claude account's config
-// dir and fills usage's windows from the account with the newest reading.
-func (m *Manager) meterAccounts(home string, backlogDirs []string, overrides map[string]planusage.Price, now time.Time, usage *planusage.Usage) {
+// dir and fills usage with each account's windows; the top-level windows are
+// the account with the newest reading.
+func (m *Manager) meterAccounts(home string, state *planusage.MeterState, backlogDirs []string, overrides map[string]planusage.Price, now time.Time, usage *planusage.Usage) {
 	sources := map[string]string{planusage.DefaultAccount: ambientClaudeConfigDir()}
 	if names, err := agentaccount.List(home, tmux.ProgramClaude); err == nil {
 		for _, name := range names {
@@ -209,36 +229,20 @@ func (m *Manager) meterAccounts(home string, backlogDirs []string, overrides map
 			}
 		}
 	}
-	state, err := planusage.LoadMeter()
-	if err != nil {
-		m.warn().Printf("plan meter: %v", err)
-		return
-	}
-	changed := false
 	for name, dir := range sources {
-		if dir != "" && state.Scan(name, dir, backlogDirs, overrides, now) {
-			changed = true
+		if dir != "" {
+			state.Scan(name, dir, backlogDirs, overrides, now)
 		}
-	}
-	if changed {
-		if err := state.Save(); err != nil {
-			m.warn().Printf("plan meter: %v", err)
-		}
-	}
-	var newest *planusage.Reading
-	for name := range sources {
 		r, err := planusage.LoadReading(name)
-		if err != nil || r == nil || (newest != nil && !r.ReadAt.After(newest.ReadAt)) {
-			continue
+		if err != nil {
+			m.warn().Printf("plan meter: reading of account %s: %v", name, err)
 		}
-		newest, usage.Account = r, name
+		au := planusage.AccountUsageOf(r, state.Accounts[name], overrides, now)
+		usage.Accounts[name] = au
+		if au.ReadingAt != nil && (usage.ReadingAt == nil || au.ReadingAt.After(*usage.ReadingAt)) {
+			usage.Account, usage.Windows, usage.ReadingAt = name, au.Windows, au.ReadingAt
+		}
 	}
-	if newest == nil {
-		return
-	}
-	at := newest.ReadAt
-	usage.ReadingAt = &at
-	usage.Windows = planusage.Attribute(newest, state.Accounts[usage.Account], now)
 }
 
 func ambientClaudeConfigDir() string {

@@ -112,3 +112,45 @@ func TestAccountForConfigDir(t *testing.T) {
 		}
 	}
 }
+
+func TestTapSkipsOversizedInput(t *testing.T) {
+	h := home(t)
+	userHome := t.TempDir()
+	write(t, filepath.Join(userHome, ".claude", "settings.json"), `{"statusLine":{"command":"echo ran"}}`)
+	big := input(t.TempDir())
+	big = big[:len(big)-1] + `,"pad":"` + strings.Repeat("x", maxStatusLineInput) + `"}`
+	var out bytes.Buffer
+	Tap(strings.NewReader(big), &out, env(h, userHome, nil))
+	if out.Len() != 0 {
+		t.Fatalf("the user's command ran on truncated input: %q", out.String())
+	}
+	if r, _ := LoadReading(DefaultAccount); r != nil {
+		t.Fatal("a reading was written from truncated input")
+	}
+}
+
+func TestTapKillsTheUsersWholeProcessGroupOnTimeout(t *testing.T) {
+	if _, err := os.Stat("/proc/self/stat"); err != nil {
+		t.Skip("needs /proc")
+	}
+	h := home(t)
+	userHome := t.TempDir()
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	write(t, filepath.Join(userHome, ".claude", "settings.json"),
+		`{"statusLine":{"command":"sh -c 'echo $$ > `+pidFile+`; exec sleep 30' & wait"}}`)
+	prev := tapUserTimeout
+	tapUserTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { tapUserTimeout = prev })
+	var out bytes.Buffer
+	Tap(strings.NewReader(input(t.TempDir())), &out, env(h, userHome, nil))
+	raw, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stat, err := os.ReadFile(filepath.Join("/proc", strings.TrimSpace(string(raw)), "stat"))
+	if err == nil {
+		if fields := strings.Fields(string(stat)); len(fields) > 2 && fields[2] != "Z" {
+			t.Fatalf("the user's grandchild outlived the timeout: %s", stat)
+		}
+	}
+}

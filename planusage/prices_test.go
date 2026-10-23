@@ -44,3 +44,32 @@ func TestPriceOverride(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 }
+
+func TestPriceForUsageTiersFastAndOldModels(t *testing.T) {
+	small := usage{InputTokens: 1000}
+	big := usage{InputTokens: 50_000, CacheReadInputTokens: 60_000}
+	if pr, _ := priceForUsage("claude-haiku-5-5", small, nil); pr.Input != 0.1 || pr.Output != 0.5 {
+		t.Fatalf("haiku 5.5 small %+v", pr)
+	}
+	if pr, _ := priceForUsage("claude-haiku-5-5", big, nil); pr.Input != 0.5 || pr.Output != 2.5 {
+		t.Fatalf("haiku 5.5 above 100K %+v", pr)
+	}
+	if pr, _ := priceForUsage("claude-sonnet-4-5", usage{InputTokens: 250_000}, nil); pr.Input != 6 || pr.Output != 22.5 {
+		t.Fatalf("sonnet 4.5 long context %+v", pr)
+	}
+	if pr, _ := priceForUsage("claude-opus-5-5", usage{InputTokens: 1, Speed: "fast"}, nil); pr.Input != 8 || pr.Output != 40 {
+		t.Fatalf("opus 5.5 fast %+v", pr)
+	}
+	if pr, _ := priceForUsage("claude-opus-5", usage{InputTokens: 1, Speed: "fast"}, nil); pr.Input != 10 || pr.Output != 50 {
+		t.Fatalf("opus 5 fast %+v", pr)
+	}
+	over := map[string]Price{"claude-haiku-5-5": {Input: 7, Output: 7}}
+	if pr, _ := priceForUsage("claude-haiku-5-5", big, over); pr.Input != 7 {
+		t.Fatalf("an override must win over tiers %+v", pr)
+	}
+	for _, m := range []string{"claude-3-haiku-20240307", "claude-3-5-haiku-20241022", "claude-3-7-sonnet-20250219", "claude-3-opus-20240229", "claude-3-5-sonnet-20241022"} {
+		if _, ok := PriceFor(m, nil); !ok {
+			t.Errorf("%s has no price", m)
+		}
+	}
+}

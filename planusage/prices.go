@@ -38,6 +38,33 @@ var prices = map[string]Price{
 	"claude-sonnet-4":   p(3, 0.30, 15),
 	"claude-haiku-5-5":  p(0.10, 0.01, 0.50),
 	"claude-haiku-4-5":  p(1, 0.10, 5),
+
+	"claude-3-7-sonnet": p(3, 0.30, 15),
+	"claude-3-5-sonnet": p(3, 0.30, 15),
+	"claude-3-5-haiku":  p(0.80, 0.08, 4),
+	"claude-3-opus":     p(15, 1.50, 75),
+	"claude-3-haiku":    p(0.25, 0.03, 1.25),
+}
+
+// tier is a higher price for a message whose prompt (input, cache writes and
+// cache reads) is over above tokens.
+type tier struct {
+	above int64
+	price Price
+}
+
+// Long prompts cost more on these models: Haiku 5.5 above 100K tokens, and
+// Sonnet 4 and 4.5 with the 1M context above 200K (Anthropic's pricing page).
+var tiers = map[string]tier{
+	"claude-haiku-5-5":  {100_000, p(0.50, 0.05, 2.50)},
+	"claude-sonnet-4-5": {200_000, p(6, 0.60, 22.50)},
+	"claude-sonnet-4":   {200_000, p(6, 0.60, 22.50)},
+}
+
+// fast is the price of fast mode (usage.speed "fast").
+var fast = map[string]Price{
+	"claude-opus-5-5": p(8, 0.40, 40),
+	"claude-opus-5":   p(10, 1, 50),
 }
 
 var modelDateSuffix = regexp.MustCompile(`[-@]\d{8}$`)
@@ -61,6 +88,34 @@ func normalizeModel(model string) string {
 // PriceFor returns the price of model: an override first, by the id as
 // written and then normalized, then the built-in table.
 func PriceFor(model string, overrides map[string]Price) (Price, bool) {
+	if pr, ok := overridePrice(model, overrides); ok {
+		return pr, true
+	}
+	pr, ok := prices[normalizeModel(model)]
+	return pr, ok
+}
+
+// priceForUsage is PriceFor with the tier and speed of one message applied.
+// An override is used as written.
+func priceForUsage(model string, u usage, overrides map[string]Price) (Price, bool) {
+	if pr, ok := overridePrice(model, overrides); ok {
+		return pr, true
+	}
+	key := normalizeModel(model)
+	pr, ok := prices[key]
+	if !ok {
+		return Price{}, false
+	}
+	if f, ok := fast[key]; ok && u.Speed == "fast" {
+		pr = f
+	}
+	if t, ok := tiers[key]; ok && u.prompt() > t.above {
+		pr = t.price
+	}
+	return pr, true
+}
+
+func overridePrice(model string, overrides map[string]Price) (Price, bool) {
 	if pr, ok := overrides[model]; ok {
 		return complete(pr), true
 	}
@@ -70,8 +125,7 @@ func PriceFor(model string, overrides map[string]Price) (Price, bool) {
 			return complete(pr), true
 		}
 	}
-	pr, ok := prices[key]
-	return pr, ok
+	return Price{}, false
 }
 
 // complete fills the cache prices an override left at zero.

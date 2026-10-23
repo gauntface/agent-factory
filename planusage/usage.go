@@ -22,14 +22,51 @@ type Windows struct {
 	SevenDay PlanWindow `json:"seven_day"`
 }
 
+// AccountUsage is one Claude account's plan windows.
+type AccountUsage struct {
+	Windows Windows `json:"windows"`
+	// ReadingAt is when the account's newest plan reading was taken; nil when
+	// none.
+	ReadingAt *time.Time `json:"reading_at"`
+	// Unpriced lists models seen in the account's transcripts that have no
+	// price; their messages are not counted.
+	Unpriced []string `json:"unpriced,omitempty"`
+}
+
+// AccountUsageOf computes an account's windows from its newest reading and
+// its meter.
+func AccountUsageOf(r *Reading, a *AccountMeter, overrides map[string]Price, now time.Time) AccountUsage {
+	var out AccountUsage
+	if a != nil {
+		for _, m := range a.Unpriced {
+			if _, ok := PriceFor(m, overrides); !ok {
+				out.Unpriced = append(out.Unpriced, m)
+			}
+		}
+	}
+	if r == nil {
+		return out
+	}
+	at := r.ReadAt
+	out.ReadingAt = &at
+	out.Windows = Attribute(r, a, now)
+	return out
+}
+
 // Usage is what the meter knows now.
 type Usage struct {
-	// Account is the af account the windows are for; "default" is the ambient
-	// Claude identity.
+	// Metering is set until the first metering pass has finished; the windows
+	// are empty until then.
+	Metering bool `json:"metering,omitempty"`
+	// Account is the af account the top-level windows are for: the one with
+	// the newest reading. "default" is the ambient Claude identity.
 	Account string  `json:"account,omitempty"`
 	Windows Windows `json:"windows"`
 	// ReadingAt is when the newest plan reading was taken; nil when none.
 	ReadingAt *time.Time `json:"reading_at"`
+	// Accounts has the windows of every Claude account af meters, so a run
+	// can be judged on its own session's account.
+	Accounts map[string]AccountUsage `json:"accounts,omitempty"`
 	// Runs is each item session's metered cost in US dollars at API prices.
 	Runs map[string]float64 `json:"runs"`
 	// Unmeterable says, per item session of a running item, why af cannot

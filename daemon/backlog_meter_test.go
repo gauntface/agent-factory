@@ -33,7 +33,17 @@ func TestGetBudgetMetersAndPublishesSpend(t *testing.T) {
 
 	code, env := postProposalRoute(t, cs, "GetBudget", GetBudgetRequest{})
 	require.Equal(t, http.StatusOK, code, env)
+	require.Equal(t, true, env["data"].(map[string]any)["metering"], "the first read is served before any pass")
+	st := &cs.manager.backlog.meter
+	st.mu.Lock()
+	cs.manager.meterPassLocked(time.Now())
+	st.mu.Unlock()
+
+	code, env = postProposalRoute(t, cs, "GetBudget", GetBudgetRequest{})
+	require.Equal(t, http.StatusOK, code, env)
 	data := env["data"].(map[string]any)
+	require.Nil(t, data["metering"])
+	require.Contains(t, data["accounts"], planusage.DefaultAccount)
 	require.Equal(t, float64(50), data["budget"].(map[string]any)["share"])
 	five := data["windows"].(map[string]any)["five_hour"].(map[string]any)
 	require.Equal(t, float64(30), five["plan"])

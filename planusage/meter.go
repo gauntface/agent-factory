@@ -36,12 +36,43 @@ type AccountMeter struct {
 	Files map[string]FileMark `json:"files"`
 	// Buckets is keyed by the bucket's start in epoch seconds.
 	Buckets map[int64]Bucket `json:"buckets"`
+	// Seen holds the keys of the messages counted, so a message copied into
+	// another transcript counts once.
+	Seen map[string]int64 `json:"seen,omitempty"`
+	// Unpriced lists the models seen with no price; their messages are not
+	// counted.
+	Unpriced []string `json:"unpriced,omitempty"`
 }
 
 // MeterState is $AF_HOME/plan/meter.json.
 type MeterState struct {
 	SchemaVersion int                      `json:"schema_version"`
 	Accounts      map[string]*AccountMeter `json:"accounts"`
+	// RunSeen holds, per item session, the keys of the messages its run meter
+	// counted.
+	RunSeen map[string]map[string]int64 `json:"run_seen,omitempty"`
+}
+
+// RunSeenFor returns the session's set of counted message keys.
+func (s *MeterState) RunSeenFor(sessionID string) map[string]int64 {
+	if s.RunSeen == nil {
+		s.RunSeen = map[string]map[string]int64{}
+	}
+	seen := s.RunSeen[sessionID]
+	if seen == nil {
+		seen = map[string]int64{}
+		s.RunSeen[sessionID] = seen
+	}
+	return seen
+}
+
+// KeepRunSeen drops the sets of sessions not in keep.
+func (s *MeterState) KeepRunSeen(keep map[string]bool) {
+	for id := range s.RunSeen {
+		if !keep[id] {
+			delete(s.RunSeen, id)
+		}
+	}
 }
 
 func NewMeterState() *MeterState {
@@ -113,32 +144,46 @@ func (s *MeterState) account(name string) *AccountMeter {
 	if a.Buckets == nil {
 		a.Buckets = map[int64]Bucket{}
 	}
+	if a.Seen == nil {
+		a.Seen = map[string]int64{}
+	}
 	return a
 }
 
 // Scan meters every Claude Code transcript under configDir for account. A
-// file under one of backlogDirs also counts as backlog cost. A file first seen
-// after it went untouched for longer than the weekly window is marked read
-// without reading it. It returns whether anything changed.
+// file under one of backlogDirs also counts as backlog cost. A file untouched
+// for longer than the weekly window is not read and keeps no mark, and a file
+// whose size and modification time match its mark is not opened. It returns
+// whether anything changed.
 func (s *MeterState) Scan(account, configDir string, backlogDirs []string, overrides map[string]Price, now time.Time) bool {
 	a := s.account(account)
 	projects, _ := filepath.Glob(filepath.Join(configDir, "projects", "*"))
 	files := TranscriptFiles(projects)
 	present := make(map[string]bool, len(files))
 	changed := false
+	unpriced := map[string]bool{}
+	for _, m := range a.Unpriced {
+		unpriced[m] = true
+	}
 	for _, f := range files {
+		info, err := os.Stat(f)
+		if err != nil || now.Sub(info.ModTime()) > keepFor {
+			continue
+		}
 		present[f] = true
 		mark, known := a.Files[f]
-		if !known {
-			if info, err := os.Stat(f); err == nil && now.Sub(info.ModTime()) > keepFor {
-				a.Files[f] = FileMark{Offset: info.Size()}
-				changed = true
-				continue
-			}
+		if known && info.Size() >= mark.Offset && (info.Size() == mark.Offset || info.ModTime().UnixNano() == mark.ModTime) {
+			continue
 		}
-		res, err := ReadTranscript(f, mark, overrides, true)
+		res, err := ReadTranscript(f, mark, ReadOptions{Overrides: overrides, SkipBad: true, SkipUnpriced: true, Seen: a.Seen})
 		if err != nil && res.Mark == mark {
 			continue
+		}
+		for _, m := range res.Skipped {
+			if !unpriced[m] {
+				unpriced[m] = true
+				a.Unpriced = append(a.Unpriced, m)
+			}
 		}
 		backlog := underAny(f, backlogDirs)
 		for _, e := range res.Entries {
@@ -170,6 +215,9 @@ func (s *MeterState) Scan(account, configDir string, backlogDirs []string, overr
 			delete(a.Buckets, k)
 			changed = true
 		}
+	}
+	if PruneSeen(a.Seen, now) {
+		changed = true
 	}
 	return changed
 }

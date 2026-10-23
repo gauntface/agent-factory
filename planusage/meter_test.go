@@ -71,10 +71,11 @@ func TestScanSkipsOldFilesAndPrunes(t *testing.T) {
 	s := NewMeterState()
 	s.account("x").Buckets[now.Add(-9*24*time.Hour).Unix()] = Bucket{All: 1}
 	s.Accounts["x"].Files["/gone.jsonl"] = FileMark{Offset: 3}
+	s.account(DefaultAccount).Files[old] = FileMark{Offset: 1}
 	s.Scan(DefaultAccount, config, nil, nil, now)
 	s.Scan("x", t.TempDir(), nil, nil, now)
 	a := s.Accounts[DefaultAccount]
-	if len(a.Buckets) != 0 || a.Files[old].Offset == 0 {
+	if len(a.Buckets) != 0 || len(a.Files) != 0 {
 		t.Fatalf("an old file was read: %+v", a)
 	}
 	if len(s.Accounts["x"].Buckets) != 0 || len(s.Accounts["x"].Files) != 0 {
@@ -99,5 +100,51 @@ func TestAttributeWithoutReading(t *testing.T) {
 	w := Attribute(nil, nil, time.Now())
 	if w.FiveHour.Valid() || w.SevenDay.Valid() {
 		t.Fatal(w)
+	}
+}
+
+func TestScanCountsResumedCopiesOnceAndReportsUnpriced(t *testing.T) {
+	home(t)
+	config := t.TempDir()
+	project := filepath.Join(config, "projects", "-p")
+	write(t, filepath.Join(project, "a.jsonl"), assistant("m1", opus, 1_000_000, 0))
+	write(t, filepath.Join(project, "b.jsonl"), assistant("m1", opus, 1_000_000, 0), assistant("u", "claude-x-9", 1, 1), assistant("m2", opus, 1_000_000, 0))
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	s := NewMeterState()
+	s.Scan(DefaultAccount, config, nil, nil, now)
+	a := s.Accounts[DefaultAccount]
+	all, _ := a.costIn(now.Add(-time.Hour*5), now)
+	if !near(all, 8) || len(a.Unpriced) != 1 || a.Unpriced[0] != "claude-x-9" {
+		t.Fatalf("all %v, unpriced %v", all, a.Unpriced)
+	}
+	if u := AccountUsageOf(nil, a, nil, now); len(u.Unpriced) != 1 || u.ReadingAt != nil {
+		t.Fatalf("%+v", u)
+	}
+	if u := AccountUsageOf(nil, a, map[string]Price{"claude-x-9": {Input: 1}}, now); len(u.Unpriced) != 0 {
+		t.Fatalf("a priced model is still reported: %+v", u)
+	}
+}
+
+func TestScanSkipsUnchangedFilesWithoutOpeningThem(t *testing.T) {
+	home(t)
+	config := t.TempDir()
+	path := filepath.Join(config, "projects", "-p", "a.jsonl")
+	write(t, path, assistant("m1", opus, 1_000_000, 0))
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	stamp := now.Add(-time.Hour)
+	if err := os.Chtimes(path, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	s := NewMeterState()
+	s.Scan(DefaultAccount, config, nil, nil, now)
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+	if s.Scan(DefaultAccount, config, nil, nil, now) {
+		t.Fatal("an unchanged file was read")
+	}
+	if _, ok := s.Accounts[DefaultAccount].Files[path]; !ok {
+		t.Fatal("the mark of an unchanged file was dropped")
 	}
 }

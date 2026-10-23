@@ -23,21 +23,20 @@ type RunMeter struct {
 // Cost sums the run's per-file costs.
 func (m RunMeter) Cost() float64 { return RunRef{Meter: m.Meter}.Cost() }
 
-// MeterRun reads the run's transcript files from their stored offsets. A run
-// with no files is unmeterable once it has run for UnmeterableAfter.
-func MeterRun(id int, r RunRef, files []string, overrides map[string]planusage.Price, now time.Time) RunMeter {
+// MeterRun reads the run's transcript files from their stored offsets. seen
+// holds the keys of the run's messages counted so far, from any of its files,
+// and gains what this pass counts; a message Claude Code copied into a new
+// transcript (resume, fork) counts once. A run with no files is unmeterable
+// once it has run for UnmeterableAfter.
+func MeterRun(id int, r RunRef, files []string, seen map[string]int64, overrides map[string]planusage.Price, now time.Time) RunMeter {
 	out := RunMeter{Meter: maps.Clone(r.Meter)}
 	if out.Meter == nil {
 		out.Meter = map[string]Meter{}
 	}
 	for _, f := range files {
 		old := out.Meter[f]
-		res, err := planusage.ReadTranscript(f, planusage.FileMark{Offset: old.Offset, Last: old.Last}, overrides, false)
-		base := old.Cost
-		if res.Mark.Offset < old.Offset {
-			base = 0
-		}
-		next := Meter{Offset: res.Mark.Offset, Cost: base + res.Cost(), Last: res.Mark.Last}
+		res, err := planusage.ReadTranscript(f, planusage.FileMark{Offset: old.Offset, Last: old.Last}, planusage.ReadOptions{Overrides: overrides, Seen: seen})
+		next := Meter{Offset: res.Mark.Offset, Cost: old.Cost + res.Cost(), Last: res.Mark.Last}
 		if _, known := r.Meter[f]; next != old || !known {
 			out.Meter[f], out.Changed = next, true
 		}
@@ -46,7 +45,7 @@ func MeterRun(id int, r RunRef, files []string, overrides map[string]planusage.P
 			out.Unmeterable = fmt.Sprintf("no price for model %s; add [backlog.prices.%q] to config.toml", res.Unpriced, res.Unpriced)
 		case res.Bad && out.Unmeterable == "":
 			out.Unmeterable = fmt.Sprintf("af cannot read a transcript of %s's session (%s); start %s by hand with \"af backlog start %d\"", FormatID(id), f, FormatID(id), id)
-		case err != nil && out.Unmeterable == "" && res.Mark == (planusage.FileMark{Offset: old.Offset, Last: old.Last}):
+		case err != nil && out.Unmeterable == "" && res.Mark.Offset == old.Offset:
 			out.Unmeterable = fmt.Sprintf("af cannot read a transcript of %s's session: %v", FormatID(id), err)
 		}
 	}

@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -35,7 +37,10 @@ type TapEnv struct {
 // output. It never fails: the status line must keep rendering.
 func Tap(stdin io.Reader, stdout io.Writer, env TapEnv) {
 	defer func() { _ = recover() }()
-	data, _ := io.ReadAll(io.LimitReader(stdin, maxStatusLineInput))
+	data, _ := io.ReadAll(io.LimitReader(stdin, maxStatusLineInput+1))
+	if len(data) > maxStatusLineInput {
+		return
+	}
 	write := env.WriteFunc
 	if write == nil {
 		write = WriteReading
@@ -53,6 +58,14 @@ func Tap(stdin io.Reader, stdout io.Writer, env TapEnv) {
 	cmd.Stdin = bytes.NewReader(data)
 	cmd.Stdout = stdout
 	cmd.WaitDelay = time.Second
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		if errors.Is(err, syscall.ESRCH) {
+			return os.ErrProcessDone
+		}
+		return err
+	}
 	_ = cmd.Run()
 }
 
@@ -89,24 +102,39 @@ func userStatusLine(data []byte, env TapEnv) string {
 		files = append(files, filepath.Join(configDir, "settings.json"))
 	}
 	for _, f := range files {
-		raw, err := os.ReadFile(f)
-		if err != nil {
+		sl, ok := ReadStatusLine(f)
+		if !ok {
 			continue
 		}
-		var s struct {
-			StatusLine *struct {
-				Type    string `json:"type"`
-				Command string `json:"command"`
-			} `json:"statusLine"`
-		}
-		if json.Unmarshal(raw, &s) != nil || s.StatusLine == nil {
-			continue
-		}
-		cmd := strings.TrimSpace(s.StatusLine.Command)
-		if (s.StatusLine.Type != "" && s.StatusLine.Type != "command") || cmd == "" || strings.Contains(cmd, TapCommandArgs) {
+		cmd := strings.TrimSpace(sl.Command)
+		if (sl.Type != "" && sl.Type != "command") || cmd == "" || strings.Contains(cmd, TapCommandArgs) {
 			return ""
 		}
 		return cmd
 	}
 	return ""
+}
+
+// StatusLine is the statusLine object of a Claude Code settings file.
+type StatusLine struct {
+	Type            string          `json:"type"`
+	Command         string          `json:"command"`
+	RefreshInterval json.RawMessage `json:"refreshInterval,omitempty"`
+	Padding         json.RawMessage `json:"padding,omitempty"`
+}
+
+// ReadStatusLine reads the statusLine of a Claude Code settings file; false
+// when the file is missing, unreadable or has none.
+func ReadStatusLine(path string) (StatusLine, bool) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return StatusLine{}, false
+	}
+	var s struct {
+		StatusLine *StatusLine `json:"statusLine"`
+	}
+	if json.Unmarshal(raw, &s) != nil || s.StatusLine == nil {
+		return StatusLine{}, false
+	}
+	return *s.StatusLine, true
 }
