@@ -3643,7 +3643,7 @@ textarea[class] {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--af-space-1) var(--af-space-2);
-  flex: 1;
+  flex: 1 1 calc(var(--af-space-4) * 20);
   min-width: 0;
   font-size: var(--af-type-caption);
 }
@@ -3701,6 +3701,12 @@ textarea[class] {
 .af-backlog-settings > summary {
   list-style: none;
   cursor: pointer;
+}
+.af-backlog-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
 }
 .af-backlog-settings > summary::-webkit-details-marker {
   display: none;
