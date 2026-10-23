@@ -10,6 +10,9 @@ import (
 type PlanWindow struct {
 	Plan    float64 `json:"plan"`
 	Backlog float64 `json:"backlog"`
+	// All is the metered cost of everything in the window, in US dollars at
+	// API prices: a run's % of the window is its window cost / All × Plan.
+	All float64 `json:"all_cost"`
 	// ResetsAt is nil when there is no valid reading for the window.
 	ResetsAt *time.Time `json:"resets_at"`
 }
@@ -69,6 +72,9 @@ type Usage struct {
 	Accounts map[string]AccountUsage `json:"accounts,omitempty"`
 	// Runs is each item session's metered cost in US dollars at API prices.
 	Runs map[string]float64 `json:"runs"`
+	// RunWindow is each item session's cost, in US dollars, within its
+	// account's current 5-hour window; 0 without a valid window.
+	RunWindow map[string]float64 `json:"run_window"`
 	// Unmeterable says, per item session of a running item, why af cannot
 	// meter it.
 	Unmeterable map[string]string `json:"unmeterable,omitempty"`
@@ -80,10 +86,21 @@ type SpendEvent struct {
 	SevenDay  PlanWindow         `json:"seven_day"`
 	ReadingAt *time.Time         `json:"reading_at"`
 	Runs      map[string]float64 `json:"runs"`
+	RunWindow map[string]float64 `json:"run_window"`
+	// Unmeterable is keyed by item session, like Usage.Unmeterable.
+	Unmeterable map[string]string `json:"unmeterable"`
 }
 
 func (u Usage) SpendEvent() SpendEvent {
-	return SpendEvent{FiveHour: u.Windows.FiveHour, SevenDay: u.Windows.SevenDay, ReadingAt: u.ReadingAt, Runs: u.Runs}
+	return SpendEvent{FiveHour: u.Windows.FiveHour, SevenDay: u.Windows.SevenDay, ReadingAt: u.ReadingAt,
+		Runs: nonNil(u.Runs), RunWindow: nonNil(u.RunWindow), Unmeterable: nonNil(u.Unmeterable)}
+}
+
+func nonNil[V any](m map[string]V) map[string]V {
+	if m == nil {
+		return map[string]V{}
+	}
+	return m
 }
 
 // Attribute computes the plan windows from a reading and the account's meter:
@@ -107,8 +124,8 @@ func attribute(l *Limit, span time.Duration, a *AccountMeter, now time.Time) Pla
 	if !now.Before(reset) {
 		return PlanWindow{}
 	}
-	w := PlanWindow{Plan: l.UsedPercentage, ResetsAt: &reset}
 	all, backlog := a.costIn(reset.Add(-span), reset)
+	w := PlanWindow{Plan: l.UsedPercentage, All: all, ResetsAt: &reset}
 	if all > 0 && backlog > 0 {
 		w.Backlog = math.Min(w.Plan, w.Plan*backlog/all)
 	}

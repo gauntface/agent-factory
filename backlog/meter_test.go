@@ -37,12 +37,12 @@ func TestMeterRunAcrossPassesAndSubagents(t *testing.T) {
 	files := planusage.TranscriptFiles([]string{project})
 
 	m := MeterRun(3, run, files, map[string]int64{}, nil, now)
-	if !m.Changed || m.Unmeterable != "" || math.Abs(m.Cost()-6) > 1e-9 || len(m.Meter) != 2 {
+	if !m.Changed || m.Unmeterable != "" || math.Abs(m.Cost()-6) > 1e-9 || len(m.Meter) != 2 || len(m.Entries) != 2 {
 		t.Fatalf("%+v", m)
 	}
 	run.Meter = m.Meter
 	again := MeterRun(3, run, files, map[string]int64{}, nil, now)
-	if again.Changed || math.Abs(again.Cost()-6) > 1e-9 {
+	if again.Changed || math.Abs(again.Cost()-6) > 1e-9 || len(again.Entries) != 0 {
 		t.Fatalf("a second pass counted again: %+v", again)
 	}
 

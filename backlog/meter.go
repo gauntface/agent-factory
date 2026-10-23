@@ -18,6 +18,8 @@ type RunMeter struct {
 	Changed bool
 	// Unmeterable says why af cannot meter the run; "" when it can.
 	Unmeterable string
+	// Entries are the messages this pass counted, for time buckets.
+	Entries []planusage.Entry
 }
 
 // Cost sums the run's per-file costs.
@@ -36,6 +38,7 @@ func MeterRun(id int, r RunRef, files []string, seen map[string]int64, overrides
 	for _, f := range files {
 		old := out.Meter[f]
 		res, err := planusage.ReadTranscript(f, planusage.FileMark{Offset: old.Offset, Last: old.Last}, planusage.ReadOptions{Overrides: overrides, Seen: seen})
+		out.Entries = append(out.Entries, res.Entries...)
 		next := Meter{Offset: res.Mark.Offset, Cost: old.Cost + res.Cost(), Last: res.Mark.Last}
 		if _, known := r.Meter[f]; next != old || !known {
 			out.Meter[f], out.Changed = next, true

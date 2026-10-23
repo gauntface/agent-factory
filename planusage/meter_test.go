@@ -148,3 +148,38 @@ func TestScanSkipsUnchangedFilesWithoutOpeningThem(t *testing.T) {
 		t.Fatal("the mark of an unchanged file was dropped")
 	}
 }
+
+func TestRunWindowCost(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	s := NewMeterState()
+	s.AddRunEntries("s1", []Entry{
+		{At: now.Add(-time.Hour), Cost: 2},
+		{At: now.Add(-time.Hour + time.Minute), Cost: 1},
+		{At: now.Add(-7 * time.Hour), Cost: 50},
+	})
+	reset := now.Add(2 * time.Hour)
+	w := PlanWindow{Plan: 10, ResetsAt: &reset}
+	if got := s.RunWindowCost("s1", w); !near(got, 3) {
+		t.Fatalf("window cost %v, want 3", got)
+	}
+	if got := s.RunWindowCost("s1", PlanWindow{}); got != 0 {
+		t.Fatalf("no window: %v", got)
+	}
+	s.PruneRunBuckets(now)
+	if len(s.RunBuckets["s1"]) != 1 {
+		t.Fatalf("old buckets kept: %v", s.RunBuckets)
+	}
+	s.KeepRunSeen(map[string]bool{})
+	if len(s.RunBuckets) != 0 {
+		t.Fatalf("an ended run's buckets kept: %v", s.RunBuckets)
+	}
+}
+
+func TestAttributeReportsAllCost(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+	a := &AccountMeter{Buckets: map[int64]Bucket{now.Add(-time.Hour).Unix(): {All: 8, Backlog: 2}}}
+	r := &Reading{FiveHour: &Limit{UsedPercentage: 40, ResetsAt: now.Add(time.Hour).Unix()}}
+	if w := Attribute(r, a, now).FiveHour; w.All != 8 || !near(w.Backlog, 10) {
+		t.Fatalf("%+v", w)
+	}
+}

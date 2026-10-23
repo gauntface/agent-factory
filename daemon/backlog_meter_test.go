@@ -47,6 +47,8 @@ func TestGetBudgetMetersAndPublishesSpend(t *testing.T) {
 	require.Equal(t, float64(50), data["budget"].(map[string]any)["share"])
 	five := data["windows"].(map[string]any)["five_hour"].(map[string]any)
 	require.Equal(t, float64(30), five["plan"])
+	require.InDelta(t, 4.0, five["all_cost"], 1e-9)
+	require.Contains(t, data, "run_window")
 	require.Equal(t, float64(0), five["backlog"], "no item runs: nothing is the backlog's")
 	require.NotNil(t, data["reading_at"])
 	require.Nil(t, data["windows"].(map[string]any)["seven_day"].(map[string]any)["resets_at"])
@@ -70,6 +72,8 @@ func TestGetBudgetMetersAndPublishesSpend(t *testing.T) {
 			require.NoError(t, json.Unmarshal(ev.Data, &payload))
 			require.Contains(t, payload, "five_hour")
 			require.Contains(t, payload, "runs")
+			require.Contains(t, payload, "run_window")
+			require.Contains(t, payload, "unmeterable")
 			return
 		case <-deadline:
 			t.Fatal("no backlog.spend event")

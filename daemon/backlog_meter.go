@@ -95,7 +95,7 @@ func (s *meterState) last(now time.Time) (planusage.Usage, bool) {
 	s.usageMu.Lock()
 	defer s.usageMu.Unlock()
 	if s.finished.IsZero() {
-		return planusage.Usage{Metering: true, Runs: map[string]float64{}}, false
+		return planusage.Usage{Metering: true, Runs: map[string]float64{}, RunWindow: map[string]float64{}}, false
 	}
 	return s.usage, now.Sub(s.finished) < meterFreshFor
 }
@@ -157,7 +157,8 @@ func (m *Manager) meterPassLocked(now time.Time) {
 		m.warn().Printf("plan meter: %v", err)
 		return
 	}
-	usage := planusage.Usage{Runs: map[string]float64{}, Unmeterable: map[string]string{}, Accounts: map[string]planusage.AccountUsage{}}
+	usage := planusage.Usage{Runs: map[string]float64{}, RunWindow: map[string]float64{}, Unmeterable: map[string]string{}, Accounts: map[string]planusage.AccountUsage{}}
+	runAccount := map[string]string{}
 	updates := map[string]map[string]map[string]backlog.Meter{}
 	var backlogDirs []string
 	metered := map[string]bool{}
@@ -167,7 +168,7 @@ func (m *Manager) meterPassLocked(now time.Time) {
 		if r.inst == nil {
 			continue
 		}
-		_, dirs, err := r.inst.ClaudeRunTranscriptDirs()
+		configDir, dirs, err := r.inst.ClaudeRunTranscriptDirs()
 		if errors.Is(err, session.ErrNotClaude) {
 			if running {
 				program := r.inst.ResolvedAgent()
@@ -184,6 +185,8 @@ func (m *Manager) meterPassLocked(now time.Time) {
 		planusage.PruneSeen(seen, now)
 		rm := backlog.MeterRun(r.item.ID, r.run, planusage.TranscriptFiles(dirs), seen, overrides, now)
 		usage.Runs[r.run.SessionID] = rm.Cost()
+		state.AddRunEntries(r.run.SessionID, rm.Entries)
+		runAccount[r.run.SessionID] = planusage.AccountForConfigDir(home, configDir)
 		if running && rm.Unmeterable != "" {
 			usage.Unmeterable[r.run.SessionID] = rm.Unmeterable
 		}
@@ -203,7 +206,11 @@ func (m *Manager) meterPassLocked(now time.Time) {
 		}
 	}
 	state.KeepRunSeen(metered)
+	state.PruneRunBuckets(now)
 	m.meterAccounts(home, state, backlogDirs, overrides, now, &usage)
+	for sessionID, account := range runAccount {
+		usage.RunWindow[sessionID] = state.RunWindowCost(sessionID, usage.Accounts[account].Windows.FiveHour)
+	}
 	if err := state.Save(); err != nil {
 		m.warn().Printf("plan meter: %v", err)
 	}

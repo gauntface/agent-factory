@@ -579,7 +579,7 @@ var httpRoutes = []HTTPRoute{
 	{
 		Method:      http.MethodPost,
 		Path:        "/v1/GetBudget",
-		Description: "Read the global backlog budget: the share of each Claude plan window the backlog may use, the plan percent at which the runner stops, the cap per run, and the dollar limit for accounts with no plan readings, with each plan window's plan %, the backlog's part of it and its reset time, per Claude account. Usage comes from the last metering pass; before the first one ends, metering is true.",
+		Description: "Read the global backlog budget: the share of each Claude plan window the backlog may use, the plan percent at which the runner stops, the cap per run, and the dollar limit for accounts with no plan readings, with each plan window's plan %, the backlog's part of it, the metered cost of everything in it (all_cost) and its reset time, per Claude account, and each item session's cost in total (runs) and within its account's current 5-hour window (run_window). Usage comes from the last metering pass; before the first one ends, metering is true.",
 		requestType: reflect.TypeOf(GetBudgetRequest{}),
 		handler:     func(cs *controlServer) http.HandlerFunc { return rpcHandler(cs.GetBudget) },
 	},

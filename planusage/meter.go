@@ -51,6 +51,58 @@ type MeterState struct {
 	// RunSeen holds, per item session, the keys of the messages its run meter
 	// counted.
 	RunSeen map[string]map[string]int64 `json:"run_seen,omitempty"`
+	// RunBuckets holds, per item session, its cost per BucketSpan keyed by
+	// the bucket's start in epoch seconds, for the last 5-hour window.
+	RunBuckets map[string]map[int64]float64 `json:"run_buckets,omitempty"`
+}
+
+// AddRunEntries buckets a run's newly metered messages.
+func (s *MeterState) AddRunEntries(sessionID string, entries []Entry) {
+	if len(entries) == 0 {
+		return
+	}
+	if s.RunBuckets == nil {
+		s.RunBuckets = map[string]map[int64]float64{}
+	}
+	b := s.RunBuckets[sessionID]
+	if b == nil {
+		b = map[int64]float64{}
+		s.RunBuckets[sessionID] = b
+	}
+	for _, e := range entries {
+		b[e.At.Truncate(BucketSpan).Unix()] += e.Cost
+	}
+}
+
+// RunWindowCost sums a run's buckets in the 5-hour window w; 0 when w has no
+// valid reading.
+func (s *MeterState) RunWindowCost(sessionID string, w PlanWindow) float64 {
+	if !w.Valid() {
+		return 0
+	}
+	from, to := w.ResetsAt.Add(-FiveHourSpan).Unix(), w.ResetsAt.Unix()
+	total := 0.0
+	for k, c := range s.RunBuckets[sessionID] {
+		if k >= from && k < to {
+			total += c
+		}
+	}
+	return total
+}
+
+// PruneRunBuckets drops buckets that can no longer fall in a 5-hour window.
+func (s *MeterState) PruneRunBuckets(now time.Time) {
+	cutoff := now.Add(-FiveHourSpan - BucketSpan).Unix()
+	for id, b := range s.RunBuckets {
+		for k := range b {
+			if k < cutoff {
+				delete(b, k)
+			}
+		}
+		if len(b) == 0 {
+			delete(s.RunBuckets, id)
+		}
+	}
 }
 
 // RunSeenFor returns the session's set of counted message keys.
@@ -66,11 +118,16 @@ func (s *MeterState) RunSeenFor(sessionID string) map[string]int64 {
 	return seen
 }
 
-// KeepRunSeen drops the sets of sessions not in keep.
+// KeepRunSeen drops the sets and buckets of sessions not in keep.
 func (s *MeterState) KeepRunSeen(keep map[string]bool) {
 	for id := range s.RunSeen {
 		if !keep[id] {
 			delete(s.RunSeen, id)
+		}
+	}
+	for id := range s.RunBuckets {
+		if !keep[id] {
+			delete(s.RunBuckets, id)
 		}
 	}
 }
