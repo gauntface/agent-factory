@@ -138,7 +138,7 @@ import { type AccountsResponse, type SessionData, TabKind, type TaskData, type W
 import { publishProposalChange, publishProposalPush } from "./docs_tab.js";
 import { parseProposalChange, parseProposalPush } from "./proposal_api.js";
 import { BacklogLoader, EMPTY_BACKLOG_DATA } from "./backlog_data.js";
-import { type DocsBacklog, proposalItems, sendSessionPrompt } from "./docs_backlog.js";
+import { type DocsBacklog, proposalItems } from "./docs_backlog.js";
 
 // Boot stamp (redesign PR1): apply the saved theme choice to <html> BEFORE the app
 // mounts (before first paint), so an explicit light/dark choice shows no flash. This
@@ -337,10 +337,6 @@ function docsBacklog(sessionId: string, slug: string): DocsBacklog {
     items: () => {
       const r = root();
       return r ? proposalItems(store.get().backlog?.views.get(r), slug) : null;
-    },
-    send: async (prompt) => {
-      if (token === null) throw new Error("not connected");
-      await sendSessionPrompt(sessionId, prompt, token);
     },
     open: (id) => {
       const r = root();

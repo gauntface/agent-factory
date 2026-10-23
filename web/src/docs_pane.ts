@@ -7,7 +7,7 @@
 
 import { errorText } from "./api.js";
 import { countOpenQuestions } from "./callouts.js";
-import { backlogItemsLabel, backlogItemsPrompt, type DocsBacklog } from "./docs_backlog.js";
+import { backlogItemsLabel, type DocsBacklog } from "./docs_backlog.js";
 import { createDocsEditor, type DocsEditor } from "./docs_editor.js";
 export { createDocsEditor } from "./docs_editor.js";
 import {
@@ -34,6 +34,7 @@ import {
   putDoc,
   type PushStatus,
   removeDoc,
+  requestBacklogItems,
   sendChanges,
 } from "./proposal_api.js";
 import { pressDistance, TAB_PRESS_LIMITS, tabPressVerdict } from "./tabtouch.js";
@@ -312,7 +313,7 @@ export class DocsPane {
     const make = h("button", { type: "button", class: "af-docs-menuitem", role: "menuitem" }, backlogItemsLabel(items));
     make.addEventListener("click", () => {
       make.disabled = true;
-      backlog.send(backlogItemsPrompt(this.opts.slug, items)).then(
+      requestBacklogItems(this.opts.sessionId, this.opts.slug, items.count > 0, this.opts.token).then(
         () => this.closeDocMenu(true),
         (e: unknown) => {
           make.disabled = false;

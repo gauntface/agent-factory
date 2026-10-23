@@ -512,6 +512,13 @@ var httpRoutes = []HTTPRoute{
 		requestType: reflect.TypeOf(SendProposalChangesRequest{}),
 		handler:     func(cs *controlServer) http.HandlerFunc { return rpcHandler(cs.SendProposalChanges) },
 	},
+	{
+		Method:      http.MethodPost,
+		Path:        "/v1/RequestProposalBacklogItems",
+		Description: "Ask the agent of a session with a Docs tab for the proposal to make or update the proposal's backlog items, by sending it a prompt.",
+		requestType: reflect.TypeOf(RequestProposalBacklogItemsRequest{}),
+		handler:     func(cs *controlServer) http.HandlerFunc { return rpcHandler(cs.RequestProposalBacklogItems) },
+	},
 	// Backlog (backlog proposal, api.md).
 	{
 		Method:      http.MethodPost,

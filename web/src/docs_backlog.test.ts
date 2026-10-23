@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import type { BacklogView, Item } from "./backlog_model.js";
-import { backlogItemsLabel, backlogItemsPrompt, proposalItems } from "./docs_backlog.js";
+import { backlogItemsLabel, proposalItems } from "./docs_backlog.js";
 
 function item(id: number, over: Partial<Item> = {}): Item {
   return { id, title: `item ${id}`, status: "draft", created_at: "", updated_at: "", ...over };
@@ -42,15 +42,4 @@ test("proposalItems: no view or no items", () => {
 test("the menu item says Make before items exist and Update after", () => {
   assert.equal(backlogItemsLabel({ count: 0, first: 0 }), "Make backlog items");
   assert.equal(backlogItemsLabel({ count: 2, first: 7 }), "Update backlog items");
-});
-
-test("the request names the proposal and the batch command, and is not a pushed-edits prompt", () => {
-  for (const items of [{ count: 0, first: 0 }, { count: 3, first: 3 }]) {
-    const p = backlogItemsPrompt("backlog", items);
-    assert.match(p, /proposal backlog\b/);
-    assert.match(p, /af backlog add --file -/);
-    assert.match(p, /proposal rule for backlog items/);
-    assert.ok(!p.startsWith("Proposal backlog:"), p);
-  }
-  assert.match(backlogItemsPrompt("backlog", { count: 3, first: 3 }), /same keys/);
 });

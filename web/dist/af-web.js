@@ -20649,9 +20649,6 @@ function proposalItems(view, slug) {
   const top = items.find((it) => !it.parent || !ids.has(it.parent));
   return { count: items.length, first: top?.id ?? 0 };
 }
-async function sendSessionPrompt(sessionId, prompt, token2) {
-  await af("SendPrompt", { id: sessionId, prompt }, token2);
-}
 
 // src/index.ts
 var initialThemeChoice = bootStampTheme();
@@ -20770,10 +20767,6 @@ function docsBacklog(sessionId, slug) {
     items: () => {
       const r = root2();
       return r ? proposalItems(store.get().backlog?.views.get(r), slug) : null;
-    },
-    send: async (prompt) => {
-      if (token === null) throw new Error("not connected");
-      await sendSessionPrompt(sessionId, prompt, token);
     },
     open: (id) => {
       const r = root2();

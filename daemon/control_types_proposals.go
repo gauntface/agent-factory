@@ -144,6 +144,19 @@ type SendProposalChangesRequest struct {
 
 type SendProposalChangesResponse = proposal.PushStatus
 
+// RequestProposalBacklogItemsRequest asks the session's agent to make, or with
+// Update to update, backlog items from proposal Slug.
+type RequestProposalBacklogItemsRequest struct {
+	SessionID string `json:"session_id"`
+	Slug      string `json:"slug"`
+	Update    bool   `json:"update"`
+}
+
+type RequestProposalBacklogItemsResponse struct {
+	// Delivered is false when af could not confirm the agent took the prompt.
+	Delivered bool `json:"delivered"`
+}
+
 func errUnknownProposalMethod(method string) error {
 	return fmt.Errorf("internal: %q is not a proposal route", method)
 }

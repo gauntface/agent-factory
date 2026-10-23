@@ -506,3 +506,19 @@ func TestRulesMakeBacklogItemsKeyedByTheProposal(t *testing.T) {
 		}
 	}
 }
+
+func TestBacklogItemsPromptPointsAtTheRule(t *testing.T) {
+	r := Rules("p", "/x/p")
+	if !strings.Contains(r, "When the user asks you to make backlog items from the proposal, or to update them") {
+		t.Fatalf("the prompt names the rule for backlog items, which must still exist:\n%s", r)
+	}
+	for _, update := range []bool{false, true} {
+		p := BacklogItemsPrompt("p", update)
+		if !strings.Contains(p, "proposal rule for backlog items") || !strings.Contains(p, `"af backlog add --file -"`) || strings.HasPrefix(p, "Proposal p:") {
+			t.Fatalf("update=%v prompt: %s", update, p)
+		}
+	}
+	if !strings.Contains(BacklogItemsPrompt("p", true), "same keys") {
+		t.Fatal("the update prompt must ask for the same keys")
+	}
+}
