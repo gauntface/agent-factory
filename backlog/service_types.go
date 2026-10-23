@@ -17,6 +17,7 @@ type View struct {
 const (
 	RunnerOff     = "off"
 	RunnerIdle    = "idle"
+	RunnerWaiting = "waiting"
 	RunnerStopped = "stopped"
 )
 
@@ -116,12 +117,14 @@ type SettingsResponse struct {
 type GetBudgetRequest struct{}
 
 type SetBudgetRequest struct {
-	Add       *float64 `json:"add,omitempty"`
-	Set       *float64 `json:"set,omitempty"`
-	Reset     bool     `json:"reset,omitempty"`
+	Share     *float64 `json:"share,omitempty"`
+	StopAt    *float64 `json:"stop_at,omitempty"`
 	MaxPerRun *float64 `json:"max_per_run,omitempty"`
+	USDLimit  *float64 `json:"usd_limit,omitempty"`
 }
 
+// BudgetResponse is the budget settings. The plan windows and reading time
+// that api.md also lists arrive with plan readings.
 type BudgetResponse struct {
 	Budget Budget `json:"budget"`
 }

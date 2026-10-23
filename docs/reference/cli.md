@@ -537,17 +537,20 @@ af backlog add <title> | add --file <path or -> [flags]
 
 Show or change the global budget
 
-The budget is money, in US dollars at API list prices, that the runner may spend before it stops. It is one budget for all projects. With no arguments, print it. add raises the limit, set replaces it, reset sets spent back to $0. --max-per-run caps one run; 0 means no cap.
+The budget is the share of your Claude plan the backlog may use, for all projects. --share is the percent of each plan window (5-hour and weekly) the backlog may use. --stop-at is the plan percent, from any use, at which the runner stops. --max-per-run is the percent of the 5-hour window one run may use. --usd-limit is a dollar limit at API prices for accounts with no plan readings (an API key); 0 turns it off. With no flags, print the settings.
 
 ```
-af backlog budget [add <usd> | set <usd> | reset] [--max-per-run <usd>] [flags]
+af backlog budget [flags]
 ```
 
 **Flags**
 
 | Flag | Type | Description |
 |------|------|-------------|
-| `--max-per-run` | `string` | Cap one run at this many US dollars; 0 means no cap |
+| `--max-per-run` | `string` | Percent of the 5-hour window one run may use (0-100; default 10) |
+| `--share` | `string` | Percent of each plan window the backlog may use (0-100; default 50) |
+| `--stop-at` | `string` | Plan percent, from any use, at which the runner stops (0-100; default 90) |
+| `--usd-limit` | `string` | Dollar limit at API prices for accounts with no plan readings; 0 turns it off |
 
 **Global flags**
 

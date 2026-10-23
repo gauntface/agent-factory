@@ -572,14 +572,14 @@ var httpRoutes = []HTTPRoute{
 	{
 		Method:      http.MethodPost,
 		Path:        "/v1/GetBudget",
-		Description: "Read the global backlog budget: limit, spent, and cap per run, in US dollars at API prices.",
+		Description: "Read the global backlog budget: the share of each Claude plan window the backlog may use, the plan percent at which the runner stops, the cap per run, and the dollar limit for accounts with no plan readings.",
 		requestType: reflect.TypeOf(GetBudgetRequest{}),
 		handler:     func(cs *controlServer) http.HandlerFunc { return rpcHandler(cs.GetBudget) },
 	},
 	{
 		Method:      http.MethodPost,
 		Path:        "/v1/SetBudget",
-		Description: "Add to, set, or reset the global backlog budget, or change its cap per run.",
+		Description: "Change the global backlog budget: share, stop_at and max_per_run as percents from 0 to 100, and usd_limit in US dollars at API prices (0 turns it off).",
 		requestType: reflect.TypeOf(SetBudgetRequest{}),
 		handler:     func(cs *controlServer) http.HandlerFunc { return rpcHandler(cs.SetBudget) },
 	},

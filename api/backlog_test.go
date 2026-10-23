@@ -304,13 +304,13 @@ func TestBacklogRunnerAndBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	v := decodeOut[backlogRunnerView](t, out)
-	if v.State != backlog.RunnerOff || v.Runner || v.MaxRunning != 1 || v.OnDone != backlog.OnDoneKeep || v.Budget.MaxPerRun != 5 {
+	if v.State != backlog.RunnerOff || v.Runner || v.MaxRunning != 1 || v.OnDone != backlog.OnDoneKeep || v.Budget.Share != 50 || v.Budget.MaxPerRun != 10 {
 		t.Fatalf("%+v", v)
 	}
 	if out, err = runBacklogCmd(t, "runner", "on", "--max-running", "2", "--on-done", "archive"); err != nil {
 		t.Fatal(err)
 	}
-	if v = decodeOut[backlogRunnerView](t, out); !v.Runner || v.Max != 2 || v.OnDone != "archive" || v.State != backlog.RunnerStopped {
+	if v = decodeOut[backlogRunnerView](t, out); !v.Runner || v.Max != 2 || v.OnDone != "archive" || v.State != backlog.RunnerWaiting {
 		t.Fatalf("%+v", v)
 	}
 	if _, err := runBacklogCmd(t, "runner", "maybe"); err == nil {
@@ -323,21 +323,30 @@ func TestBacklogRunnerAndBudget(t *testing.T) {
 		args []string
 		want func(backlog.Budget) bool
 	}{
-		{[]string{"budget"}, func(b backlog.Budget) bool { return b.Limit == 0 }},
-		{[]string{"budget", "add", "$5"}, func(b backlog.Budget) bool { return b.Limit == 5 }},
-		{[]string{"budget", "set", "10", "--max-per-run", "2.5"}, func(b backlog.Budget) bool { return b.Limit == 10 && b.MaxPerRun == 2.5 }},
-		{[]string{"budget", "reset"}, func(b backlog.Budget) bool { return b.Spent == 0 && !b.ResetAt.IsZero() }},
-		{[]string{"budget", "--max-per-run", "0"}, func(b backlog.Budget) bool { return b.MaxPerRun == 0 && b.Limit == 10 }},
+		{[]string{"budget"}, func(b backlog.Budget) bool { return b.Share == 50 && b.StopAt == 90 && b.USDLimit == 0 }},
+		{[]string{"budget", "--share", "30%", "--stop-at", "95"}, func(b backlog.Budget) bool { return b.Share == 30 && b.StopAt == 95 }},
+		{[]string{"budget", "--max-per-run", "0"}, func(b backlog.Budget) bool { return b.MaxPerRun == 0 && b.Share == 30 }},
+		{[]string{"budget", "--usd-limit", "$12.50"}, func(b backlog.Budget) bool { return b.USDLimit == 12.5 }},
 	} {
 		out, err := runBacklogCmd(t, step.args...)
 		if err != nil || !step.want(decodeOut[backlog.Budget](t, out)) {
 			t.Fatalf("%v: %s %v", step.args, out, err)
 		}
 	}
-	for _, args := range [][]string{{"budget", "add"}, {"budget", "add", "five"}, {"budget", "add", "inf"},
-		{"budget", "set", "NaN"}, {"budget", "add", "1e400"}, {"budget", "set", "--", "-1"}, {"budget", "--max-per-run=-2"}, {"budget", "reset", "1"}, {"budget", "spend", "1"}} {
-		if _, err := runBacklogCmd(t, args...); err == nil {
-			t.Errorf("%v accepted", args)
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"budget", "--share", "101"}, "--share must be between 0 and 100"},
+		{[]string{"budget", "--stop-at=-1"}, "--stop-at must be between 0 and 100"},
+		{[]string{"budget", "--max-per-run", "NaN"}, "--max-per-run must be between 0 and 100"},
+		{[]string{"budget", "--share", "half"}, "--share must be between 0 and 100"},
+		{[]string{"budget", "--usd-limit", "inf"}, `--usd-limit must be a finite amount of US dollars, 0 or more — for example 5 or 2.50, not "inf"`},
+		{[]string{"budget", "--usd-limit", "1e400"}, `--usd-limit must be a finite amount of US dollars, 0 or more — for example 5 or 2.50, not "1e400"`},
+		{[]string{"budget", "--usd-limit=-1"}, `--usd-limit must be a finite amount of US dollars, 0 or more — for example 5 or 2.50, not "-1"`},
+	} {
+		if _, err := runBacklogCmd(t, c.args...); err == nil || err.Error() != c.want {
+			t.Errorf("%v: %v", c.args, err)
 		}
 	}
 	if out, _ := runBacklogCmd(t, "runner"); decodeOut[backlogRunnerView](t, out).State != backlog.RunnerIdle {

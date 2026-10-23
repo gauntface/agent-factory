@@ -272,7 +272,7 @@ func TestServiceSettings(t *testing.T) {
 		}
 	}
 	v, _ := s.Get(GetRequest{RepoID: repoID})
-	if v.Runner.State != RunnerStopped || v.Runner.Reason != "Set a budget to let the runner start items." || v.Runner.Max != 3 {
+	if v.Runner.State != RunnerWaiting || v.Runner.Reason != "No plan usage seen yet." || v.Runner.Max != 3 {
 		t.Fatalf("%+v", v.Runner)
 	}
 }
@@ -342,54 +342,63 @@ func TestServiceLooksUpNameOnlyForNotFound(t *testing.T) {
 func TestServiceBudget(t *testing.T) {
 	s, _ := newTestService(t)
 	b, err := s.GetBudget(GetBudgetRequest{})
-	if err != nil || b.Budget.Limit != 0 || b.Budget.MaxPerRun != DefaultMaxPerRun {
+	want := Budget{SchemaVersion: BudgetSchemaVersion, Share: 50, StopAt: 90, MaxPerRun: 10}
+	if err != nil || b.Budget != want {
 		t.Fatal(b, err)
 	}
-	steps := []struct {
-		req  SetBudgetRequest
-		want func(Budget) bool
-	}{
-		{SetBudgetRequest{Add: ptr(5.0)}, func(b Budget) bool { return b.Limit == 5 }},
-		{SetBudgetRequest{Add: ptr(2.5), MaxPerRun: ptr(1.0)}, func(b Budget) bool { return b.Limit == 7.5 && b.MaxPerRun == 1 }},
-		{SetBudgetRequest{Set: ptr(10.0)}, func(b Budget) bool { return b.Limit == 10 }},
-		{SetBudgetRequest{MaxPerRun: ptr(0.0)}, func(b Budget) bool { return b.MaxPerRun == 0 && b.Limit == 10 }},
+	out, err := s.SetBudget(SetBudgetRequest{Share: ptr(30.0), StopAt: ptr(100.0)})
+	want.Share, want.StopAt = 30, 100
+	if err != nil || out.Budget != want {
+		t.Fatal(out, err)
 	}
-	for _, st := range steps {
-		out, err := s.SetBudget(st.req)
-		if err != nil || !st.want(out.Budget) {
-			t.Fatalf("%+v: %+v %v", st.req, out, err)
+	out, err = s.SetBudget(SetBudgetRequest{MaxPerRun: ptr(0.0), USDLimit: ptr(10.0)})
+	want.MaxPerRun, want.USDLimit = 0, 10
+	if err != nil || out.Budget != want {
+		t.Fatal(out, err)
+	}
+	for _, c := range []struct {
+		req  SetBudgetRequest
+		want string
+	}{
+		{SetBudgetRequest{}, "nothing to change — use --share, --stop-at, --max-per-run or --usd-limit"},
+		{SetBudgetRequest{Share: ptr(101.0)}, "--share must be between 0 and 100"},
+		{SetBudgetRequest{StopAt: ptr(-1.0)}, "--stop-at must be between 0 and 100"},
+		{SetBudgetRequest{MaxPerRun: ptr(math.NaN())}, "--max-per-run must be between 0 and 100"},
+		{SetBudgetRequest{Share: ptr(math.Inf(1))}, "--share must be between 0 and 100"},
+		{SetBudgetRequest{USDLimit: ptr(-1.0)}, "--usd-limit must be a finite amount of US dollars, 0 or more"},
+		{SetBudgetRequest{USDLimit: ptr(math.Inf(1))}, "--usd-limit must be a finite amount of US dollars, 0 or more"},
+		{SetBudgetRequest{Share: ptr(10.0), USDLimit: ptr(math.NaN())}, "--usd-limit must be a finite amount of US dollars, 0 or more"},
+	} {
+		if _, err := s.SetBudget(c.req); err == nil || err.Error() != c.want {
+			t.Errorf("%+v: %v", c.req, err)
 		}
 	}
-	if _, err := UpdateBudget(func(b *Budget) error { b.Spent = 10.4; return nil }); err != nil {
-		t.Fatal(err)
+	if got, _ := s.GetBudget(GetBudgetRequest{}); got.Budget != want {
+		t.Fatalf("a refused change was saved: %+v", got.Budget)
 	}
+}
+
+func TestServiceRunnerView(t *testing.T) {
+	s, _ := newTestService(t)
 	if _, err := s.SetSettings(SetSettingsRequest{RepoID: repoID, Runner: ptr(true)}); err != nil {
 		t.Fatal(err)
 	}
-	v, _ := s.Get(GetRequest{RepoID: repoID})
-	if v.Runner.Reason != "Budget used ($10.40 of $10.00)." {
-		t.Fatal(v.Runner)
+	steps := []struct {
+		edit func(*Budget)
+		want RunnerView
+	}{
+		{func(*Budget) {}, RunnerView{State: RunnerWaiting, Reason: "No plan usage seen yet.", Max: 1}},
+		{func(b *Budget) { b.Share = 0 }, RunnerView{State: RunnerStopped, Reason: "Backlog share is 0%.", Max: 1}},
+		{func(b *Budget) { b.Share, b.USDLimit = 50, 10 }, RunnerView{State: RunnerIdle, Reason: "Nothing queued.", Max: 1}},
+		{func(b *Budget) { b.USDSpent = 10.4 }, RunnerView{State: RunnerStopped, Reason: "Budget used ($10.40 of $10.00).", Max: 1}},
 	}
-	out, err := s.SetBudget(SetBudgetRequest{Reset: true})
-	if err != nil || out.Budget.Spent != 0 || out.Budget.ResetAt.IsZero() {
-		t.Fatal(out, err)
-	}
-	v, _ = s.Get(GetRequest{RepoID: repoID})
-	if v.Runner != (RunnerView{State: RunnerIdle, Reason: "Nothing queued.", Max: 1}) {
-		t.Fatal(v.Runner)
-	}
-	for _, req := range []SetBudgetRequest{
-		{}, {Add: ptr(1.0), Reset: true}, {Add: ptr(0.0)}, {Set: ptr(-1.0)}, {MaxPerRun: ptr(-1.0)},
-		{Add: ptr(math.Inf(1))}, {Set: ptr(math.NaN())}, {MaxPerRun: ptr(math.Inf(1))},
-	} {
-		if _, err := s.SetBudget(req); err == nil {
-			t.Errorf("%+v accepted", req)
+	for i, st := range steps {
+		if _, err := UpdateBudget(func(b *Budget) error { st.edit(b); return nil }); err != nil {
+			t.Fatal(err)
 		}
-	}
-	if _, err := s.SetBudget(SetBudgetRequest{Set: ptr(math.MaxFloat64)}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.SetBudget(SetBudgetRequest{Add: ptr(math.MaxFloat64)}); err == nil || err.Error() != "the budget is too large" {
-		t.Fatal(err)
+		v, err := s.Get(GetRequest{RepoID: repoID})
+		if err != nil || v.Runner != st.want {
+			t.Fatalf("step %d: %+v %v", i, v.Runner, err)
+		}
 	}
 }

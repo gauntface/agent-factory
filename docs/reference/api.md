@@ -73,8 +73,8 @@ Request fields are the JSON keys of each route's request body; a `—` means the
 | `POST` | `/v1/DeleteBacklogItem` | `repo_id`, `repo_path`, `id` | Delete a draft item that has no runs, thread or children. |
 | `POST` | `/v1/PostBacklogMessage` | `repo_id`, `repo_path`, `id`, `kind`, `text`, `session_id`, `question_id` | Add a note to an item's thread; notes are not delivered to a session. |
 | `POST` | `/v1/SetBacklogSettings` | `repo_id`, `repo_path`, `runner`, `max_running`, `on_done` | Change a project's runner switch, max running, or what happens to an item's session when the item is done. |
-| `POST` | `/v1/GetBudget` | — | Read the global backlog budget: limit, spent, and cap per run, in US dollars at API prices. |
-| `POST` | `/v1/SetBudget` | `add`, `set`, `reset`, `max_per_run` | Add to, set, or reset the global backlog budget, or change its cap per run. |
+| `POST` | `/v1/GetBudget` | — | Read the global backlog budget: the share of each Claude plan window the backlog may use, the plan percent at which the runner stops, the cap per run, and the dollar limit for accounts with no plan readings. |
+| `POST` | `/v1/SetBudget` | `share`, `stop_at`, `max_per_run`, `usd_limit` | Change the global backlog budget: share, stop_at and max_per_run as percents from 0 to 100, and usd_limit in US dollars at API prices (0 turns it off). |
 | `POST` | `/v1/ListOnComplete` | — | List task spawned-session lifecycle choices and consequences, least destructive first. |
 | `POST` | `/v1/ListTasks` | — | List every task across all repos. |
 | `POST` | `/v1/AddTask` | `task`, `actor` | Append a new task and re-arm the scheduler; an enabled archived/archiving target_session is refused before commit. |

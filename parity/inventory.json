@@ -1696,7 +1696,7 @@
       },
       "verdict": "real-gap",
       "issue": "TBD",
-      "notes": "Backlog PR 2 stores the runner switch, slots, on-done choice and budget; no runner loop exists until PR 7. PR 3 shows a read-only runner bar on the web and PR 7 makes it editable. The TUI deliberately has no backlog board: the backlog proposal's goals.md lists a TUI board as a non-goal, and the CLI covers every action."
+      "notes": "Backlog PR 2 stores the runner switch, slots, on-done choice and the budget settings (share of the Claude plan, stop-at, cap per run, dollar limit); plan readings arrive in PR 6 and the runner loop in PR 7. PR 3 shows a read-only runner bar on the web and PR 7 makes it editable. The TUI deliberately has no backlog board: the backlog proposal's goals.md lists a TUI board as a non-goal, and the CLI covers every action."
     }
   ],
   "ledger": {
@@ -2013,6 +2013,9 @@
       "af backlog runner --max-running": "backlog.runner",
       "af backlog runner --on-done": "backlog.runner",
       "af backlog budget --max-per-run": "backlog.runner",
+      "af backlog budget --share": "backlog.runner",
+      "af backlog budget --stop-at": "backlog.runner",
+      "af backlog budget --usd-limit": "backlog.runner",
       "af --daemon": "meta.internal",
       "af --daemon-url": "daemon.remote-access",
       "af --help": "meta.discovery",

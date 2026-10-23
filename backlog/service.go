@@ -123,10 +123,12 @@ func runnerView(b *Backlog, states map[int]Derived, budget *Budget) RunnerView {
 	switch {
 	case !b.Settings.Runner:
 		v.State, v.Reason = RunnerOff, "Items run only when you start them."
-	case budget.Limit <= 0:
-		v.State, v.Reason = RunnerStopped, "Set a budget to let the runner start items."
-	case budget.Used():
-		v.State, v.Reason = RunnerStopped, fmt.Sprintf("Budget used (%s of %s).", USD(budget.Spent), USD(budget.Limit))
+	case budget.Share <= 0:
+		v.State, v.Reason = RunnerStopped, "Backlog share is 0%."
+	case budget.USDLimit <= 0:
+		v.State, v.Reason = RunnerWaiting, "No plan usage seen yet."
+	case budget.USDSpent >= budget.USDLimit:
+		v.State, v.Reason = RunnerStopped, fmt.Sprintf("Budget used (%s of %s).", USD(budget.USDSpent), USD(budget.USDLimit))
 	case !queued:
 		v.Reason = "Nothing queued."
 	}
@@ -372,7 +374,7 @@ func (s *Service) GetBudget(GetBudgetRequest) (*BudgetResponse, error) {
 }
 
 func (s *Service) SetBudget(req SetBudgetRequest) (*BudgetResponse, error) {
-	b, err := UpdateBudget(func(b *Budget) error { return req.Apply(b, s.now()) })
+	b, err := UpdateBudget(req.Apply)
 	if err != nil {
 		return nil, err
 	}

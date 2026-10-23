@@ -90,51 +90,31 @@ func (b *Backlog) ApplySettings(c SettingsChange) error {
 	return nil
 }
 
-// Apply validates and applies one change to the global budget. At most one of
-// Add, Set and Reset may be given; MaxPerRun may go with any of them. On error
-// b is unchanged.
-func (c SetBudgetRequest) Apply(b *Budget, now time.Time) error {
-	for _, v := range []*float64{c.Add, c.Set, c.MaxPerRun} {
-		if v != nil && (math.IsNaN(*v) || math.IsInf(*v, 0)) {
-			return errors.New("an amount must be a finite number of US dollars")
-		}
-	}
-	n := 0
-	for _, set := range []bool{c.Add != nil, c.Set != nil, c.Reset} {
-		if set {
-			n++
-		}
-	}
-	if n > 1 {
-		return errors.New("use one of add, set and reset")
-	}
-	if n == 0 && c.MaxPerRun == nil {
-		return errors.New("nothing to change — use add, set, reset or max per run")
+// Apply validates and applies the settings that are set. On error b is
+// unchanged.
+func (c SetBudgetRequest) Apply(b *Budget) error {
+	if c.Share == nil && c.StopAt == nil && c.MaxPerRun == nil && c.USDLimit == nil {
+		return errors.New("nothing to change — use --share, --stop-at, --max-per-run or --usd-limit")
 	}
 	next := *b
-	switch {
-	case c.Add != nil:
-		if *c.Add <= 0 {
-			return errors.New("add needs an amount above $0")
+	for _, pct := range []struct {
+		flag string
+		v    *float64
+		dst  *float64
+	}{{"--share", c.Share, &next.Share}, {"--stop-at", c.StopAt, &next.StopAt}, {"--max-per-run", c.MaxPerRun, &next.MaxPerRun}} {
+		if pct.v == nil {
+			continue
 		}
-		next.Limit += *c.Add
-		if math.IsInf(next.Limit, 0) {
-			return errors.New("the budget is too large")
+		if math.IsNaN(*pct.v) || *pct.v < 0 || *pct.v > 100 {
+			return fmt.Errorf("%s must be between 0 and 100", pct.flag)
 		}
-	case c.Set != nil:
-		if *c.Set < 0 {
-			return errors.New("the budget cannot be below $0")
-		}
-		next.Limit = *c.Set
-	case c.Reset:
-		next.Spent = 0
-		next.ResetAt = now
+		*pct.dst = *pct.v
 	}
-	if c.MaxPerRun != nil {
-		if *c.MaxPerRun < 0 {
-			return errors.New("the cap per run cannot be below $0 — use 0 for no cap")
+	if c.USDLimit != nil {
+		if math.IsNaN(*c.USDLimit) || math.IsInf(*c.USDLimit, 0) || *c.USDLimit < 0 {
+			return errors.New("--usd-limit must be a finite amount of US dollars, 0 or more")
 		}
-		next.MaxPerRun = *c.MaxPerRun
+		next.USDLimit = *c.USDLimit
 	}
 	*b = next
 	return nil

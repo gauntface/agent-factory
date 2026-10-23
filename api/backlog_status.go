@@ -1,7 +1,6 @@
 package api
 
 import (
-	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -218,31 +217,49 @@ var backlogRunnerCmd = &cobra.Command{
 	},
 }
 
-var backlogBudgetMaxPerRun string
+var (
+	backlogBudgetShare     string
+	backlogBudgetStopAt    string
+	backlogBudgetMaxPerRun string
+	backlogBudgetUSDLimit  string
+)
 
 var backlogBudgetCmd = &cobra.Command{
-	Use:   "budget [add <usd> | set <usd> | reset] [--max-per-run <usd>]",
+	Use:   "budget",
 	Short: "Show or change the global budget",
-	Long: "The budget is money, in US dollars at API list prices, that the runner may spend " +
-		"before it stops. It is one budget for all projects. With no arguments, print it. add " +
-		"raises the limit, set replaces it, reset sets spent back to $0. --max-per-run caps one " +
-		"run; 0 means no cap.",
-	Args:      cobra.MaximumNArgs(2),
-	ValidArgs: []string{"add", "set", "reset"},
+	Long: "The budget is the share of your Claude plan the backlog may use, for all projects. " +
+		"--share is the percent of each plan window (5-hour and weekly) the backlog may use. " +
+		"--stop-at is the plan percent, from any use, at which the runner stops. --max-per-run " +
+		"is the percent of the 5-hour window one run may use. --usd-limit is a dollar limit at " +
+		"API prices for accounts with no plan readings (an API key); 0 turns it off. With no " +
+		"flags, print the settings.",
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runBacklog(func() (any, error) {
-			req, change, err := budgetRequest(args)
-			if err != nil {
-				return nil, err
-			}
-			if cmd.Flags().Changed("max-per-run") {
-				v, err := parseUSD(backlogBudgetMaxPerRun)
+			f := cmd.Flags()
+			var share, stopAt, maxPerRun, usdLimit *float64
+			for _, pct := range []struct {
+				name string
+				v    string
+				dst  **float64
+			}{{"share", backlogBudgetShare, &share}, {"stop-at", backlogBudgetStopAt, &stopAt}, {"max-per-run", backlogBudgetMaxPerRun, &maxPerRun}} {
+				if !f.Changed(pct.name) {
+					continue
+				}
+				v, err := parsePercent(pct.name, pct.v)
 				if err != nil {
 					return nil, err
 				}
-				req.MaxPerRun, change = &v, true
+				*pct.dst = &v
 			}
-			if !change {
+			if f.Changed("usd-limit") {
+				v, err := parseUSD(backlogBudgetUSDLimit)
+				if err != nil {
+					return nil, err
+				}
+				usdLimit = &v
+			}
+			if share == nil && stopAt == nil && maxPerRun == nil && usdLimit == nil {
 				var resp daemon.GetBudgetResponse
 				if err := callBacklogRoute("GetBudget", daemon.GetBudgetRequest{}, &resp); err != nil {
 					return nil, err
@@ -250,7 +267,9 @@ var backlogBudgetCmd = &cobra.Command{
 				return resp.Budget, nil
 			}
 			var resp daemon.SetBudgetResponse
-			if err := callBacklogRoute("SetBudget", req, &resp); err != nil {
+			if err := callBacklogRoute("SetBudget", daemon.SetBudgetRequest{
+				Share: share, StopAt: stopAt, MaxPerRun: maxPerRun, USDLimit: usdLimit,
+			}, &resp); err != nil {
 				return nil, err
 			}
 			return resp.Budget, nil
@@ -258,40 +277,18 @@ var backlogBudgetCmd = &cobra.Command{
 	},
 }
 
-func budgetRequest(args []string) (daemon.SetBudgetRequest, bool, error) {
-	var req daemon.SetBudgetRequest
-	if len(args) == 0 {
-		return req, false, nil
+func parsePercent(flag, s string) (float64, error) {
+	v, err := strconv.ParseFloat(strings.TrimSuffix(strings.TrimSpace(s), "%"), 64)
+	if err != nil || math.IsNaN(v) || v < 0 || v > 100 {
+		return 0, fmt.Errorf("--%s must be between 0 and 100", flag)
 	}
-	switch args[0] {
-	case "reset":
-		if len(args) != 1 {
-			return req, false, errors.New("reset takes no amount")
-		}
-		req.Reset = true
-		return req, true, nil
-	case "add", "set":
-		if len(args) != 2 {
-			return req, false, fmt.Errorf("%s needs an amount in US dollars, for example \"af backlog budget %s 5\"", args[0], args[0])
-		}
-		v, err := parseUSD(args[1])
-		if err != nil {
-			return req, false, err
-		}
-		if args[0] == "add" {
-			req.Add = &v
-		} else {
-			req.Set = &v
-		}
-		return req, true, nil
-	}
-	return req, false, fmt.Errorf("unknown budget action %q: use add, set or reset", args[0])
+	return v, nil
 }
 
 func parseUSD(s string) (float64, error) {
 	v, err := strconv.ParseFloat(strings.TrimPrefix(strings.TrimSpace(s), "$"), 64)
 	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
-		return 0, fmt.Errorf("invalid amount %q: use US dollars of 0 or more, for example 5 or 2.50", s)
+		return 0, fmt.Errorf("--usd-limit must be a finite amount of US dollars, 0 or more — for example 5 or 2.50, not %q", s)
 	}
 	return v, nil
 }
@@ -299,7 +296,11 @@ func parseUSD(s string) (float64, error) {
 func init() {
 	backlogRunnerCmd.Flags().IntVar(&backlogRunnerMaxRunning, "max-running", backlog.DefaultMaxRunning, "How many items may run at once (1-8)")
 	backlogRunnerCmd.Flags().StringVar(&backlogRunnerOnDone, "on-done", backlog.OnDoneKeep, "What happens to an item's session when it is done: keep or archive")
-	backlogBudgetCmd.Flags().StringVar(&backlogBudgetMaxPerRun, "max-per-run", "", "Cap one run at this many US dollars; 0 means no cap")
+	f := backlogBudgetCmd.Flags()
+	f.StringVar(&backlogBudgetShare, "share", "", "Percent of each plan window the backlog may use (0-100; default 50)")
+	f.StringVar(&backlogBudgetStopAt, "stop-at", "", "Plan percent, from any use, at which the runner stops (0-100; default 90)")
+	f.StringVar(&backlogBudgetMaxPerRun, "max-per-run", "", "Percent of the 5-hour window one run may use (0-100; default 10)")
+	f.StringVar(&backlogBudgetUSDLimit, "usd-limit", "", "Dollar limit at API prices for accounts with no plan readings; 0 turns it off")
 
 	BacklogCmd.AddCommand(backlogQueueCmd, backlogDraftCmd, backlogReviewCmd, backlogReopenCmd, backlogDoneCmd,
 		backlogDropCmd, backlogDeleteCmd, backlogNoteCmd, backlogRunnerCmd, backlogBudgetCmd)
