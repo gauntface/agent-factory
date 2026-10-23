@@ -104,9 +104,9 @@ Each of those is one page in [Concepts](docs/concepts.md).
 
 ## Three surfaces, one daemon
 
-- **Web** — <http://localhost:8443>: sessions, real terminals, tabs, tasks, and
-  config in a browser. Bundled into the daemon and on by default. →
-  [Web client](docs/web.md)
+- **Web** — <http://localhost:8443>: sessions, real terminals, tabs, the
+  backlog, tasks, and config in a browser. Bundled into the daemon and on by
+  default. → [Web client](docs/web.md)
 - **TUI** — `af` in a git repo: a dense rail of every session, with in-place
   interaction and full-screen attach. → [TUI](docs/tui.md)
 - **CLI** — `af sessions` and `af tasks` emit JSON, so scripts and other agents
@@ -118,6 +118,13 @@ af sessions watch fix-auth      # block until it goes idle
 af tasks add --name triage --prompt "Triage open issues" --cron "0 9 * * *"
 ```
 
+## Work through a backlog
+
+Keep a project's work items in one strict order, make them from a proposal in
+one step, and let the daemon start sessions for queued items within a share of
+your Claude plan (50% by default). Agents ask questions on their item, and
+finished work waits for your review. → [Backlog](docs/backlog.md)
+
 ## Beyond your laptop
 
 Sessions can run in a container, on another machine over SSH, or on
@@ -127,9 +134,9 @@ a second machine. → [Backends and remote access](docs/backends.md)
 ## Documentation
 
 Full docs: **<https://sachiniyer.github.io/agent-factory/>** — a **Use** section
-(getting started, concepts, the three surfaces, tasks, accounts, backends,
-configuration, troubleshooting) and a **Develop and maintain** section. Start at
-[Getting started](docs/getting-started.md), or
+(getting started, concepts, the three surfaces, tasks, the backlog, accounts,
+backends, configuration, troubleshooting) and a **Develop and maintain**
+section. Start at [Getting started](docs/getting-started.md), or
 [Troubleshooting](docs/troubleshooting.md) when something looks wrong.
 
 ## Maintenance

@@ -2053,11 +2053,16 @@ export class AppShell {
     chip.setAttribute("aria-label", `Open item ${formatID(item.id)}`);
     chip.addEventListener("click", (e) => {
       e.stopPropagation();
-      this.actions.switchProject(item.root);
-      this.backlogPane.select(item.id, item.root);
-      this.switchView("backlog");
+      this.openBacklogItem(item.root, item.id);
     });
     return chip;
+  }
+
+  /** Shows item `id` of project `root` in the Backlog view; 0 opens no item. */
+  openBacklogItem(root: string, id: number): void {
+    this.actions.switchProject(root);
+    if (id > 0) this.backlogPane.select(id, root);
+    this.switchView("backlog");
   }
 
   /** One user-owned view transition for both appbar tabs and document shortcuts. */

@@ -125,3 +125,17 @@ func TestEnsurePluginDirRefusesASymlinkedSkillFile(t *testing.T) {
 	require.NoError(t, rerr)
 	assert.Equal(t, "user's own skill\n", string(on))
 }
+
+func TestBacklogUsageReachesBothAudiences(t *testing.T) {
+	for _, cmd := range []string{"af backlog list", "af backlog show", "af backlog add <title>", "af backlog add --file"} {
+		assert.Contains(t, afUsageReference, cmd)
+		assert.Contains(t, AfPluginUsageReference, cmd)
+	}
+	assert.Contains(t, afUsageReference, afUsageBacklogInside)
+	for _, cmd := range []string{"af backlog done --self", "af backlog ask --self", "af backlog note --self"} {
+		assert.Contains(t, afUsageBacklogInside, cmd)
+		assert.NotContains(t, AfPluginUsageReference, cmd)
+	}
+	assert.Contains(t, AfSkillDescription, "backlog")
+	assert.Contains(t, afSkillDescriptionInside, "backlog")
+}

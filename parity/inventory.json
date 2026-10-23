@@ -1642,6 +1642,24 @@
       "notes": "Proposal mode step 3a (docs/dev/proposals/proposal-mode/api.md, Push) adds the daemon push: auto mode sends the unseen edits 10 s after the last human save when the agent is Ready. The CLI sets the mode and sends now. Step 3b adds the web push chip (countdown, Hold, Send now) over these routes. The web has no Auto / Manual switch: the tab always pushes in auto mode, and manual mode is CLI-only (af proposal push-mode); a tab whose session is in manual mode still shows Send now. HoldProposalPush has no CLI verb: a hold only means something to the Docs tab whose save started the countdown, and the next save releases it. The TUI is not planned to edit proposals: goals.md lists a TUI editor as a non-goal."
     },
     {
+      "id": "proposal.backlog-items",
+      "title": "Ask a proposal's agent to make or update the proposal's backlog items",
+      "tui": {
+        "status": "no",
+        "pointer": ""
+      },
+      "web": {
+        "status": "yes",
+        "pointer": "web/src/docs_pane.ts DocsPane doc menu (Make backlog items, Update backlog items) → web/src/proposal_api.ts requestBacklogItems"
+      },
+      "cli": {
+        "status": "no",
+        "pointer": ""
+      },
+      "verdict": "deliberate",
+      "notes": "Backlog PR 9 (backlog proposal, ui.md Proposal tab). The route only sends the attached agent a fixed prompt (proposal.BacklogItemsPrompt) that points at the proposal rule for backlog items; the agent then writes the items with af backlog add --file. From the CLI or the TUI the user asks the agent in its terminal instead, so neither gets a verb. The TUI is not planned to edit proposals: goals.md lists a TUI editor as a non-goal."
+    },
+    {
       "id": "backlog.items",
       "title": "Keep an ordered backlog of work items per project",
       "tui": {
@@ -1874,6 +1892,7 @@
       "POST /v1/SetProposalPushMode": "proposal.push",
       "POST /v1/HoldProposalPush": "proposal.push",
       "POST /v1/SendProposalChanges": "proposal.push",
+      "POST /v1/RequestProposalBacklogItems": "proposal.backlog-items",
       "POST /v1/AddTask": "task.add",
       "POST /v1/AccountLogin": "session.account-login",
       "POST /v1/ArchiveSession": "session.archive",
@@ -1993,6 +2012,7 @@
       "ReadProposalDoc": "proposal.docs",
       "HoldProposalPush": "proposal.push",
       "SendProposalChanges": "proposal.push",
+      "RequestProposalBacklogItems": "proposal.backlog-items",
       "ArchiveSession": "session.archive",
       "CloseTab": "session.tab.close",
       "ConfirmHandoffDelivery": "session.handoff-delivery-confirm",

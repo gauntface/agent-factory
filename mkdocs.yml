@@ -145,6 +145,7 @@ nav:
       - TUI: tui.md
       - CLI: cli.md
       - Tasks: tasks.md
+      - Backlog: backlog.md
       - Accounts and usage limits: usage-limits.md
       - Backends and remote access:
           - Backends: backends.md

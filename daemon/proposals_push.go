@@ -165,6 +165,28 @@ func (s *controlServer) HoldProposalPush(req HoldProposalPushRequest, resp *Hold
 	return nil
 }
 
+func (s *controlServer) RequestProposalBacklogItems(req RequestProposalBacklogItemsRequest, resp *RequestProposalBacklogItemsResponse) error {
+	if err := s.requireStateMutationAdmission(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(req.Slug) == "" {
+		return errors.New("slug is required")
+	}
+	t, err := s.manager.pushTarget(req.SessionID)
+	if err != nil {
+		return err
+	}
+	if _, ok := t.Modes[req.Slug]; !ok {
+		return fmt.Errorf("the session has no Docs tab for proposal %q; attach it with \"af proposal attach %s\"", req.Slug, req.Slug)
+	}
+	delivery, err := proposalHost{m: s.manager}.SendPrompt(t.SessionID, proposal.BacklogItemsPrompt(req.Slug, req.Update))
+	if err != nil {
+		return err
+	}
+	resp.Delivered = delivery == proposal.DeliveryConfirmed
+	return nil
+}
+
 func (s *controlServer) SendProposalChanges(req SendProposalChangesRequest, resp *SendProposalChangesResponse) error {
 	if err := s.requireStateMutationAdmission(); err != nil {
 		return err

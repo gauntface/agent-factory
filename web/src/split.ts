@@ -55,6 +55,7 @@ import {
 import { fetchPreviewOrigin, pauseStatusPoll, probeWebTab } from "./api.js";
 import type { HoldAction } from "./delivery_hold.js";
 import { isProposalView, placeNewDocsTabs, showTab } from "./docs_autosplit.js";
+import type { DocsBacklog } from "./docs_backlog.js";
 import { mountDocsTab } from "./docs_tab.js";
 import { icon } from "./icon.js";
 // isLoopbackWebUrl is deliberately NOT imported any more: #1817 folded that test into
@@ -100,6 +101,8 @@ export interface SplitCallbacks {
    *  shows (activeTab), which tabs are shown across all panes, and the pane count.
    *  Fired only on a real change, so it can safely write the store without looping. */
   onLayout(info: { focusedTab: number; shownTabs: number[]; paneCount: number }): void;
+  /** The Docs tab's backlog hooks for a session's proposal. */
+  docsBacklog?(sessionId: string, slug: string): DocsBacklog | undefined;
 }
 
 /** One live pane: its persistent DOM (reused across tree re-renders so the xterm is
@@ -946,7 +949,12 @@ export class SplitView {
           pane.identity = identity;
           pane.webUrl = docsIdentity;
           pane.webArchived = this.archived;
-          pane.webDispose = mountDocsTab(pane.host, { sessionId: this.sessionId, slug: docsSlug, token: this.token });
+          pane.webDispose = mountDocsTab(pane.host, {
+            sessionId: this.sessionId,
+            slug: docsSlug,
+            token: this.token,
+            backlog: this.cb.docsBacklog?.(this.sessionId, docsSlug),
+          });
           pane.status = "open";
           this.onPaneStatus(leaf.id, "open");
         } else if (moved) {

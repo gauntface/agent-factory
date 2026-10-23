@@ -14,4 +14,5 @@ var proposalMethods = map[string]bool{
 	"DetachProposal": true, "AddProposalDoc": true, "ReadProposalDoc": true, "SaveProposalDoc": true,
 	"WriteProposalDoc": true, "PullProposalChanges": true, "CheckpointProposal": true,
 	"SetProposalPushMode": true, "HoldProposalPush": true, "SendProposalChanges": true,
+	"RequestProposalBacklogItems": true,
 }

@@ -14104,7 +14104,12 @@ var SplitView = class {
           pane.identity = identity;
           pane.webUrl = docsIdentity;
           pane.webArchived = this.archived;
-          pane.webDispose = mountDocsTab(pane.host, { sessionId: this.sessionId, slug: docsSlug, token: this.token });
+          pane.webDispose = mountDocsTab(pane.host, {
+            sessionId: this.sessionId,
+            slug: docsSlug,
+            token: this.token,
+            backlog: this.cb.docsBacklog?.(this.sessionId, docsSlug)
+          });
           pane.status = "open";
           this.onPaneStatus(leaf.id, "open");
         } else if (moved) {
@@ -19660,11 +19665,15 @@ var AppShell = class {
     chip.setAttribute("aria-label", `Open item ${formatID(item.id)}`);
     chip.addEventListener("click", (e) => {
       e.stopPropagation();
-      this.actions.switchProject(item.root);
-      this.backlogPane.select(item.id, item.root);
-      this.switchView("backlog");
+      this.openBacklogItem(item.root, item.id);
     });
     return chip;
+  }
+  /** Shows item `id` of project `root` in the Backlog view; 0 opens no item. */
+  openBacklogItem(root2, id) {
+    this.actions.switchProject(root2);
+    if (id > 0) this.backlogPane.select(id, root2);
+    this.switchView("backlog");
   }
   /** One user-owned view transition for both appbar tabs and document shortcuts. */
   switchView(view) {
@@ -20633,6 +20642,14 @@ var BacklogLoader = class {
   }
 };
 
+// src/docs_backlog.ts
+function proposalItems(view, slug) {
+  const items = (view?.backlog.items ?? []).filter((it) => it.source?.proposal === slug);
+  const ids = new Set(items.map((it) => it.id));
+  const top = items.find((it) => !it.parent || !ids.has(it.parent));
+  return { count: items.length, first: top?.id ?? 0 };
+}
+
 // src/index.ts
 var initialThemeChoice = bootStampTheme();
 registerServiceWorker();
@@ -20741,8 +20758,22 @@ var splitView = new SplitView(termHost, {
   // Mirror the layout into the store so the tab bar can highlight the focused pane's
   // tab (activeTab) and flag which tabs are shown across panes (shownTabs). Fired only
   // on a real change, so this write never loops back through rerender → syncSplit.
-  onLayout: ({ focusedTab, shownTabs }) => store.set({ activeTab: focusedTab, shownTabs })
+  onLayout: ({ focusedTab, shownTabs }) => store.set({ activeTab: focusedTab, shownTabs }),
+  docsBacklog: (sessionId, slug) => docsBacklog(sessionId, slug)
 });
+function docsBacklog(sessionId, slug) {
+  const root2 = () => store.get().sessions.find((s) => s.id === sessionId)?.worktree?.repo_path ?? "";
+  return {
+    items: () => {
+      const r = root2();
+      return r ? proposalItems(store.get().backlog?.views.get(r), slug) : null;
+    },
+    open: (id) => {
+      const r = root2();
+      if (r) shell?.openBacklogItem(r, id);
+    }
+  };
+}
 var root = null;
 function mount() {
   root = document.getElementById("app");

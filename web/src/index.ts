@@ -138,6 +138,7 @@ import { type AccountsResponse, type SessionData, TabKind, type TaskData, type W
 import { publishProposalChange, publishProposalPush } from "./docs_tab.js";
 import { parseProposalChange, parseProposalPush } from "./proposal_api.js";
 import { BacklogLoader, EMPTY_BACKLOG_DATA } from "./backlog_data.js";
+import { type DocsBacklog, proposalItems } from "./docs_backlog.js";
 
 // Boot stamp (redesign PR1): apply the saved theme choice to <html> BEFORE the app
 // mounts (before first paint), so an explicit light/dark choice shows no flash. This
@@ -327,7 +328,22 @@ const splitView = new SplitView(termHost, {
   // tab (activeTab) and flag which tabs are shown across panes (shownTabs). Fired only
   // on a real change, so this write never loops back through rerender → syncSplit.
   onLayout: ({ focusedTab, shownTabs }) => store.set({ activeTab: focusedTab, shownTabs }),
+  docsBacklog: (sessionId, slug) => docsBacklog(sessionId, slug),
 });
+
+function docsBacklog(sessionId: string, slug: string): DocsBacklog {
+  const root = (): string => store.get().sessions.find((s) => s.id === sessionId)?.worktree?.repo_path ?? "";
+  return {
+    items: () => {
+      const r = root();
+      return r ? proposalItems(store.get().backlog?.views.get(r), slug) : null;
+    },
+    open: (id) => {
+      const r = root();
+      if (r) shell?.openBacklogItem(r, id);
+    },
+  };
+}
 
 let root: HTMLElement | null = null;
 

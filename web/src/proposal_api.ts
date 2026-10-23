@@ -134,6 +134,11 @@ export async function holdPush(sessionId: string, token: string): Promise<PushSt
   return pushReply(await af<unknown>("HoldProposalPush", { session_id: sessionId }, token));
 }
 
+/** Asks the session's agent to make, or update, the proposal's backlog items. */
+export async function requestBacklogItems(sessionId: string, slug: string, update: boolean, token: string): Promise<void> {
+  await af<unknown>("RequestProposalBacklogItems", { session_id: sessionId, slug, update }, token);
+}
+
 /** Send now: sends at once when the agent is Ready, else on its next Ready tick. */
 export async function sendChanges(sessionId: string, token: string): Promise<PushStatus> {
   return pushReply(await af<unknown>("SendProposalChanges", { session_id: sessionId }, token));
