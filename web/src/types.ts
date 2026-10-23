@@ -452,7 +452,10 @@ export type EventType =
   | "task.updated"
   | "task.removed"
   | "proposal.changed"
-  | "proposal.push";
+  | "proposal.push"
+  | "backlog.changed"
+  | "backlog.spend"
+  | "backlog.runner";
 
 /**
  * agentproto.Event (agentproto/message.go): one message on the /v1/events plane.
