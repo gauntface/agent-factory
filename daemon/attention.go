@@ -109,6 +109,7 @@ func (m *Manager) clearAttentionOnInput(instance *session.Instance) {
 		return
 	}
 	m.publishEvent(agentproto.EventSessionUpdated, data)
+	m.noteBacklogAnsweredInSession(repoID, instance)
 }
 
 // attentionClearingBinding clears the session's attention request when the

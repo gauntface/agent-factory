@@ -22,7 +22,26 @@ type Host interface {
 	// SlotsUsed counts the project's runs that hold a runner slot: starts in
 	// flight plus item sessions with an active run or that af will restore.
 	SlotsUsed(repoID string) int
+	// SetAttention mirrors an item's open question on its session; reason ""
+	// clears it. Best effort: the thread is the source of truth.
+	SetAttention(repoID, sessionID, reason string)
+	// AnswerTarget reports whether an answer can reach the session.
+	AnswerTarget(repoID, sessionID string) AnswerTarget
+	// DeliverAnswer sends prompt to the item's session in the background,
+	// restoring the session first when restore is set.
+	DeliverAnswer(repoID string, id int, sessionID, prompt string, restore bool)
 }
+
+// AnswerTarget is where an answer can go.
+type AnswerTarget int
+
+const (
+	// TargetGone: the session was killed or never existed.
+	TargetGone AnswerTarget = iota
+	TargetLive
+	// TargetRestore: the session is archived, lost or dead; af restores it.
+	TargetRestore
+)
 
 // Service runs the backlog routes over the stores.
 type Service struct {
@@ -260,7 +279,9 @@ func (s *Service) SetItemStatus(req SetItemStatusRequest) (*ItemResponse, error)
 		r := it.lastRun()
 		return r != nil && facts != nil && facts(r.SessionID).RunActive
 	}
+	var asked map[int]string
 	b, err := s.update(p, func(b *Backlog) ([]int, error) {
+		asked = b.questionSessions()
 		by := ActorUser
 		if req.SessionID != "" {
 			if err := checkAgentReview(b, req); err != nil {
@@ -281,6 +302,12 @@ func (s *Service) SetItemStatus(req SetItemStatusRequest) (*ItemResponse, error)
 	})
 	if err != nil {
 		return nil, err
+	}
+	still := b.questionSessions()
+	for id, sessionID := range asked {
+		if _, open := still[id]; !open {
+			s.host.SetAttention(p.id, sessionID, "")
+		}
 	}
 	return &ItemResponse{Item: *b.Item(req.ID)}, nil
 }
@@ -317,40 +344,6 @@ func (s *Service) DeleteItem(req DeleteItemRequest) error {
 		return b.Delete(req.ID)
 	})
 	return err
-}
-
-func (s *Service) PostMessage(req PostMessageRequest) (*MessageResponse, error) {
-	if req.Kind != KindNote {
-		return nil, fmt.Errorf("kind %q is not supported by this af; only %s is", req.Kind, KindNote)
-	}
-	p, err := s.resolve(req.RepoID, req.RepoPath)
-	if err != nil {
-		return nil, err
-	}
-	var msg Message
-	_, err = s.update(p, func(b *Backlog) ([]int, error) {
-		author := AuthorUser
-		if req.SessionID != "" {
-			it, err := b.get(req.ID)
-			if err != nil {
-				return nil, err
-			}
-			if !it.hasRun(req.SessionID) {
-				return nil, fmt.Errorf("session %s is not a run of %s", req.SessionID, FormatID(req.ID))
-			}
-			author = "agent:" + req.SessionID
-		}
-		m, err := b.AddNote(req.ID, author, req.Text, s.now())
-		if err != nil {
-			return nil, err
-		}
-		msg = *m
-		return []int{req.ID}, nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &MessageResponse{Message: msg}, nil
 }
 
 func (s *Service) SetSettings(req SetSettingsRequest) (*SettingsResponse, error) {
