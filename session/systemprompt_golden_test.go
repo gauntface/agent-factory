@@ -155,9 +155,14 @@ func TestAfUsageReferenceJoints(t *testing.T) {
 			want: "if you no longer need them.\n\nProposals: when the user asks",
 		},
 		{
-			// proposals + "\n\n" + outro: a blank line, a new paragraph.
-			name: "proposals to inside outro",
-			want: "af keeps them outside the worktree.\n\nFinishing up: when the user confirms",
+			// proposals + "\n\n" + backlog: a blank line, a new paragraph.
+			name: "proposals to backlog",
+			want: "af keeps them outside the worktree.\n\nBacklog items: when af started",
+		},
+		{
+			// backlog + "\n\n" + outro: a blank line, a new paragraph.
+			name: "backlog to inside outro",
+			want: "not counted against the backlog.\n\nFinishing up: when the user confirms",
 		},
 		{
 			// outro + "\n\n" + tail.
