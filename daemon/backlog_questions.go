@@ -50,7 +50,9 @@ func (h backlogHost) AnswerTarget(repoID, sessionID string) backlog.AnswerTarget
 	return backlog.TargetLive
 }
 
-func backlogNeedsRestore(s itemSession) bool {
+// backlogNeedsRestore is whether an answer must restore the session first. A
+// package var so tests can stand in for an archived session.
+var backlogNeedsRestore = func(s itemSession) bool {
 	switch s.view.Liveness {
 	case session.LiveArchived, session.LiveLost, session.LiveDead:
 		return true

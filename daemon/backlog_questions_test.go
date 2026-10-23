@@ -188,11 +188,11 @@ func TestBacklogAnswerSendFails(t *testing.T) {
 }
 
 func TestBacklogAnswerRestoreFails(t *testing.T) {
-	m, repoID, inst := askedItem(t)
+	m, repoID, _ := askedItem(t)
 	sent := stubBacklogSend(t, m, repoID)
-	if _, _, err := m.ArchiveSession(ArchiveSessionRequest{ID: inst.ID, RepoID: repoID}); err != nil {
-		t.Fatal(err)
-	}
+	prevNeeds := backlogNeedsRestore
+	backlogNeedsRestore = func(itemSession) bool { return true }
+	t.Cleanup(func() { backlogNeedsRestore = prevNeeds })
 	prev := restoreBacklogSession
 	restoreBacklogSession = func(*Manager, RestoreSessionRequest) (session.InstanceData, error) {
 		return session.InstanceData{}, errors.New("worktree removed")
