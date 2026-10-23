@@ -24,6 +24,7 @@ func TestCheckStatusChange(t *testing.T) {
 	for _, by := range []Actor{ActorUser, ActorAgent, ActorAF} {
 		allow(by, StatusReview, StatusRunning)
 	}
+	allow(ActorAgent, StatusReview, StatusReview)
 	allow(ActorUser, StatusDone, StatusDraft, StatusQueued, StatusRunning, StatusReview)
 	allow(ActorUser, StatusDropped, StatusDraft, StatusQueued, StatusRunning, StatusReview)
 
@@ -140,8 +141,8 @@ func TestSetStatusParent(t *testing.T) {
 		want string
 	}{
 		{StatusRunning, ActorAF, "B-1 is a parent; parents run through their children — start a child"},
-		{StatusDone, ActorUser, "only queue and drop apply"},
-		{StatusReview, ActorUser, "only queue and drop apply"},
+		{StatusDone, ActorUser, "only queue, drop and reopen apply"},
+		{StatusReview, ActorUser, "only queue, drop and reopen apply"},
 		{StatusQueued, ActorAgent, "an agent cannot"},
 	}
 	for _, c := range cases {
@@ -149,6 +150,23 @@ func TestSetStatusParent(t *testing.T) {
 		if _, err := b.SetStatus(1, c.to, c.by, nil, t0); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s by %s: err = %v", c.to, c.by, err)
 		}
+	}
+
+	b = build(t)
+	if _, err := b.SetStatus(1, StatusDropped, ActorUser, nil, t0); err != nil {
+		t.Fatal(err)
+	}
+	changed, err = b.SetStatus(1, StatusDraft, ActorUser, nil, t0)
+	if err != nil || !reflect.DeepEqual(changed, []int{2, 3, 5, 6, 7}) {
+		t.Fatal(changed, err)
+	}
+	for _, id := range changed {
+		if b.Item(id).Status != StatusDraft {
+			t.Fatalf("B-%d is %s after reopen", id, b.Item(id).Status)
+		}
+	}
+	if _, err := b.SetStatus(1, StatusDraft, ActorUser, nil, t0); err == nil || !strings.Contains(err.Error(), "no children to reopen") {
+		t.Fatal(err)
 	}
 
 	b = mk(t, Item{ID: 1}, Item{ID: 2, Parent: 1, Status: StatusQueued})

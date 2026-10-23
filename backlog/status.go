@@ -32,7 +32,7 @@ func CheckStatusChange(c StatusChange) error {
 	if !c.To.Valid() {
 		return fmt.Errorf("unknown status %q", c.To)
 	}
-	if c.From == c.To && c.To != StatusRunning {
+	if c.From == c.To && c.To != StatusRunning && !agentReview(c) {
 		return fmt.Errorf("%s is already %s", FormatID(c.ID), c.To)
 	}
 	if c.StartFailed {
@@ -56,7 +56,7 @@ func CheckStatusChange(c StatusChange) error {
 		}
 		ok = c.From == StatusDraft || c.From == StatusQueued || c.From == StatusReview || c.From == StatusRunning
 	case StatusReview:
-		ok = c.From == StatusRunning
+		ok = c.From == StatusRunning || agentReview(c)
 	case StatusDone, StatusDropped:
 		ok = c.By == ActorUser && c.From.Open()
 	}
@@ -64,6 +64,12 @@ func CheckStatusChange(c StatusChange) error {
 		return refuse(c)
 	}
 	return nil
+}
+
+// agentReview is a repeated `done --self`: the item stays in review and the
+// caller updates the PR link.
+func agentReview(c StatusChange) bool {
+	return c.By == ActorAgent && c.From == StatusReview && c.To == StatusReview
 }
 
 func refuse(c StatusChange) error {
@@ -90,8 +96,8 @@ func actorLabel(a Actor) string {
 }
 
 // SetStatus applies a user or agent status change to id. A parent accepts
-// only queued (queues its draft children) and dropped (drops its open
-// children). Done and dropped close the item's open questions. runActive
+// only queued (queues its draft leaves), dropped (drops its open leaves) and
+// draft (reopens its done and dropped leaves). Done and dropped close the item's open questions. runActive
 // reports whether a session has an active backlog run; pass nil when no
 // session can be running. It returns the ids it changed. On error b is
 // unchanged.
@@ -119,10 +125,12 @@ func (b *Backlog) SetStatus(id int, to Status, by Actor, runActive func(*Item) b
 		want = func(s Status) bool { return s == StatusDraft }
 	case StatusDropped:
 		want = Status.Open
+	case StatusDraft:
+		want = func(s Status) bool { return !s.Open() }
 	case StatusRunning:
 		return nil, fmt.Errorf("%s is a parent; parents run through their children — start a child", FormatID(id))
 	default:
-		return nil, fmt.Errorf("%s is a parent; only queue and drop apply to it", FormatID(id))
+		return nil, fmt.Errorf("%s is a parent; only queue, drop and reopen apply to it", FormatID(id))
 	}
 	if by != ActorUser {
 		return nil, refuse(StatusChange{ID: id, From: it.Status, To: to, By: by})
@@ -147,8 +155,11 @@ func (b *Backlog) SetStatus(id int, to Status, by Actor, runActive func(*Item) b
 }
 
 func verb(s Status) string {
-	if s == StatusQueued {
+	switch s {
+	case StatusQueued:
 		return "queue"
+	case StatusDraft:
+		return "reopen"
 	}
 	return "drop"
 }

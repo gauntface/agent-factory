@@ -30,7 +30,7 @@ func (b *Backlog) normalize() error {
 	}
 	for i := range b.Items {
 		it := &b.Items[i]
-		if !seen[it.Parent] || b.parentLoops(it.ID) {
+		if !seen[it.Parent] || it.Parent == it.ID {
 			it.Parent = 0
 		}
 		var waits []int
@@ -43,7 +43,14 @@ func (b *Backlog) normalize() error {
 		}
 		it.WaitsOn = waits
 	}
+	b.cutParentLoops()
 	b.treeOrder()
+	for i := range b.Items {
+		if b.IsParent(b.Items[i].ID) {
+			b.Items[i].Status = StatusDraft
+		}
+	}
+	b.cutWaitCycles()
 
 	s := &b.Settings
 	if s.MaxRunning < 1 {
@@ -56,13 +63,46 @@ func (b *Backlog) normalize() error {
 	return nil
 }
 
-func (b *Backlog) parentLoops(id int) bool {
-	seen := map[int]bool{}
-	for cur := b.Item(id); cur != nil && cur.Parent != 0; cur = b.Item(cur.Parent) {
-		if seen[cur.ID] {
-			return true
+// cutParentLoops makes the item where each parent loop closes top-level, so
+// an item that only points into a loop keeps its parent.
+func (b *Backlog) cutParentLoops() {
+	for i := range b.Items {
+		onPath := map[int]bool{}
+		for cur := &b.Items[i]; cur != nil && cur.Parent != 0; cur = b.Item(cur.Parent) {
+			if onPath[cur.ID] {
+				cur.Parent = 0
+				break
+			}
+			onPath[cur.ID] = true
 		}
-		seen[cur.ID] = true
+	}
+}
+
+// cutWaitCycles drops one waits-on link from each cycle a hand edit left.
+func (b *Backlog) cutWaitCycles() {
+	for cycle := b.findCycleNodes(); cycle != nil; cycle = b.findCycleNodes() {
+		if !b.dropWaitEdge(cycle) {
+			return
+		}
+	}
+}
+
+func (b *Backlog) dropWaitEdge(cycle []node) bool {
+	for k := 0; k+1 < len(cycle); k++ {
+		from, to := cycle[k], cycle[k+1]
+		if !b.isWaitEdge(from, to) {
+			continue
+		}
+		it := b.Item(from.id)
+		for j, w := range it.WaitsOn {
+			if w == to.id {
+				it.WaitsOn = append(it.WaitsOn[:j:j], it.WaitsOn[j+1:]...)
+				if len(it.WaitsOn) == 0 {
+					it.WaitsOn = nil
+				}
+				return true
+			}
+		}
 	}
 	return false
 }

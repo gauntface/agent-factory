@@ -80,8 +80,44 @@ func (b *Backlog) CheckWaitsOn(id, target int) error {
 		return nil
 	}
 	ids := append([]int{id}, collapse(path)...)
+	if !b.allWaitEdges(path) {
+		return fmt.Errorf("%s cannot wait on %s: that would make a wait cycle (%s)",
+			FormatID(id), FormatID(target), formatPath(ids))
+	}
 	return fmt.Errorf("%s cannot wait on %s: %s already waits on %s (%s)",
 		FormatID(id), FormatID(target), FormatID(target), FormatID(id), formatPath(ids))
+}
+
+func (b *Backlog) isWaitEdge(from, to node) bool {
+	if from.done || !to.done || from.id == to.id {
+		return false
+	}
+	it := b.Item(from.id)
+	if it == nil {
+		return false
+	}
+	for _, w := range it.WaitsOn {
+		if w == to.id {
+			return true
+		}
+	}
+	return false
+}
+
+// allWaitEdges reports whether every step of path between two items is a
+// waits-on link; steps inside one item (a leaf's done needing its start) are
+// allowed.
+func (b *Backlog) allWaitEdges(path []node) bool {
+	for k := 0; k+1 < len(path); k++ {
+		from, to := path[k], path[k+1]
+		if from.id == to.id && from.done && !to.done {
+			continue
+		}
+		if !b.isWaitEdge(from, to) {
+			return false
+		}
+	}
+	return true
 }
 
 func findPath(g map[node][]node, from, to node) []node {
@@ -120,6 +156,19 @@ func (b *Backlog) checkCycles() error {
 }
 
 func (b *Backlog) findCycle() []int {
+	found := b.findCycleNodes()
+	if found == nil {
+		return nil
+	}
+	ids := collapse(found)
+	if len(ids) < 2 || ids[0] != ids[len(ids)-1] {
+		ids = append(ids, ids[0])
+	}
+	return ids
+}
+
+// findCycleNodes returns one cycle as nodes, first and last equal, or nil.
+func (b *Backlog) findCycleNodes() []node {
 	g := b.edges()
 	const (
 		white = iota
@@ -155,11 +204,7 @@ func (b *Backlog) findCycle() []int {
 	for _, it := range b.Items {
 		for _, n := range []node{{it.ID, false}, {it.ID, true}} {
 			if color[n] == white && visit(n) {
-				ids := collapse(found)
-				if len(ids) < 2 || ids[0] != ids[len(ids)-1] {
-					ids = append(ids, ids[0])
-				}
-				return ids
+				return found
 			}
 		}
 	}

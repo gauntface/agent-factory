@@ -134,6 +134,12 @@ func (b *Backlog) Move(id int, to Move, now time.Time) error {
 		at = c.topOf(parent)
 	}
 	c.Items = append(c.Items[:at], append(block, c.Items[at:]...)...)
+	if parent != 0 {
+		if p := c.Item(parent); p.Status != StatusDraft {
+			p.Status = StatusDraft
+			p.UpdatedAt = now
+		}
+	}
 	if err := c.checkCycles(); err != nil {
 		return err
 	}

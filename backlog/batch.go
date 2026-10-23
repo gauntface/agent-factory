@@ -26,6 +26,10 @@ func (r Ref) MarshalJSON() ([]byte, error) {
 
 func (r *Ref) UnmarshalJSON(data []byte) error {
 	data = bytes.TrimSpace(data)
+	if bytes.Equal(data, []byte("null")) {
+		*r = Ref{}
+		return nil
+	}
 	if len(data) > 0 && data[0] == '"' {
 		var s string
 		if err := json.Unmarshal(data, &s); err != nil {
@@ -83,19 +87,22 @@ func (b *Backlog) AddBatch(in Batch, now time.Time) (map[string]int, error) {
 		if strings.TrimSpace(x.Title) == "" {
 			return nil, fmt.Errorf("item %d in the batch needs a title", i+1)
 		}
+		if in.Proposal != "" && x.Key == "" {
+			return nil, fmt.Errorf("item %d in the batch needs a key, because the batch names proposal %q", i+1, in.Proposal)
+		}
 		if x.Key != "" {
 			if _, dup := ids[x.Key]; dup {
 				return nil, fmt.Errorf("key %q is used twice in the batch", x.Key)
 			}
 		}
 		id := 0
-		if in.Proposal != "" && x.Key != "" {
+		if in.Proposal != "" {
 			id = c.bySource(in.Proposal, x.Key)
 		}
 		if id == 0 {
 			id = c.allocID()
 			it := Item{ID: id, Status: StatusDraft, CreatedAt: now}
-			if in.Proposal != "" && x.Key != "" {
+			if in.Proposal != "" {
 				it.Source = &Source{Proposal: in.Proposal, Key: x.Key}
 			}
 			c.Items = append(c.Items, it)
@@ -152,6 +159,9 @@ func (b *Backlog) AddBatch(in Batch, now time.Time) (map[string]int, error) {
 		id := abs(ordered[i])
 		waits := make([]int, 0, len(x.WaitsOn))
 		for _, r := range x.WaitsOn {
+			if r.IsZero() {
+				continue
+			}
 			w, err := resolve(r)
 			if err != nil {
 				return nil, err

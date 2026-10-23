@@ -133,11 +133,6 @@ func TestDeriveWaiting(t *testing.T) {
 			[]Item{{ID: 1}, {ID: 2, Parent: 1, Status: StatusDropped}, {ID: 6, Status: StatusQueued, WaitsOn: []int{1}}},
 			6, Derived{State: StateWaiting, Reason: "Waiting on B-1 (dropped)"},
 		},
-		{
-			"cycle from a hand edit does not hang",
-			[]Item{{ID: 1, Status: StatusQueued, WaitsOn: []int{2}}, {ID: 2, Status: StatusQueued, WaitsOn: []int{1}}},
-			1, Derived{State: StateWaiting, Reason: "Waiting on B-2"},
-		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -146,6 +141,14 @@ func TestDeriveWaiting(t *testing.T) {
 				t.Fatalf("got %+v, want %+v", got, c.want)
 			}
 		})
+	}
+}
+
+func TestDeriveCycleDoesNotHang(t *testing.T) {
+	b := mk(t, Item{ID: 1, Status: StatusQueued, WaitsOn: []int{2}}, Item{ID: 2, Status: StatusQueued})
+	b.Item(2).WaitsOn = []int{1}
+	if got := b.Derive(1, nil); got != (Derived{State: StateWaiting, Reason: "Waiting on B-2"}) {
+		t.Fatal(got)
 	}
 }
 

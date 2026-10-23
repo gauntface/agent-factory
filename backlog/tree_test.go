@@ -297,8 +297,8 @@ func TestNormalize(t *testing.T) {
 	if b.Item(3).Parent != 0 || b.Item(5).Parent != 0 || b.Item(6).Parent != 5 {
 		t.Fatal("parents not repaired")
 	}
-	if !reflect.DeepEqual(b.Item(1).WaitsOn, []int{4}) {
-		t.Fatal(b.Item(1).WaitsOn)
+	if b.Item(1).WaitsOn != nil {
+		t.Fatalf("wait on own descendant kept: %v", b.Item(1).WaitsOn)
 	}
 	if b.NextID != 7 || b.Settings.MaxRunning != MaxMaxRunning || b.Settings.OnDone != OnDoneKeep {
 		t.Fatalf("%+v %d", b.Settings, b.NextID)

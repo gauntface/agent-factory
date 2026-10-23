@@ -31,7 +31,7 @@ func TestCheckWaitsOn(t *testing.T) {
 		{name: "descendant", id: 1, on: 4, want: "B-1 cannot wait on B-4: B-4 is inside it"},
 		{name: "missing", id: 1, on: 9, want: "B-9 not found"},
 		{name: "through parent", id: 6, on: 1, wantNone: true},
-		{name: "sequential earlier waits on later", id: 2, on: 3, seq: true, want: "B-3 already waits on B-2"},
+		{name: "sequential earlier waits on later", id: 2, on: 3, seq: true, want: "B-2 cannot wait on B-3: that would make a wait cycle (B-2 → B-3"},
 		{name: "sequential later waits on earlier", id: 3, on: 2, seq: true, wantNone: true},
 	}
 	for _, c := range cases {
@@ -56,7 +56,7 @@ func TestCycleThroughParentWaits(t *testing.T) {
 	// 1 { 2 } waits on 3; 3 waiting on 2 means 2 inherits a wait on itself.
 	b := mk(t, Item{ID: 1, WaitsOn: []int{3}}, Item{ID: 2, Parent: 1}, Item{ID: 3})
 	err := b.CheckWaitsOn(3, 2)
-	if err == nil || !strings.Contains(err.Error(), "B-3 cannot wait on B-2") {
+	if err == nil || err.Error() != "B-3 cannot wait on B-2: that would make a wait cycle (B-3 → B-2 → B-1 → B-3)" {
 		t.Fatalf("err = %v", err)
 	}
 	if b.findCycle() != nil {
@@ -65,7 +65,8 @@ func TestCycleThroughParentWaits(t *testing.T) {
 }
 
 func TestFindCycle(t *testing.T) {
-	b := mk(t, Item{ID: 1, WaitsOn: []int{2}}, Item{ID: 2, WaitsOn: []int{3}}, Item{ID: 3, WaitsOn: []int{1}}, Item{ID: 4})
+	b := mk(t, Item{ID: 1, WaitsOn: []int{2}}, Item{ID: 2, WaitsOn: []int{3}}, Item{ID: 3}, Item{ID: 4})
+	b.Item(3).WaitsOn = []int{1}
 	c := b.findCycle()
 	if len(c) != 4 || c[0] != c[3] {
 		t.Fatalf("cycle = %v", c)
