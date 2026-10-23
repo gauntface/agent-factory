@@ -12585,6 +12585,33 @@ function removeTaskModal(name, onConfirm, onCancel) {
   asForm(handle.el.firstElementChild, onConfirm);
   return handle;
 }
+function askConfirm(opts, mount2, dismiss) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (ok) => {
+      if (settled) return;
+      settled = true;
+      resolve(ok);
+    };
+    const m = textConfirmModal({
+      ...opts,
+      onConfirm: () => {
+        settle(true);
+        dismiss(m);
+      },
+      onCancel: () => {
+        settle(false);
+        dismiss(m);
+      }
+    });
+    const close = m.close.bind(m);
+    m.close = () => {
+      settle(false);
+      close();
+    };
+    mount2(m);
+  });
+}
 function textConfirmModal(opts) {
   const { handle, body } = modalChrome({ title: opts.title, confirmLabel: opts.confirmLabel, confirmClass: "af-primary", onCancel: opts.onCancel });
   body.append(h("p", { class: "af-modal-text" }, opts.body));
@@ -16860,24 +16887,39 @@ function parseWindow(v) {
 function parseUsage(d) {
   const v = isRecord2(d) ? d : {};
   const w = isRecord2(v.windows) ? v.windows : {};
+  const accounts = {};
+  if (isRecord2(v.accounts)) {
+    for (const [name, a] of Object.entries(v.accounts)) {
+      if (isRecord2(a) && isRecord2(a.windows)) accounts[name] = parseWindow(a.windows.five_hour);
+    }
+  }
   return {
     metering: v.metering === true,
+    account: typeof v.account === "string" ? v.account : "",
+    accounts,
     five_hour: parseWindow(w.five_hour),
     seven_day: parseWindow(w.seven_day),
     reading_at: typeof v.reading_at === "string" ? v.reading_at : null,
     runs: numbers(v.runs),
+    run_window: numbers(v.run_window),
     unmeterable: strings(v.unmeterable)
   };
+}
+function spendHasUnmeterable(ev) {
+  return isRecord2(ev) && "unmeterable" in ev;
 }
 function applySpend(prev, ev) {
   if (!isRecord2(ev)) return prev;
   return {
     metering: false,
-    unmeterable: prev?.unmeterable ?? {},
+    account: prev?.account ?? "",
+    accounts: prev?.accounts ?? {},
     five_hour: parseWindow(ev.five_hour),
     seven_day: parseWindow(ev.seven_day),
     reading_at: typeof ev.reading_at === "string" ? ev.reading_at : null,
-    runs: numbers(ev.runs)
+    runs: numbers(ev.runs),
+    run_window: "run_window" in ev ? numbers(ev.run_window) : prev?.run_window ?? {},
+    unmeterable: spendHasUnmeterable(ev) ? strings(ev.unmeterable) : prev?.unmeterable ?? {}
   };
 }
 function valid(w, now) {
@@ -16918,36 +16960,49 @@ function readingAge(at, now) {
   const hours = Math.floor(min / 60);
   return hours < 24 ? `read ${hours} h ago` : `read ${Math.floor(hours / 24)} d ago`;
 }
-function usageHover(u, now) {
+function usageLines(u, now) {
   const line = (k) => {
     const w = u[k];
     const label = WINDOW_LABELS[k].hover;
     if (!valid(w, now)) return `${label} \xB7 no reading`;
     return `${label} \xB7 plan ${pct(w.plan)} \xB7 backlog ${pct(w.backlog)} \xB7 resets ${resetLabel(w.resets_at, now)}`;
   };
-  return [line("five_hour"), line("seven_day"), `${readingAge(u.reading_at, now)} \xB7 all projects`].join("\n");
+  return [line("five_hour"), line("seven_day"), `${readingAge(u.reading_at, now)} \xB7 all projects`];
 }
-function runUse(cost, u, now) {
-  const w = u.five_hour;
-  if (!valid(w, now) || !w.all_cost || w.all_cost <= 0) return null;
+function usageHover(u, now) {
+  return usageLines(u, now).join("\n");
+}
+function runUse(sessionId, u, now, account = "") {
+  const name = account || "default";
+  const w = name !== u.account && u.accounts[name] ? u.accounts[name] : u.five_hour;
+  const cost = u.run_window[sessionId];
+  if (cost === void 0 || !valid(w, now) || !w.all_cost || w.all_cost <= 0) return null;
   return Math.min(100, w.plan * cost / w.all_cost);
 }
 function closedGate(b, u, runner, now) {
-  if (b && b.share <= 0) return "The backlog share is 0%.";
+  if (b && b.share <= 0) return { key: "share:zero", text: "The backlog share is 0%." };
   if (b && u) {
     for (const k of WINDOWS) {
       const w = u[k];
-      if (valid(w, now) && w.backlog >= b.share) return `The backlog used its ${pct(b.share)} of ${WINDOW_LABELS[k].gate}.`;
+      if (valid(w, now) && w.backlog >= b.share) {
+        return { key: `share:${k}`, text: `The backlog used its ${pct(b.share)} of ${WINDOW_LABELS[k].gate}.` };
+      }
     }
     for (const k of WINDOWS) {
       const w = u[k];
-      if (valid(w, now) && w.plan >= b.stop_at) return `The plan is at ${pct(w.plan)} of ${WINDOW_LABELS[k].gate}.`;
+      if (valid(w, now) && w.plan >= b.stop_at) {
+        return { key: `stop_at:${k}`, text: `The plan is at ${pct(w.plan)} of ${WINDOW_LABELS[k].gate}.` };
+      }
     }
   }
   if (runner?.state === "stopped" && (runner.gate === "usage_limit" || runner.gate === "usd_limit") && runner.reason) {
-    return `${runner.reason.replace(/\.$/, "")}.`;
+    return { key: runner.gate, text: `${webReason(runner.reason).replace(/\.$/, "")}.` };
   }
   return null;
+}
+function webReason(reason) {
+  const out = reason.replace(/,?\s+or\s+[^;,·]*"af [^"]*"[^;,·]*/g, "").replace(/(?:[;,]\s*|\s·\s)?[^;,·]*"af [^"]*"[^;,·]*/g, "").trim();
+  return out || reason;
 }
 
 // src/backlog_api.ts
@@ -17255,7 +17310,7 @@ var ItemPanel = class {
       this.note.value = "";
       actions2.note(id, text);
     });
-    this.head = h("div", { class: "af-backlog-panel-state" });
+    this.head = h("div", { class: "af-backlog-panel-state", tabIndex: -1 });
     this.answer = h("textarea", { class: "af-backlog-note", rows: 2, placeholder: `Answer ${formatID(id)}\u2026` });
     this.answer.setAttribute("aria-label", "Answer");
     this.sendAnswer = button("Send answer", () => this.submitAnswer(), "af-primary");
@@ -17352,7 +17407,7 @@ var ItemPanel = class {
     this.head.replaceChildren(stateChip(view, it.id));
     const q = openQuestion(it);
     this.question.hidden = !q;
-    if (q?.id !== this.questionId) this.answer.value = "";
+    if ((q?.id ?? 0) !== this.questionId) this.answer.value = "";
     this.questionId = q?.id ?? 0;
     this.questionText.textContent = q ? q.author === "af" ? `af asks: ${q.text}` : q.text : "";
     this.above.replaceChildren(this.actionsRow(view, it));
@@ -17376,7 +17431,9 @@ var ItemPanel = class {
     restore();
   }
   /** Keeps the focus, and a field's value, across a rebuild: the same control
-   *  is found again by its tag, label and text. */
+   *  is found again by its tag, label and text. An item action that went away,
+   *  such as Start now once the item starts, hands focus to the first action
+   *  left, else to the state chip. */
   keepField() {
     const active = document.activeElement;
     const box = [this.above, this.below].find((b) => active && b.contains(active));
@@ -17387,9 +17444,13 @@ var ItemPanel = class {
     const text = active.textContent;
     const field2 = tag === "INPUT" || tag === "SELECT";
     const value = field2 ? active.value : "";
+    const action = active.dataset.action;
     return () => {
-      const next = [...box.querySelectorAll(tag.toLowerCase())].find((el2) => el2.getAttribute("aria-label") === label && (field2 || el2.textContent === text));
-      if (!next) return;
+      const next = action ? this.above.querySelector(`[data-action="${action}"]`) : [...box.querySelectorAll(tag.toLowerCase())].find((el2) => el2.getAttribute("aria-label") === label && (field2 || el2.textContent === text));
+      if (!next) {
+        if (action) (this.above.querySelector("[data-action]") ?? this.head).focus({ preventScroll: true });
+        return;
+      }
       if (field2) next.value = value;
       next.focus({ preventScroll: true });
     };
@@ -17397,11 +17458,13 @@ var ItemPanel = class {
   actionsRow(view, it) {
     const row = h("div", { class: "af-backlog-actions" });
     for (const a of itemActions(view.backlog, it, derivedOf(view, it.id))) {
-      row.append(button(ACTION_LABELS[a], () => {
+      const b = button(ACTION_LABELS[a], () => {
         if (a === "delete") this.actions.remove(it.id);
         else if (a === "start") this.actions.start(it.id);
         else this.actions.status(it.id, ACTION_STATUS[a]);
-      }, a === "queue" || a === "start" ? "af-primary" : "af-ghost"));
+      }, a === "queue" || a === "start" ? "af-primary" : "af-ghost");
+      b.dataset.action = a;
+      row.append(b);
     }
     row.append(this.moveMenu(view, it));
     return row;
@@ -17556,13 +17619,10 @@ var ItemPanel = class {
       const meta = h("div", { class: "af-backlog-reason" }, [`Started by ${by}`, formatTime(run.started_at), live].join(" \xB7 "));
       const cost = run.session_id ? this.usage?.runs[run.session_id] : void 0;
       if (cost !== void 0 && this.usage) {
-        const use = runUse(cost, this.usage, Date.now());
-        const span = h(
-          "span",
-          { class: "af-backlog-run-use" },
-          use === null ? `${usd(cost)} at API prices` : `${pct(use)} of the 5-hour window`
-        );
-        if (use !== null) span.title = `${usd(cost)} at API prices`;
+        const use = runUse(run.session_id, this.usage, Date.now(), s?.account);
+        const words = use === null ? [`${usd(cost)} at API prices`] : [`${pct(use)} of the 5-hour window`, `${usd(cost)} at API prices`];
+        const span = h("span", { class: "af-backlog-run-use" }, words.join(" \xB7 "));
+        span.title = use === null ? "No reading for the 5-hour window" : `${usd(this.usage.run_window[run.session_id] ?? 0)} in this 5-hour window`;
         meta.append(" \xB7 ", span);
       }
       const btns = h("div", { class: "af-backlog-run-actions" });
@@ -17606,7 +17666,7 @@ function runnerWords(view) {
   const r = view.runner;
   return {
     state: RUNNER_STATES[r.state] ?? "Runner on",
-    reason: (r.reason ?? "").replace(/\.$/, ""),
+    reason: webReason(r.reason ?? "").replace(/\.$/, ""),
     warn: r.state === "stopped" || r.state === "waiting"
   };
 }
@@ -17660,7 +17720,12 @@ var RunnerBar = class {
       if (this.usage) this.plan.title = usageHover(this.usage, this.now());
     };
     this.plan.addEventListener("pointerenter", hover);
-    this.plan.addEventListener("focus", hover);
+    this.plan.setAttribute("aria-expanded", "false");
+    this.plan.addEventListener("click", () => {
+      this.planDetail.hidden = !this.planDetail.hidden;
+      this.plan.setAttribute("aria-expanded", String(!this.planDetail.hidden));
+      this.fillDetail();
+    });
     this.main = h("button", { type: "button", class: "af-primary", hidden: true });
     this.main.addEventListener("click", () => this.runMain());
     this.run = h("button", { type: "button", class: "af-ghost" }, "Run next");
@@ -17679,7 +17744,8 @@ var RunnerBar = class {
       { class: "af-backlog-head" },
       h("span", { class: "af-backlog-heading" }, "Backlog"),
       h("div", { class: "af-backlog-runner" }, this.toggle, this.reason, this.slots, this.plan),
-      h("div", { class: "af-backlog-runner-actions" }, this.main, this.run, this.menu)
+      h("div", { class: "af-backlog-runner-actions" }, this.main, this.run, this.menu),
+      this.planDetail
     );
   }
   el;
@@ -17687,7 +17753,9 @@ var RunnerBar = class {
   toggleLabel = h("span", { class: "af-backlog-runner-state" });
   reason = h("span", { class: "af-backlog-reason" });
   slots;
-  plan = h("span", { class: "af-backlog-plan", tabIndex: 0 });
+  plan = h("button", { type: "button", class: "af-backlog-plan" });
+  planDetail = h("div", { class: "af-backlog-plan-detail", hidden: true });
+  slotsKey = "";
   main;
   run;
   menu;
@@ -17764,21 +17832,34 @@ var RunnerBar = class {
     this.run.disabled = busy;
     this.fill();
   }
+  /** Rebuilds the options only when their words change: replacing them
+   *  closes a native select the user has open. */
   fillSlots(view) {
     const used = view.runner.used;
     const max = Math.max(1, view.backlog.settings.max_running);
+    const key = `${used}/${max}`;
+    if (key === this.slotsKey) return;
+    this.slotsKey = key;
     const top = Math.max(MAX_RUNNING, max);
     const opts = [];
     for (let n = 1; n <= top; n++) opts.push(h("option", { value: String(n) }, `${used} of ${n} working`));
     this.slots.replaceChildren(...opts);
     this.slots.value = String(max);
   }
+  fillDetail() {
+    if (this.planDetail.hidden || !this.usage) return;
+    this.planDetail.replaceChildren(...usageLines(this.usage, this.now()).map((l) => h("div", {}, l)));
+  }
   fillPlan() {
     const u = this.usage;
     const b = this.budget;
     this.plan.hidden = !u || !b;
-    if (!u || !b) return;
+    if (!u || !b) {
+      this.planDetail.hidden = true;
+      return;
+    }
     this.plan.title = usageHover(u, this.now());
+    this.fillDetail();
     if (u.metering) {
       this.plan.replaceChildren("Reading plan usage\u2026");
       return;
@@ -17865,6 +17946,9 @@ var BacklogPane = class {
   // follows the start's reply, Infinity until it comes.
   starts = /* @__PURE__ */ new Map();
   running = false;
+  // Starts asked for and not yet answered by the daemon, so a second click
+  // while the confirm or the request is out does nothing.
+  asking = /* @__PURE__ */ new Set();
   confirmed = /* @__PURE__ */ new Set();
   runner;
   headSlot = h("div", {});
@@ -17937,13 +18021,17 @@ var BacklogPane = class {
       if (!stillStarting(it, gen <= s.gen, this.sessions)) this.starts.delete(k);
     }
   }
-  /** Asks once per closed budget gate before a start by hand. */
+  /** Asks once per closed budget gate, by gate and window, before a start
+   *  by hand. */
   async gateOK(v, verb, id) {
     const gate = closedGate(this.data?.budget ?? null, this.data?.usage ?? null, v.runner, Date.now());
-    if (gate === null || this.confirmed.has(gate)) return true;
-    const ask = `${verb} ${formatID(id)} anyway?`;
-    const ok = await this.host.confirm(ask, `${gate} ${ask} Its use still counts.`, `${verb} anyway`);
-    if (ok) this.confirmed.add(gate);
+    if (gate === null || this.confirmed.has(gate.key)) return true;
+    const ok = await this.host.confirm(
+      "Budget gate closed",
+      `${gate.text} ${verb} ${formatID(id)} anyway? Its use still counts.`,
+      `${verb} anyway`
+    );
+    if (ok) this.confirmed.add(gate.key);
     return ok;
   }
   markStarting(root2, id) {
@@ -17958,15 +18046,24 @@ ${id}`, entry);
   }
   start(root2, id) {
     const v = this.root === root2 ? this.view() : void 0;
-    if (!v) return;
+    const key = `${root2}
+${id}`;
+    if (!v || this.asking.has(key)) return;
+    this.asking.add(key);
     void this.gateOK(v, "Start", id).then((ok) => {
       const token2 = this.host.token();
-      if (!ok || token2 === null) return;
+      if (!ok || token2 === null) {
+        this.asking.delete(key);
+        return;
+      }
       const entry = this.markStarting(root2, id);
       this.render();
-      startItem(root2, id, token2).then(() => this.settle(root2, [entry]), (e) => {
-        this.starts.delete(`${root2}
-${id}`);
+      startItem(root2, id, token2).then(() => {
+        this.asking.delete(key);
+        return this.settle(root2, [entry]);
+      }, (e) => {
+        this.asking.delete(key);
+        this.starts.delete(key);
         this.host.notify(errorText(e));
         this.render();
         void this.host.refresh();
@@ -17977,15 +18074,22 @@ ${id}`);
     const v = this.view();
     const root2 = this.root;
     if (!v || !root2 || this.running) return;
+    this.running = true;
+    this.render();
     const top = topQueued(v);
     void (top ? this.gateOK(v, "Start", top.id) : Promise.resolve(true)).then((ok) => {
       const token2 = this.host.token();
-      if (!ok || token2 === null) return;
-      this.running = true;
-      this.render();
+      if (!ok || token2 === null) {
+        this.running = false;
+        this.render();
+        return;
+      }
       runNext(root2, token2).then((r) => {
         this.running = false;
-        if (r.started.length === 0 && r.reason) this.host.notify(r.reason.charAt(0).toUpperCase() + r.reason.slice(1));
+        if (r.started.length === 0 && r.reason) {
+          const why = webReason(r.reason);
+          this.host.notify(why.charAt(0).toUpperCase() + why.slice(1));
+        }
         return this.settle(root2, r.started.map((id) => this.markStarting(root2, id)));
       }, (e) => {
         this.running = false;
@@ -20460,6 +20564,9 @@ var BacklogLoader = class {
   timer = null;
   budgetGeneration = 0;
   spendGeneration = 0;
+  // Whether a backlog.spend since the last GetBudget reply named the
+  // unmeterable runs; an older daemon's payload does not.
+  spendUnmeterable = false;
   /** The newest refresh started so far. */
   started() {
     return this.generation;
@@ -20490,7 +20597,13 @@ var BacklogLoader = class {
       }
     }
     const fresh = budgetGen === this.budgetGeneration ? budget : null;
-    const usage = fresh && spendGen === this.spendGeneration ? fresh.usage : cur.usage;
+    let usage = cur.usage;
+    if (fresh && spendGen === this.spendGeneration) {
+      usage = fresh.usage;
+      this.spendUnmeterable = false;
+    } else if (fresh && cur.usage && !this.spendUnmeterable) {
+      usage = { ...cur.usage, unmeterable: fresh.usage.unmeterable };
+    }
     this.opts.commit({ views, errors, budget: fresh?.budget ?? cur.budget, usage, generation: gen });
   }
   /** Applies a backlog.spend payload. A GetBudget still in flight was read
@@ -20500,6 +20613,7 @@ var BacklogLoader = class {
     const usage = applySpend(cur.usage, ev);
     if (usage === cur.usage) return;
     this.spendGeneration++;
+    if (spendHasUnmeterable(ev)) this.spendUnmeterable = true;
     this.opts.commit({ ...cur, usage });
   }
   /** Coalesces a burst of events into one refetch. */
@@ -21235,14 +21349,9 @@ function openConfirm(action, session, invoker = captureModalInvoker()) {
   if (immediateRestore) onConfirm();
 }
 function confirmBacklog(title, body, confirmLabel) {
-  return new Promise((resolve) => {
-    let mounted = null;
-    const finish = (ok) => {
-      if (modal === mounted) closeModal();
-      resolve(ok);
-    };
-    mounted = textConfirmModal({ title, body, confirmLabel, onConfirm: () => finish(true), onCancel: () => finish(false) });
-    openModal(mounted, true);
+  return askConfirm({ title, body, confirmLabel }, (m) => openModal(m, true), (m) => {
+    if (modal === m) closeModal();
+    else m.close();
   });
 }
 function openDeleteProject(root2, label) {

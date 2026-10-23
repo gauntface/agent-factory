@@ -4234,11 +4234,29 @@ button[class], input[class], select[class], textarea[class] { font-size: var(--a
 
 .af-backlog-plan {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--af-space-1);
-  white-space: nowrap;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--af-ink);
+  border: none;
+  font: inherit;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.af-backlog-plan-detail {
+  flex-basis: 100%;
+  font-size: var(--af-type-caption);
+  color: var(--af-ink-muted);
   font-variant-numeric: tabular-nums;
 }
+
+.af-backlog-plan-detail[hidden] { display: none; }
 
 .af-backlog-plan[hidden] { display: none; }
 

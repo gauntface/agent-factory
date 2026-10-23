@@ -1025,6 +1025,35 @@ export function removeTaskModal(name: string, onConfirm: () => void, onCancel: (
   return handle;
 }
 
+/** Opens a textConfirmModal and resolves once: true on confirm, false on
+ *  cancel or on any close of the handle — Escape, a replacing overlay, or a
+ *  teardown all close it without calling onCancel. */
+export function askConfirm(
+  opts: { title: string; body: string; confirmLabel: string },
+  mount: (m: ModalHandle) => void,
+  dismiss: (m: ModalHandle) => void,
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (ok: boolean): void => {
+      if (settled) return;
+      settled = true;
+      resolve(ok);
+    };
+    const m: ModalHandle = textConfirmModal({
+      ...opts,
+      onConfirm: () => { settle(true); dismiss(m); },
+      onCancel: () => { settle(false); dismiss(m); },
+    });
+    const close = m.close.bind(m);
+    m.close = () => {
+      settle(false);
+      close();
+    };
+    mount(m);
+  });
+}
+
 /** A plain yes-or-no confirm: a title, one paragraph, and the action. */
 export function textConfirmModal(opts: { title: string; body: string; confirmLabel: string; onConfirm: () => void; onCancel: () => void }): ModalHandle {
   const { handle, body } = modalChrome({ title: opts.title, confirmLabel: opts.confirmLabel, confirmClass: "af-primary", onCancel: opts.onCancel });

@@ -7,7 +7,7 @@
 import { errorText } from "./api.js";
 import { getBacklog, getBudget } from "./backlog_api.js";
 import type { BacklogView, Budget } from "./backlog_model.js";
-import { type Usage, applySpend } from "./backlog_usage.js";
+import { type Usage, applySpend, spendHasUnmeterable } from "./backlog_usage.js";
 
 export interface BacklogData {
   views: ReadonlyMap<string, BacklogView>;
@@ -34,6 +34,9 @@ export class BacklogLoader {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private budgetGeneration = 0;
   private spendGeneration = 0;
+  // Whether a backlog.spend since the last GetBudget reply named the
+  // unmeterable runs; an older daemon's payload does not.
+  private spendUnmeterable = false;
 
   constructor(private readonly opts: BacklogLoaderOptions) {}
 
@@ -70,7 +73,13 @@ export class BacklogLoader {
       }
     }
     const fresh = budgetGen === this.budgetGeneration ? budget : null;
-    const usage = fresh && spendGen === this.spendGeneration ? fresh.usage : cur.usage;
+    let usage = cur.usage;
+    if (fresh && spendGen === this.spendGeneration) {
+      usage = fresh.usage;
+      this.spendUnmeterable = false;
+    } else if (fresh && cur.usage && !this.spendUnmeterable) {
+      usage = { ...cur.usage, unmeterable: fresh.usage.unmeterable };
+    }
     this.opts.commit({ views, errors, budget: fresh?.budget ?? cur.budget, usage, generation: gen });
   }
 
@@ -81,6 +90,7 @@ export class BacklogLoader {
     const usage = applySpend(cur.usage, ev);
     if (usage === cur.usage) return;
     this.spendGeneration++;
+    if (spendHasUnmeterable(ev)) this.spendUnmeterable = true;
     this.opts.commit({ ...cur, usage });
   }
 

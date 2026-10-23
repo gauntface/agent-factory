@@ -80,7 +80,7 @@ import {
   newSessionModal,
   rebindProjectModal,
   removeTaskModal,
-  textConfirmModal,
+  askConfirm,
 } from "./modals.js";
 import { confirmDeleteTabModal } from "./delete_tab_modal.js";
 import { InstallAffordance } from "./install.js";
@@ -1196,16 +1196,11 @@ function openConfirm(
 }
 
 /** The backlog's one-time confirm before a start by hand while a budget gate
- *  is closed. A modal that another overlay replaces counts as a no. */
+ *  is closed. */
 function confirmBacklog(title: string, body: string, confirmLabel: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    let mounted: ModalHandle | null = null;
-    const finish = (ok: boolean): void => {
-      if (modal === mounted) closeModal();
-      resolve(ok);
-    };
-    mounted = textConfirmModal({ title, body, confirmLabel, onConfirm: () => finish(true), onCancel: () => finish(false) });
-    openModal(mounted, true);
+  return askConfirm({ title, body, confirmLabel }, (m) => openModal(m, true), (m) => {
+    if (modal === m) closeModal();
+    else m.close();
   });
 }
 

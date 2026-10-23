@@ -48,8 +48,11 @@ const BUDGET = {
     five_hour: { plan: 41, backlog: 12, resets_at: "2000-01-01T04:00:00Z", all_cost: 20 },
     seven_day: { plan: 52, backlog: 31, resets_at: "2000-01-08T09:00:00Z", all_cost: 120 },
   },
+  account: "default",
   reading_at: "2000-01-01T00:03:00Z",
   runs: { s2: 1.2 },
+  run_window: { s2: 0.5 },
+  unmeterable: {},
 };
 
 async function serve(page: Page): Promise<void> {
@@ -110,6 +113,12 @@ test.describe("backlog view stills", () => {
     await serve(page);
     await openBacklog(page);
     await page.locator(".af-backlog-row").first().blur();
+    const plan = page.locator(".af-backlog-plan");
+    const box = await plan.boundingBox();
+    expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(390);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    await plan.click();
+    await expect(page.locator(".af-backlog-plan-detail")).toContainText("read 2 min ago · all projects");
     await still(page, info, "backlog-390.png");
     await page.locator('.af-backlog-row[data-item-id="4"]').click();
     const panel = page.getByRole("complementary", { name: "Item B-4" });

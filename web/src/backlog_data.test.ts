@@ -130,9 +130,35 @@ test("a spend event applies in place and wins over a budget read before it", asy
   assert.equal(state.usage?.runs.s1, 1.25);
   assert.equal(state.views, views);
   answer("GetBacklog", backlogOf("b"));
-  answer("GetBudget", { ...(budgetOf(2) as object), windows: { five_hour: { plan: 1, backlog: 1, resets_at: null } }, runs: {} });
+  answer("GetBudget", { ...(budgetOf(2) as object), windows: { five_hour: { plan: 1, backlog: 1, resets_at: null } }, runs: {},
+    unmeterable: { s7: "the runner can't meter aider" } });
   await settle();
   assert.equal(state.budget?.usd_spent, 2);
   assert.equal(state.usage?.five_hour.backlog, 12);
   assert.equal(state.usage?.runs.s1, 1.25);
+  assert.deepEqual(state.usage?.unmeterable, { s7: "the runner can't meter aider" }, "an older spend payload names no unmeterable runs");
+});
+
+test("unmeterable runs follow the newest source that names them", async () => {
+  const l = loader();
+  void l.refresh();
+  await settle();
+  answer("GetBacklog", backlogOf("a"));
+  answer("GetBudget", { ...(budgetOf(1) as object), unmeterable: { s7: "old" } });
+  await settle();
+  void l.refresh();
+  await settle();
+  l.applySpend({ five_hour: {}, seven_day: {}, reading_at: null, runs: {}, run_window: { s1: 0.5 }, unmeterable: {} });
+  assert.deepEqual(state.usage?.unmeterable, {});
+  assert.deepEqual(state.usage?.run_window, { s1: 0.5 });
+  answer("GetBacklog", backlogOf("a"));
+  answer("GetBudget", { ...(budgetOf(1) as object), unmeterable: { s7: "old" } });
+  await settle();
+  assert.deepEqual(state.usage?.unmeterable, {}, "a reply read before the spend event does not bring back a cleared run");
+  void l.refresh();
+  await settle();
+  answer("GetBacklog", backlogOf("a"));
+  answer("GetBudget", { ...(budgetOf(1) as object), unmeterable: { s8: "new" } });
+  await settle();
+  assert.deepEqual(state.usage?.unmeterable, { s8: "new" });
 });

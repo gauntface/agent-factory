@@ -76,10 +76,13 @@ const BUDGET: Budget = { share: 50, stop_at: 90, max_per_run: 10, usd_limit: 0, 
 function usage(over: Partial<Usage> = {}): Usage {
   return {
     metering: false,
+    account: "default",
+    accounts: {},
     five_hour: { plan: 41, backlog: 12, resets_at: iso("2000-01-03T14:00:00"), all_cost: 20 },
     seven_day: { plan: 40, backlog: 18, resets_at: iso("2000-01-10T09:00:00"), all_cost: 200 },
     reading_at: iso("2000-01-03T09:58:00"),
     runs: {},
+    run_window: {},
     unmeterable: {},
     ...over,
   };
@@ -177,13 +180,15 @@ test("a closed budget gate asks once before a start by hand", async () => {
   h.answerConfirm = false;
   buttonNamed(el(pane), "Start now")!.click();
   await settle();
-  assert.deepEqual(h.asked, [["Start B-12 anyway?",
+  assert.deepEqual(h.asked, [["Budget gate closed",
     "The backlog used its 50% of the week. Start B-12 anyway? Its use still counts.", "Start anyway"]]);
   assert.equal(sent("StartBacklogItem").length, 0);
   h.answerConfirm = true;
   buttonNamed(el(pane), "Start now")!.click();
   await settle();
   assert.equal(sent("StartBacklogItem").length, 1);
+  const more = usage({ seven_day: { plan: 64, backlog: 55, resets_at: iso("2000-01-10T09:00:00"), all_cost: 1 } });
+  pane.update(data(v, 2, more), "/a", []);
   pane.select(13);
   buttonNamed(el(pane), "Start now")!.click();
   await settle();
@@ -334,15 +339,94 @@ test("a paused runner says why and offers the main action ui.md names", () => {
   assert.equal(el(pane).querySelector(".af-backlog-panel")?.getAttribute("aria-label"), "Item B-7");
 });
 
-test("a run shows its use of the 5-hour window, with its API cost on hover", () => {
+test("a run shows its use of the 5-hour window and its API cost", () => {
   const pane = mount(host());
   const run = { session_id: "s1", title: "B-1 item 1", state: "started", prev_status: "draft" as const, started_by: "user", started_at: "" };
-  pane.update(data(view([item(1, { status: "running", runs: [run] })], { 1: "working" }), 1, usage({ runs: { s1: 2 } })), "/a", [session("s1")]);
+  pane.update(data(view([item(1, { status: "running", runs: [run] })], { 1: "working" }), 1,
+    usage({ runs: { s1: 9 }, run_window: { s1: 2 } })), "/a", [session("s1")]);
   pane.select(1);
   const use = el(pane).querySelector(".af-backlog-run-use")!;
-  assert.equal(use.textContent, "4.1% of the 5-hour window");
-  assert.equal(use.title, "$2.00 at API prices");
+  assert.equal(use.textContent, "4.1% of the 5-hour window · $9.00 at API prices");
+  assert.equal(use.title, "$2.00 in this 5-hour window");
   pane.update(data(view([item(1, { status: "running", runs: [run] })], { 1: "working" }), 2,
-    usage({ runs: { s1: 2 }, five_hour: { plan: 0, backlog: 0, resets_at: null } })), "/a", [session("s1")]);
-  assert.equal(el(pane).querySelector(".af-backlog-run-use")!.textContent, "$2.00 at API prices");
+    usage({ runs: { s1: 9 }, run_window: { s1: 2 }, five_hour: { plan: 0, backlog: 0, resets_at: null } })), "/a", [session("s1")]);
+  assert.equal(el(pane).querySelector(".af-backlog-run-use")!.textContent, "$9.00 at API prices");
+});
+
+test("a second click while a start or a run is out does nothing", async () => {
+  const h = host();
+  const pane = mount(h);
+  pane.update(data(view([item(1, { status: "queued" })], { 1: "queued" })), "/a", []);
+  pane.select(1);
+  let release: () => void = () => {};
+  h.confirm = () => new Promise((r) => { release = () => r(true); });
+  pane.update(data(view([item(1, { status: "queued" })], { 1: "queued" }), 2,
+    usage({ seven_day: { plan: 60, backlog: 51, resets_at: iso("2000-01-10T09:00:00") } })), "/a", []);
+  const start = buttonNamed(el(pane), "Start now")!;
+  start.click();
+  start.click();
+  release();
+  await settle();
+  assert.equal(sent("StartBacklogItem").length, 1);
+  let done: (v: unknown) => void = () => {};
+  reply = (m) => (m === "RunBacklog" ? new Promise((r) => { done = r; }) : Promise.resolve({}));
+  const run = buttonNamed(el(pane), "Run next")!;
+  run.click();
+  await settle();
+  assert.equal(run.disabled, true);
+  run.click();
+  done({ started: [] });
+  await settle();
+  assert.equal(sent("RunBacklog").length, 1);
+  assert.equal(buttonNamed(el(pane), "Run next")!.disabled, false);
+});
+
+test("focus stays on the max running select and on an item action through a spend render", () => {
+  const pane = mount(host());
+  const v = view([item(1, { status: "queued" })], { 1: "queued" });
+  pane.update(data(v), "/a", []);
+  pane.select(1);
+  const slots = el(pane).querySelector('select[aria-label="Max running"]')!;
+  const options = slots.children;
+  slots.focus();
+  pane.update(data(v, 1, usage({ runs: { s1: 1 } })), "/a", []);
+  assert.equal(doc.activeElement, slots);
+  assert.deepEqual(slots.children, options, "the options are not rebuilt");
+  buttonNamed(el(pane), "Mark done")!.focus();
+  pane.update(data(v, 1, usage({ runs: { s1: 2 } })), "/a", []);
+  assert.equal(doc.activeElement?.textContent, "Mark done");
+  assert.ok(el(pane).contains(doc.activeElement));
+});
+
+test("when Start now goes away its focus moves to the next action", async () => {
+  const pane = mount(host());
+  pane.update(data(view([item(1)], { 1: "draft" })), "/a", []);
+  pane.select(1);
+  reply = async () => ({ run: { session_id: "", state: "starting" } });
+  const start = buttonNamed(el(pane), "Start now")!;
+  start.focus();
+  start.click();
+  await settle();
+  assert.equal(buttonNamed(el(pane), "Start now"), undefined);
+  assert.equal(doc.activeElement?.dataset.action, "queue");
+});
+
+test("the plan use opens its detail on tap, and daemon reasons lose their CLI hints", () => {
+  const pane = mount(host());
+  pane.update(data(view([item(1)], {}, { state: "stopped", gate: "share", reason: 'Backlog share is 0% · raise it with "af backlog budget --share 50"' })), "/a", []);
+  const bar = el(pane).querySelector(".af-backlog-head")!;
+  assert.match(bar.textContent, /· Backlog share is 0%/);
+  assert.doesNotMatch(bar.textContent, /af backlog/);
+  const plan = bar.querySelector("button.af-backlog-plan")!;
+  const detail = bar.querySelector(".af-backlog-plan-detail")!;
+  assert.equal(detail.hidden, true);
+  plan.click();
+  assert.equal(plan.getAttribute("aria-expanded"), "true");
+  assert.deepEqual(detail.children.map((c) => c.textContent), [
+    "5-hour · plan 41% · backlog 12% · resets 14:00",
+    "Weekly · plan 40% · backlog 18% · resets Mon 09:00",
+    "read 2 min ago · all projects",
+  ]);
+  plan.click();
+  assert.equal(detail.hidden, true);
 });

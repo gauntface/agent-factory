@@ -121,7 +121,7 @@ export class ItemPanel {
       this.note.value = "";
       actions.note(id, text);
     });
-    this.head = h("div", { class: "af-backlog-panel-state" });
+    this.head = h("div", { class: "af-backlog-panel-state", tabIndex: -1 });
     this.answer = h("textarea", { class: "af-backlog-note", rows: 2, placeholder: `Answer ${formatID(id)}…` });
     this.answer.setAttribute("aria-label", "Answer");
     this.sendAnswer = button("Send answer", () => this.submitAnswer(), "af-primary");
@@ -185,7 +185,7 @@ export class ItemPanel {
     this.head.replaceChildren(stateChip(view, it.id));
     const q = openQuestion(it);
     this.question.hidden = !q;
-    if (q?.id !== this.questionId) this.answer.value = "";
+    if ((q?.id ?? 0) !== this.questionId) this.answer.value = "";
     this.questionId = q?.id ?? 0;
     this.questionText.textContent = q ? (q.author === "af" ? `af asks: ${q.text}` : q.text) : "";
     this.above.replaceChildren(this.actionsRow(view, it));
@@ -204,7 +204,9 @@ export class ItemPanel {
   }
 
   /** Keeps the focus, and a field's value, across a rebuild: the same control
-   *  is found again by its tag, label and text. */
+   *  is found again by its tag, label and text. An item action that went away,
+   *  such as Start now once the item starts, hands focus to the first action
+   *  left, else to the state chip. */
   private keepField(): () => void {
     const active = document.activeElement as HTMLInputElement | null;
     const box = [this.above, this.below].find((b) => active && b.contains(active));
@@ -214,11 +216,17 @@ export class ItemPanel {
     const text = active.textContent;
     const field = tag === "INPUT" || tag === "SELECT";
     const value = field ? active.value : "";
+    const action = active.dataset.action;
     return () => {
-      const next = [...box.querySelectorAll<HTMLInputElement>(tag.toLowerCase())]
-        .find((el) => el.getAttribute("aria-label") === label && (field || el.textContent === text));
-      if (!next) return;
-      if (field) next.value = value;
+      const next = action
+        ? this.above.querySelector<HTMLElement>(`[data-action="${action}"]`)
+        : [...box.querySelectorAll<HTMLInputElement>(tag.toLowerCase())]
+          .find((el) => el.getAttribute("aria-label") === label && (field || el.textContent === text));
+      if (!next) {
+        if (action) (this.above.querySelector<HTMLElement>("[data-action]") ?? this.head).focus({ preventScroll: true });
+        return;
+      }
+      if (field) (next as HTMLInputElement).value = value;
       next.focus({ preventScroll: true });
     };
   }
@@ -226,11 +234,13 @@ export class ItemPanel {
   private actionsRow(view: BacklogView, it: Item): HTMLElement {
     const row = h("div", { class: "af-backlog-actions" });
     for (const a of itemActions(view.backlog, it, derivedOf(view, it.id))) {
-      row.append(button(ACTION_LABELS[a], () => {
+      const b = button(ACTION_LABELS[a], () => {
         if (a === "delete") this.actions.remove(it.id);
         else if (a === "start") this.actions.start(it.id);
         else this.actions.status(it.id, ACTION_STATUS[a]);
-      }, a === "queue" || a === "start" ? "af-primary" : "af-ghost"));
+      }, a === "queue" || a === "start" ? "af-primary" : "af-ghost");
+      b.dataset.action = a;
+      row.append(b);
     }
     row.append(this.moveMenu(view, it));
     return row;
@@ -364,10 +374,10 @@ export class ItemPanel {
       const meta = h("div", { class: "af-backlog-reason" }, [`Started by ${by}`, formatTime(run.started_at), live].join(" · "));
       const cost = run.session_id ? this.usage?.runs[run.session_id] : undefined;
       if (cost !== undefined && this.usage) {
-        const use = runUse(cost, this.usage, Date.now());
-        const span = h("span", { class: "af-backlog-run-use" },
-          use === null ? `${usd(cost)} at API prices` : `${pct(use)} of the 5-hour window`);
-        if (use !== null) span.title = `${usd(cost)} at API prices`;
+        const use = runUse(run.session_id, this.usage, Date.now(), s?.account);
+        const words = use === null ? [`${usd(cost)} at API prices`] : [`${pct(use)} of the 5-hour window`, `${usd(cost)} at API prices`];
+        const span = h("span", { class: "af-backlog-run-use" }, words.join(" · "));
+        span.title = use === null ? "No reading for the 5-hour window" : `${usd(this.usage.run_window[run.session_id] ?? 0)} in this 5-hour window`;
         meta.append(" · ", span);
       }
       const btns = h("div", { class: "af-backlog-run-actions" });

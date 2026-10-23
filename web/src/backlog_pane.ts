@@ -15,7 +15,7 @@ import {
 } from "./backlog_model.js";
 import { ItemPanel, entryField, stateChip } from "./backlog_panel.js";
 import { RunnerBar } from "./backlog_runner.js";
-import { closedGate } from "./backlog_usage.js";
+import { closedGate, webReason } from "./backlog_usage.js";
 import { h } from "./dom.js";
 import { icon } from "./icon.js";
 import { recoveryScreen } from "./recovery.js";
@@ -76,6 +76,9 @@ export class BacklogPane {
   // follows the start's reply, Infinity until it comes.
   private readonly starts = new Map<string, { root: string; id: number; gen: number }>();
   private running = false;
+  // Starts asked for and not yet answered by the daemon, so a second click
+  // while the confirm or the request is out does nothing.
+  private readonly asking = new Set<string>();
   private readonly confirmed = new Set<string>();
   private readonly runner: RunnerBar;
   private readonly headSlot = h("div", {});
@@ -168,13 +171,14 @@ export class BacklogPane {
     }
   }
 
-  /** Asks once per closed budget gate before a start by hand. */
+  /** Asks once per closed budget gate, by gate and window, before a start
+   *  by hand. */
   private async gateOK(v: BacklogView, verb: string, id: number): Promise<boolean> {
     const gate = closedGate(this.data?.budget ?? null, this.data?.usage ?? null, v.runner, Date.now());
-    if (gate === null || this.confirmed.has(gate)) return true;
-    const ask = `${verb} ${formatID(id)} anyway?`;
-    const ok = await this.host.confirm(ask, `${gate} ${ask} Its use still counts.`, `${verb} anyway`);
-    if (ok) this.confirmed.add(gate);
+    if (gate === null || this.confirmed.has(gate.key)) return true;
+    const ok = await this.host.confirm("Budget gate closed",
+      `${gate.text} ${verb} ${formatID(id)} anyway? Its use still counts.`, `${verb} anyway`);
+    if (ok) this.confirmed.add(gate.key);
     return ok;
   }
 
@@ -191,14 +195,23 @@ export class BacklogPane {
 
   private start(root: string, id: number): void {
     const v = this.root === root ? this.view() : undefined;
-    if (!v) return;
+    const key = `${root}\n${id}`;
+    if (!v || this.asking.has(key)) return;
+    this.asking.add(key);
     void this.gateOK(v, "Start", id).then((ok) => {
       const token = this.host.token();
-      if (!ok || token === null) return;
+      if (!ok || token === null) {
+        this.asking.delete(key);
+        return;
+      }
       const entry = this.markStarting(root, id);
       this.render();
-      startItem(root, id, token).then(() => this.settle(root, [entry]), (e: unknown) => {
-        this.starts.delete(`${root}\n${id}`);
+      startItem(root, id, token).then(() => {
+        this.asking.delete(key);
+        return this.settle(root, [entry]);
+      }, (e: unknown) => {
+        this.asking.delete(key);
+        this.starts.delete(key);
         this.host.notify(errorText(e));
         this.render();
         void this.host.refresh();
@@ -210,15 +223,22 @@ export class BacklogPane {
     const v = this.view();
     const root = this.root;
     if (!v || !root || this.running) return;
+    this.running = true;
+    this.render();
     const top = topQueued(v);
     void (top ? this.gateOK(v, "Start", top.id) : Promise.resolve(true)).then((ok) => {
       const token = this.host.token();
-      if (!ok || token === null) return;
-      this.running = true;
-      this.render();
+      if (!ok || token === null) {
+        this.running = false;
+        this.render();
+        return;
+      }
       runNext(root, token).then((r) => {
         this.running = false;
-        if (r.started.length === 0 && r.reason) this.host.notify(r.reason.charAt(0).toUpperCase() + r.reason.slice(1));
+        if (r.started.length === 0 && r.reason) {
+          const why = webReason(r.reason);
+          this.host.notify(why.charAt(0).toUpperCase() + why.slice(1));
+        }
         return this.settle(root, r.started.map((id) => this.markStarting(root, id)));
       }, (e: unknown) => {
         this.running = false;

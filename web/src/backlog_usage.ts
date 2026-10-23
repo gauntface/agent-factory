@@ -16,11 +16,18 @@ export interface PlanWindow {
 
 export interface Usage {
   metering: boolean;
+  /** The af account the top-level windows are for; "default" is the ambient
+   *  Claude identity. */
+  account: string;
+  /** Each metered account's 5-hour window, from GetBudget. */
+  accounts: Record<string, PlanWindow>;
   five_hour: PlanWindow;
   seven_day: PlanWindow;
   reading_at: string | null;
   /** Each item session's metered cost in US dollars at API prices. */
   runs: Record<string, number>;
+  /** Each item session's metered cost in the current 5-hour window. */
+  run_window: Record<string, number>;
   /** Why af cannot meter an item session, by session id. */
   unmeterable: Record<string, string>;
 }
@@ -64,27 +71,45 @@ function parseWindow(v: unknown): PlanWindow {
 export function parseUsage(d: unknown): Usage {
   const v = isRecord(d) ? d : {};
   const w = isRecord(v.windows) ? v.windows : {};
+  const accounts: Record<string, PlanWindow> = {};
+  if (isRecord(v.accounts)) {
+    for (const [name, a] of Object.entries(v.accounts)) {
+      if (isRecord(a) && isRecord(a.windows)) accounts[name] = parseWindow(a.windows.five_hour);
+    }
+  }
   return {
     metering: v.metering === true,
+    account: typeof v.account === "string" ? v.account : "",
+    accounts,
     five_hour: parseWindow(w.five_hour),
     seven_day: parseWindow(w.seven_day),
     reading_at: typeof v.reading_at === "string" ? v.reading_at : null,
     runs: numbers(v.runs),
+    run_window: numbers(v.run_window),
     unmeterable: strings(v.unmeterable),
   };
 }
 
-/** Applies a backlog.spend payload; it carries the windows, reading time and run
- *  costs, so the rest stays as GetBudget last said. */
+/** Whether a backlog.spend payload carries the unmeterable runs; a daemon
+ *  from before they were added leaves them out. */
+export function spendHasUnmeterable(ev: unknown): boolean {
+  return isRecord(ev) && "unmeterable" in ev;
+}
+
+/** Applies a backlog.spend payload. Fields the payload leaves out keep what
+ *  GetBudget last said. */
 export function applySpend(prev: Usage | null, ev: unknown): Usage | null {
   if (!isRecord(ev)) return prev;
   return {
     metering: false,
-    unmeterable: prev?.unmeterable ?? {},
+    account: prev?.account ?? "",
+    accounts: prev?.accounts ?? {},
     five_hour: parseWindow(ev.five_hour),
     seven_day: parseWindow(ev.seven_day),
     reading_at: typeof ev.reading_at === "string" ? ev.reading_at : null,
     runs: numbers(ev.runs),
+    run_window: "run_window" in ev ? numbers(ev.run_window) : prev?.run_window ?? {},
+    unmeterable: spendHasUnmeterable(ev) ? strings(ev.unmeterable) : prev?.unmeterable ?? {},
   };
 }
 
@@ -137,41 +162,69 @@ export function readingAge(at: string | null, now: number): string {
   return hours < 24 ? `read ${hours} h ago` : `read ${Math.floor(hours / 24)} d ago`;
 }
 
-/** The runner bar's hover: both windows, the reading's age, and the scope. */
-export function usageHover(u: Usage, now: number): string {
+/** The runner bar's detail: both windows, the reading's age, and the scope. */
+export function usageLines(u: Usage, now: number): string[] {
   const line = (k: WindowKey): string => {
     const w = u[k];
     const label = WINDOW_LABELS[k].hover;
     if (!valid(w, now)) return `${label} · no reading`;
     return `${label} · plan ${pct(w.plan)} · backlog ${pct(w.backlog)} · resets ${resetLabel(w.resets_at!, now)}`;
   };
-  return [line("five_hour"), line("seven_day"), `${readingAge(u.reading_at, now)} · all projects`].join("\n");
+  return [line("five_hour"), line("seven_day"), `${readingAge(u.reading_at, now)} · all projects`];
 }
 
-/** A run's use as a percent of the 5-hour window: the plan percent times the
- *  run's part of all metered cost in it. null without a reading or cost. */
-export function runUse(cost: number, u: Usage, now: number): number | null {
-  const w = u.five_hour;
-  if (!valid(w, now) || !w.all_cost || w.all_cost <= 0) return null;
+export function usageHover(u: Usage, now: number): string {
+  return usageLines(u, now).join("\n");
+}
+
+/** A run's use as a percent of its account's 5-hour window: its cost in the
+ *  window over all metered cost in it, times the plan percent. null without a
+ *  reading, a window cost for the run, or any metered cost. account is the
+ *  session's af account; empty is the ambient identity, "default". */
+export function runUse(sessionId: string, u: Usage, now: number, account = ""): number | null {
+  const name = account || "default";
+  const w = name !== u.account && u.accounts[name] ? u.accounts[name] : u.five_hour;
+  const cost = u.run_window[sessionId];
+  if (cost === undefined || !valid(w, now) || !w.all_cost || w.all_cost <= 0) return null;
   return Math.min(100, (w.plan * cost) / w.all_cost);
 }
 
-/** The first closed budget gate, as one sentence, or null when all are open.
- *  A start by hand passes the gates, so the web asks once before it does. */
-export function closedGate(b: Budget | null, u: Usage | null, runner: RunnerView | null, now: number): string | null {
-  if (b && b.share <= 0) return "The backlog share is 0%.";
+export interface Gate {
+  /** The gate and window, stable while the numbers move: "stop_at:five_hour". */
+  key: string;
+  text: string;
+}
+
+/** The first closed budget gate, or null when all are open. A start by hand
+ *  passes the gates, so the web asks once per gate before it does. */
+export function closedGate(b: Budget | null, u: Usage | null, runner: RunnerView | null, now: number): Gate | null {
+  if (b && b.share <= 0) return { key: "share:zero", text: "The backlog share is 0%." };
   if (b && u) {
     for (const k of WINDOWS) {
       const w = u[k];
-      if (valid(w, now) && w.backlog >= b.share) return `The backlog used its ${pct(b.share)} of ${WINDOW_LABELS[k].gate}.`;
+      if (valid(w, now) && w.backlog >= b.share) {
+        return { key: `share:${k}`, text: `The backlog used its ${pct(b.share)} of ${WINDOW_LABELS[k].gate}.` };
+      }
     }
     for (const k of WINDOWS) {
       const w = u[k];
-      if (valid(w, now) && w.plan >= b.stop_at) return `The plan is at ${pct(w.plan)} of ${WINDOW_LABELS[k].gate}.`;
+      if (valid(w, now) && w.plan >= b.stop_at) {
+        return { key: `stop_at:${k}`, text: `The plan is at ${pct(w.plan)} of ${WINDOW_LABELS[k].gate}.` };
+      }
     }
   }
   if (runner?.state === "stopped" && (runner.gate === "usage_limit" || runner.gate === "usd_limit") && runner.reason) {
-    return `${runner.reason.replace(/\.$/, "")}.`;
+    return { key: runner.gate, text: `${webReason(runner.reason).replace(/\.$/, "")}.` };
   }
   return null;
+}
+
+/** A daemon reason without its CLI hints: the web offers its own actions, so
+ *  a clause naming an af command is dropped. */
+export function webReason(reason: string): string {
+  const out = reason
+    .replace(/,?\s+or\s+[^;,·]*"af [^"]*"[^;,·]*/g, "")
+    .replace(/(?:[;,]\s*|\s·\s)?[^;,·]*"af [^"]*"[^;,·]*/g, "")
+    .trim();
+  return out || reason;
 }

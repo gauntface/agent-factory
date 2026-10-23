@@ -6,7 +6,7 @@
 
 import type { BudgetUpdate } from "./backlog_api.js";
 import { type BacklogView, type Budget, formatID } from "./backlog_model.js";
-import { type Usage, WINDOW_LABELS, pct, tighterWindow, usageHover, usd } from "./backlog_usage.js";
+import { type Usage, WINDOW_LABELS, pct, tighterWindow, usageHover, usageLines, usd, webReason } from "./backlog_usage.js";
 import { h } from "./dom.js";
 
 export interface RunnerActions {
@@ -38,7 +38,7 @@ export function runnerWords(view: BacklogView): RunnerWords {
   const r = view.runner;
   return {
     state: RUNNER_STATES[r.state] ?? "Runner on",
-    reason: (r.reason ?? "").replace(/\.$/, ""),
+    reason: webReason(r.reason ?? "").replace(/\.$/, ""),
     warn: r.state === "stopped" || r.state === "waiting",
   };
 }
@@ -94,7 +94,9 @@ export class RunnerBar {
   private readonly toggleLabel = h("span", { class: "af-backlog-runner-state" });
   private readonly reason = h("span", { class: "af-backlog-reason" });
   private readonly slots: HTMLSelectElement;
-  private readonly plan = h("span", { class: "af-backlog-plan", tabIndex: 0 });
+  private readonly plan = h("button", { type: "button", class: "af-backlog-plan" });
+  private readonly planDetail = h("div", { class: "af-backlog-plan-detail", hidden: true });
+  private slotsKey = "";
   private readonly main: HTMLButtonElement;
   private readonly run: HTMLButtonElement;
   private readonly menu: HTMLDetailsElement;
@@ -118,7 +120,12 @@ export class RunnerBar {
     this.slots.addEventListener("change", () => actions.setMaxRunning(Number(this.slots.value)));
     const hover = (): void => { if (this.usage) this.plan.title = usageHover(this.usage, this.now()); };
     this.plan.addEventListener("pointerenter", hover);
-    this.plan.addEventListener("focus", hover);
+    this.plan.setAttribute("aria-expanded", "false");
+    this.plan.addEventListener("click", () => {
+      this.planDetail.hidden = !this.planDetail.hidden;
+      this.plan.setAttribute("aria-expanded", String(!this.planDetail.hidden));
+      this.fillDetail();
+    });
     this.main = h("button", { type: "button", class: "af-primary", hidden: true });
     this.main.addEventListener("click", () => this.runMain());
     this.run = h("button", { type: "button", class: "af-ghost" }, "Run next");
@@ -131,7 +138,7 @@ export class RunnerBar {
     this.el = h("div", { class: "af-backlog-head" },
       h("span", { class: "af-backlog-heading" }, "Backlog"),
       h("div", { class: "af-backlog-runner" }, this.toggle, this.reason, this.slots, this.plan),
-      h("div", { class: "af-backlog-runner-actions" }, this.main, this.run, this.menu));
+      h("div", { class: "af-backlog-runner-actions" }, this.main, this.run, this.menu), this.planDetail);
   }
 
   private menuSummary(): HTMLElement {
@@ -196,9 +203,14 @@ export class RunnerBar {
     this.fill();
   }
 
+  /** Rebuilds the options only when their words change: replacing them
+   *  closes a native select the user has open. */
   private fillSlots(view: BacklogView): void {
     const used = view.runner.used;
     const max = Math.max(1, view.backlog.settings.max_running);
+    const key = `${used}/${max}`;
+    if (key === this.slotsKey) return;
+    this.slotsKey = key;
     const top = Math.max(MAX_RUNNING, max);
     const opts = [];
     for (let n = 1; n <= top; n++) opts.push(h("option", { value: String(n) }, `${used} of ${n} working`));
@@ -206,12 +218,21 @@ export class RunnerBar {
     this.slots.value = String(max);
   }
 
+  private fillDetail(): void {
+    if (this.planDetail.hidden || !this.usage) return;
+    this.planDetail.replaceChildren(...usageLines(this.usage, this.now()).map((l) => h("div", {}, l)));
+  }
+
   private fillPlan(): void {
     const u = this.usage;
     const b = this.budget;
     this.plan.hidden = !u || !b;
-    if (!u || !b) return;
+    if (!u || !b) {
+      this.planDetail.hidden = true;
+      return;
+    }
     this.plan.title = usageHover(u, this.now());
+    this.fillDetail();
     if (u.metering) {
       this.plan.replaceChildren("Reading plan usage…");
       return;
