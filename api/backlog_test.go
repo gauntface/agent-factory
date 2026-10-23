@@ -233,6 +233,15 @@ func TestBacklogEditMoveStatusDelete(t *testing.T) {
 			t.Fatalf("%v: %s %v", step.args, out, err)
 		}
 	}
+	if _, err := runBacklogCmd(t, "draft", "1"); err == nil || err.Error() != `B-1 is done; reopen it with "af backlog reopen 1"` {
+		t.Fatal(err)
+	}
+	if _, err := runBacklogCmd(t, "reopen", "2"); err == nil || err.Error() != "B-2 is draft; only a done or dropped item can be reopened" {
+		t.Fatal(err)
+	}
+	if _, err := runBacklogCmd(t, "reopen", "8"); err == nil || !strings.Contains(err.Error(), "B-8 not found in project repo-a") {
+		t.Fatal(err)
+	}
 	if _, err := runBacklogCmd(t, "review", "2"); err == nil || !strings.Contains(err.Error(), "only a running item goes to review") {
 		t.Fatal(err)
 	}
@@ -325,13 +334,22 @@ func TestBacklogRunnerAndBudget(t *testing.T) {
 			t.Fatalf("%v: %s %v", step.args, out, err)
 		}
 	}
-	for _, args := range [][]string{{"budget", "add"}, {"budget", "add", "five"}, {"budget", "reset", "1"}, {"budget", "spend", "1"}} {
+	for _, args := range [][]string{{"budget", "add"}, {"budget", "add", "five"}, {"budget", "add", "inf"},
+		{"budget", "set", "NaN"}, {"budget", "add", "1e400"}, {"budget", "set", "--", "-1"}, {"budget", "--max-per-run=-2"}, {"budget", "reset", "1"}, {"budget", "spend", "1"}} {
 		if _, err := runBacklogCmd(t, args...); err == nil {
 			t.Errorf("%v accepted", args)
 		}
 	}
 	if out, _ := runBacklogCmd(t, "runner"); decodeOut[backlogRunnerView](t, out).State != backlog.RunnerIdle {
 		t.Fatal(out)
+	}
+}
+
+func TestRemoteProjectName(t *testing.T) {
+	for in, want := range map[string]string{"/srv/proj": "proj", "/srv/proj/": "proj", ".": "", "/": "", "..": "", "a/..": ""} {
+		if got := remoteProjectName(in); got != want {
+			t.Errorf("%q: %q, want %q", in, got, want)
+		}
 	}
 }
 

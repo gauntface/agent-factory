@@ -600,7 +600,7 @@ af backlog done <id>
 
 Put a queued or in-review item back to draft
 
-Set the item's status to draft, so the runner does not start it.
+Set the item's status to draft, so the runner does not start it. For a done or dropped item, use reopen.
 
 ```
 af backlog draft <id>
@@ -760,7 +760,7 @@ af backlog queue <id>
 
 Reopen a done or dropped item as a draft
 
-Set a done or dropped item's status back to draft.
+Set a done or dropped item's status back to draft. On a parent, reopen its done and dropped children.
 
 ```
 af backlog reopen <id>

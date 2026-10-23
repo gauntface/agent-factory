@@ -1,6 +1,7 @@
 package backlog
 
 import (
+	"math"
 	"os/exec"
 	"path/filepath"
 	"reflect"
@@ -12,10 +13,11 @@ import (
 type testHost struct {
 	name    string
 	changed [][]int
+	lookups int
 }
 
 func (h *testHost) Facts(string) Facts          { return nil }
-func (h *testHost) ProjectName(string) string   { return h.name }
+func (h *testHost) ProjectName(string) string   { h.lookups++; return h.name }
 func (h *testHost) Changed(_ string, ids []int) { h.changed = append(h.changed, ids) }
 func (h *testHost) last() []int                 { return h.changed[len(h.changed)-1] }
 func ptr[T any](v T) *T                         { return &v }
@@ -136,6 +138,9 @@ func TestServiceUpdateMoveDelete(t *testing.T) {
 	if err := s.Move(MoveRequest{RepoID: repoID, ID: 2, Into: 3}); err != nil {
 		t.Fatal(err)
 	}
+	if !reflect.DeepEqual(h.last(), []int{2, 3}) {
+		t.Fatalf("move into: %v", h.changed)
+	}
 	v, _ := s.Get(GetRequest{RepoID: repoID})
 	var order []int
 	for _, it := range v.Backlog.Items {
@@ -151,7 +156,7 @@ func TestServiceUpdateMoveDelete(t *testing.T) {
 	if err := s.DeleteItem(DeleteItemRequest{RepoID: repoID, ID: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(h.changed, [][]int{{1}}) {
+	if !reflect.DeepEqual(h.changed, [][]int{{1, 2}}) {
 		t.Fatal(h.changed)
 	}
 	v, _ = s.Get(GetRequest{RepoID: repoID})
@@ -272,6 +277,68 @@ func TestServiceSettings(t *testing.T) {
 	}
 }
 
+func TestServiceMoveOutReportsOldParent(t *testing.T) {
+	s, h := newTestService(t)
+	mustAdd(t, s, ItemInput{Key: "p", Title: "P"}, ItemInput{Key: "a", Title: "A", Parent: Ref{Key: "p"}},
+		ItemInput{Key: "b", Title: "B", Parent: Ref{Key: "p"}})
+	if err := s.Move(MoveRequest{RepoID: repoID, ID: 3, After: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(h.last(), []int{3, 1}) {
+		t.Fatal(h.changed)
+	}
+}
+
+func TestServiceBatchReportsKeylessItems(t *testing.T) {
+	s, h := newTestService(t)
+	mustAdd(t, s, ItemInput{Key: "x", Title: "X"})
+	out, err := s.Add(AddRequest{RepoID: repoID, Items: []ItemInput{{Title: "A"}, {Key: "b", Title: "B"}, {Title: "C", Parent: Ref{ID: 1}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []int
+	for _, it := range out.Items {
+		got = append(got, it.ID)
+	}
+	if !reflect.DeepEqual(got, []int{4, 2, 3}) || !reflect.DeepEqual(h.last(), []int{4, 2, 3}) {
+		t.Fatalf("items %v, event %v", got, h.changed)
+	}
+	if !reflect.DeepEqual(out.IDs, map[string]int{"b": 3}) {
+		t.Fatal(out.IDs)
+	}
+}
+
+func TestServiceProposalBatchReportsUpdates(t *testing.T) {
+	s, h := newTestService(t)
+	batch := AddRequest{RepoID: repoID, Proposal: "p", Items: []ItemInput{{Key: "a", Title: "A"}, {Key: "b", Title: "B"}}}
+	if _, err := s.Add(batch); err != nil {
+		t.Fatal(err)
+	}
+	mustAdd(t, s, ItemInput{Key: "z", Title: "other"})
+	batch.Items = append(batch.Items, ItemInput{Key: "c", Title: "C"})
+	out, err := s.Add(batch)
+	if err != nil || len(out.Items) != 3 || !reflect.DeepEqual(h.last(), []int{1, 2, 4}) {
+		t.Fatal(out, err, h.changed)
+	}
+}
+
+func TestServiceLooksUpNameOnlyForNotFound(t *testing.T) {
+	s, h := newTestService(t)
+	mustAdd(t, s, ItemInput{Key: "a", Title: "A"})
+	if _, err := s.Get(GetRequest{RepoID: repoID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetItemStatus(SetItemStatusRequest{RepoID: repoID, ID: 1, Status: StatusQueued}); err != nil {
+		t.Fatal(err)
+	}
+	if h.lookups != 0 {
+		t.Fatalf("%d name lookups on success", h.lookups)
+	}
+	if err := s.DeleteItem(DeleteItemRequest{RepoID: repoID, ID: 5}); err == nil || h.lookups != 1 {
+		t.Fatal(err, h.lookups)
+	}
+}
+
 func TestServiceBudget(t *testing.T) {
 	s, _ := newTestService(t)
 	b, err := s.GetBudget(GetBudgetRequest{})
@@ -313,9 +380,16 @@ func TestServiceBudget(t *testing.T) {
 	}
 	for _, req := range []SetBudgetRequest{
 		{}, {Add: ptr(1.0), Reset: true}, {Add: ptr(0.0)}, {Set: ptr(-1.0)}, {MaxPerRun: ptr(-1.0)},
+		{Add: ptr(math.Inf(1))}, {Set: ptr(math.NaN())}, {MaxPerRun: ptr(math.Inf(1))},
 	} {
 		if _, err := s.SetBudget(req); err == nil {
 			t.Errorf("%+v accepted", req)
 		}
+	}
+	if _, err := s.SetBudget(SetBudgetRequest{Set: ptr(math.MaxFloat64)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetBudget(SetBudgetRequest{Add: ptr(math.MaxFloat64)}); err == nil || err.Error() != "the budget is too large" {
+		t.Fatal(err)
 	}
 }

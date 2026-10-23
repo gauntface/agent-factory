@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -12,7 +13,27 @@ import (
 	"github.com/sachiniyer/agent-factory/daemon"
 )
 
-func backlogStatusCmd(use, short, long string, to backlog.Status) *cobra.Command {
+// statusCheck refuses a status change from the item's shown state before the
+// request is sent; nil sends it as is.
+type statusCheck func(id int, st backlog.State) error
+
+// reopenCheck lets reopen act only on done and dropped items.
+func reopenCheck(id int, st backlog.State) error {
+	if st != backlog.StateDone && st != backlog.StateDropped {
+		return fmt.Errorf("%s is %s; only a done or dropped item can be reopened", backlog.FormatID(id), strings.ToLower(st.Label()))
+	}
+	return nil
+}
+
+// draftCheck sends done and dropped items to reopen.
+func draftCheck(id int, st backlog.State) error {
+	if st == backlog.StateDone || st == backlog.StateDropped {
+		return fmt.Errorf("%s is %s; reopen it with \"af backlog reopen %d\"", backlog.FormatID(id), strings.ToLower(st.Label()), id)
+	}
+	return nil
+}
+
+func backlogStatusCmd(use, short, long string, to backlog.Status, check statusCheck) *cobra.Command {
 	return &cobra.Command{
 		Use:   use + " <id>",
 		Short: short,
@@ -28,6 +49,18 @@ func backlogStatusCmd(use, short, long string, to backlog.Status) *cobra.Command
 				if err != nil {
 					return nil, err
 				}
+				if check != nil {
+					v, err := t.get()
+					if err != nil {
+						return nil, err
+					}
+					if v.Backlog.Item(id) == nil {
+						return nil, &backlog.NotFoundError{ID: id, Project: t.name}
+					}
+					if err := check(id, v.States[id].State); err != nil {
+						return nil, err
+					}
+				}
 				var resp daemon.SetBacklogItemStatusResponse
 				if err := callBacklogRoute("SetBacklogItemStatus", daemon.SetBacklogItemStatusRequest{
 					RepoID: t.repoID, RepoPath: t.repoPath, ID: id, Status: to,
@@ -42,18 +75,20 @@ func backlogStatusCmd(use, short, long string, to backlog.Status) *cobra.Command
 
 var (
 	backlogQueueCmd = backlogStatusCmd("queue", "Make an item eligible for the runner",
-		"Set the item's status to queued. On a parent, queue its draft children.", backlog.StatusQueued)
+		"Set the item's status to queued. On a parent, queue its draft children.", backlog.StatusQueued, nil)
 	backlogDraftCmd = backlogStatusCmd("draft", "Put a queued or in-review item back to draft",
-		"Set the item's status to draft, so the runner does not start it.", backlog.StatusDraft)
+		"Set the item's status to draft, so the runner does not start it. For a done or dropped "+
+			"item, use reopen.", backlog.StatusDraft, draftCheck)
 	backlogReviewCmd = backlogStatusCmd("review", "Send a running item to review",
-		"Set a running item's status to review, for you to check and mark done.", backlog.StatusReview)
+		"Set a running item's status to review, for you to check and mark done.", backlog.StatusReview, nil)
 	backlogReopenCmd = backlogStatusCmd("reopen", "Reopen a done or dropped item as a draft",
-		"Set a done or dropped item's status back to draft.", backlog.StatusDraft)
+		"Set a done or dropped item's status back to draft. On a parent, reopen its done and "+
+			"dropped children.", backlog.StatusDraft, reopenCheck)
 	backlogDoneCmd = backlogStatusCmd("done", "Mark an item done after review",
 		"Mark the item done. Items that wait on it can then start. Open questions on it close; "+
-			"its session stays.", backlog.StatusDone)
+			"its session stays.", backlog.StatusDone, nil)
 	backlogDropCmd = backlogStatusCmd("drop", "Mark an item dropped",
-		"Mark the item dropped. On a parent, drop its open children. Its session stays.", backlog.StatusDropped)
+		"Mark the item dropped. On a parent, drop its open children. Its session stays.", backlog.StatusDropped, nil)
 )
 
 var backlogDeleteCmd = &cobra.Command{
@@ -255,8 +290,8 @@ func budgetRequest(args []string) (daemon.SetBudgetRequest, bool, error) {
 
 func parseUSD(s string) (float64, error) {
 	v, err := strconv.ParseFloat(strings.TrimPrefix(strings.TrimSpace(s), "$"), 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid amount %q: use US dollars, for example 5 or 2.50", s)
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+		return 0, fmt.Errorf("invalid amount %q: use US dollars of 0 or more, for example 5 or 2.50", s)
 	}
 	return v, nil
 }

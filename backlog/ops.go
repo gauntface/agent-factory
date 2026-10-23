@@ -3,40 +3,40 @@ package backlog
 import (
 	"errors"
 	"fmt"
+	"math"
+	"slices"
 	"strings"
 	"time"
 )
 
 // Delete removes a draft that has no runs, no thread and no children. Links
-// that wait on it are removed too. On error b is unchanged.
-func (b *Backlog) Delete(id int) error {
+// that wait on it are removed too. It returns id and the ids whose waits-on
+// changed. On error b is unchanged.
+func (b *Backlog) Delete(id int) ([]int, error) {
 	it, err := b.get(id)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if b.IsParent(id) {
-		return fmt.Errorf("%s has children; delete or move them first, or drop it instead", FormatID(id))
+		return nil, fmt.Errorf("%s has children; delete or move them first, or drop it instead", FormatID(id))
 	}
 	if it.Status != StatusDraft {
-		return fmt.Errorf("%s is %s; only a draft can be deleted — drop it instead", FormatID(id), it.Status)
+		return nil, fmt.Errorf("%s is %s; only a draft can be deleted — drop it instead", FormatID(id), it.Status)
 	}
 	if len(it.Runs) > 0 || len(it.Thread) > 0 {
-		return fmt.Errorf("%s is a draft with runs or a thread; drop it instead", FormatID(id))
+		return nil, fmt.Errorf("%s is a draft with runs or a thread; drop it instead", FormatID(id))
 	}
 	i := b.index(id)
 	b.Items = append(b.Items[:i], b.Items[i+1:]...)
+	changed := []int{id}
 	for j := range b.Items {
-		w := b.Items[j].WaitsOn[:0:0]
-		for _, x := range b.Items[j].WaitsOn {
-			if x != id {
-				w = append(w, x)
-			}
-		}
-		if len(w) != len(b.Items[j].WaitsOn) {
-			b.Items[j].WaitsOn = w
+		other := &b.Items[j]
+		if slices.Contains(other.WaitsOn, id) {
+			other.WaitsOn = slices.DeleteFunc(other.WaitsOn, func(x int) bool { return x == id })
+			changed = append(changed, other.ID)
 		}
 	}
-	return nil
+	return changed, nil
 }
 
 // AddNote appends a note to the item's thread. A note is never delivered to a
@@ -94,6 +94,11 @@ func (b *Backlog) ApplySettings(c SettingsChange) error {
 // Add, Set and Reset may be given; MaxPerRun may go with any of them. On error
 // b is unchanged.
 func (c SetBudgetRequest) Apply(b *Budget, now time.Time) error {
+	for _, v := range []*float64{c.Add, c.Set, c.MaxPerRun} {
+		if v != nil && (math.IsNaN(*v) || math.IsInf(*v, 0)) {
+			return errors.New("an amount must be a finite number of US dollars")
+		}
+	}
 	n := 0
 	for _, set := range []bool{c.Add != nil, c.Set != nil, c.Reset} {
 		if set {
@@ -113,6 +118,9 @@ func (c SetBudgetRequest) Apply(b *Budget, now time.Time) error {
 			return errors.New("add needs an amount above $0")
 		}
 		next.Limit += *c.Add
+		if math.IsInf(next.Limit, 0) {
+			return errors.New("the budget is too large")
+		}
 	case c.Set != nil:
 		if *c.Set < 0 {
 			return errors.New("the budget cannot be below $0")

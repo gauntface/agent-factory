@@ -66,7 +66,7 @@ func backlogProject() (*backlogTarget, error) {
 		if repoFlag == "" {
 			return nil, fmt.Errorf("--repo is required with --daemon-url: pass --repo <path on the daemon host at %s>", apiclient.RemoteTargetURL())
 		}
-		return &backlogTarget{repoPath: repoFlag, name: filepath.Base(repoFlag)}, nil
+		return &backlogTarget{repoPath: repoFlag, name: remoteProjectName(repoFlag)}, nil
 	}
 	if repoFlag != "" {
 		repo, err := repoFromFlag()
@@ -83,6 +83,16 @@ func backlogProject() (*backlogTarget, error) {
 		return nil, errors.New("--repo is required: the current directory is not a git repository — pass --repo <path> to target a project")
 	}
 	return &backlogTarget{repoID: repo.ID, name: filepath.Base(repo.Root)}, nil
+}
+
+// remoteProjectName names a project from a path on a remote host. A path
+// with no last element names nothing, and errors then leave the project out.
+func remoteProjectName(path string) string {
+	base := filepath.Base(filepath.Clean(path))
+	if base == "." || base == ".." || base == string(filepath.Separator) {
+		return ""
+	}
+	return base
 }
 
 func (t *backlogTarget) get() (*backlog.View, error) {

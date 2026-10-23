@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -31,8 +32,10 @@ func NewService(host Host) *Service {
 }
 
 type project struct {
+	host Host
 	id   string
-	name string
+	// fallback names the project when the host does not know it.
+	fallback string
 }
 
 func (s *Service) resolve(repoID, repoPath string) (*project, error) {
@@ -44,7 +47,7 @@ func (s *Service) resolve(repoID, repoPath string) (*project, error) {
 		if err := config.ValidateRepoID(repoID); err != nil {
 			return nil, err
 		}
-		return &project{id: repoID, name: s.host.ProjectName(repoID)}, nil
+		return &project{host: s.host, id: repoID}, nil
 	}
 	path, err := config.ResolveUserPath(repoPath)
 	if err != nil {
@@ -54,20 +57,24 @@ func (s *Service) resolve(repoID, repoPath string) (*project, error) {
 	if err != nil {
 		return nil, fmt.Errorf("repo_path %q: %w", repoPath, err)
 	}
-	name := s.host.ProjectName(repo.ID)
-	if name == "" {
-		name = filepath.Base(repo.Root)
-	}
-	return &project{id: repo.ID, name: name}, nil
+	return &project{host: s.host, id: repo.ID, fallback: filepath.Base(repo.Root)}, nil
 }
 
-// named adds the project name to a not-found error.
+// named adds the project name to a not-found error. The name lookup is not
+// free, so it runs only here.
 func (p *project) named(err error) error {
 	var nf *NotFoundError
-	if errors.As(err, &nf) && nf.Project == "" && p.name != "" {
-		return &NotFoundError{ID: nf.ID, Project: p.name}
+	if !errors.As(err, &nf) || nf.Project != "" {
+		return err
 	}
-	return err
+	name := p.host.ProjectName(p.id)
+	if name == "" {
+		name = p.fallback
+	}
+	if name == "" {
+		return err
+	}
+	return &NotFoundError{ID: nf.ID, Project: name}
 }
 
 func (s *Service) update(p *project, fn func(*Backlog) ([]int, error)) (*Backlog, error) {
@@ -147,13 +154,21 @@ func (s *Service) Add(req AddRequest) (*AddResponse, error) {
 			order = []int{it.ID}
 			return order, nil
 		}
+		existed := map[int]bool{}
+		for _, it := range b.Items {
+			existed[it.ID] = true
+		}
 		var err error
 		if ids, err = b.AddBatch(Batch{Proposal: req.Proposal, Items: req.Items}, now); err != nil {
 			return nil, err
 		}
-		for _, x := range req.Items {
-			if id, ok := ids[x.Key]; ok && x.Key != "" {
-				order = append(order, id)
+		touched := map[int]bool{}
+		for _, id := range ids {
+			touched[id] = true
+		}
+		for _, it := range b.Items {
+			if !existed[it.ID] || touched[it.ID] {
+				order = append(order, it.ID)
 			}
 		}
 		return order, nil
@@ -211,8 +226,22 @@ func (s *Service) Move(req MoveRequest) error {
 		return err
 	}
 	_, err = s.update(p, func(b *Backlog) ([]int, error) {
+		it, err := b.get(req.ID)
+		if err != nil {
+			return nil, err
+		}
+		from := it.Parent
 		mv := Move{Before: req.Before, After: req.After, Into: req.Into, Top: req.Top, Bottom: req.Bottom}
-		return []int{req.ID}, b.Move(req.ID, mv, s.now())
+		if err := b.Move(req.ID, mv, s.now()); err != nil {
+			return nil, err
+		}
+		ids := []int{req.ID}
+		for _, parent := range []int{from, b.Item(req.ID).Parent} {
+			if parent != 0 && !slices.Contains(ids, parent) {
+				ids = append(ids, parent)
+			}
+		}
+		return ids, nil
 	})
 	return err
 }
@@ -281,7 +310,7 @@ func (s *Service) DeleteItem(req DeleteItemRequest) error {
 		return err
 	}
 	_, err = s.update(p, func(b *Backlog) ([]int, error) {
-		return []int{req.ID}, b.Delete(req.ID)
+		return b.Delete(req.ID)
 	})
 	return err
 }
