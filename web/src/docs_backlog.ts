@@ -14,7 +14,8 @@ export interface ProposalItems {
 }
 
 export interface DocsBacklog {
-  items(): ProposalItems;
+  /** null when the session's project is not known; the menu then hides its backlog items. */
+  items(): ProposalItems | null;
   /** Sends `prompt` to the Docs tab's session. */
   send(prompt: string): Promise<void>;
   open(id: number): void;
@@ -37,9 +38,9 @@ export function backlogItemsLabel(items: ProposalItems): string {
  *  the proposal rules reserve for pushed edits. */
 export function backlogItemsPrompt(slug: string, items: ProposalItems): string {
   if (items.count > 0) {
-    return `Update the backlog items of proposal ${slug} to match the proposal as it is now. Follow rule 9 of the proposal rules ("af proposal attach" prints them): run the same "af backlog add --file -" batch again with the same keys, so the items are updated, not added again.`;
+    return `Update the backlog items of proposal ${slug} to match the proposal as it is now. Follow the proposal rule for backlog items ("af proposal attach" prints the rules): run the same "af backlog add --file -" batch again with the same keys, so the items are updated, not added again.`;
   }
-  return `Make backlog items from proposal ${slug}. Follow rule 9 of the proposal rules ("af proposal attach" prints them): one draft parent item for the proposal and one draft child per PR in the PR stack of steps.md, written with "af backlog add --file -".`;
+  return `Make backlog items from proposal ${slug}. Follow the proposal rule for backlog items ("af proposal attach" prints the rules): one draft parent item for the proposal and one draft child per PR in the PR stack of steps.md, written with "af backlog add --file -".`;
 }
 
 export async function sendSessionPrompt(sessionId: string, prompt: string, token: string): Promise<void> {

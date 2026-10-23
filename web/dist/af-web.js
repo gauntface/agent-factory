@@ -20767,7 +20767,10 @@ var splitView = new SplitView(termHost, {
 function docsBacklog(sessionId, slug) {
   const root2 = () => store.get().sessions.find((s) => s.id === sessionId)?.worktree?.repo_path ?? "";
   return {
-    items: () => proposalItems(store.get().backlog?.views.get(root2()), slug),
+    items: () => {
+      const r = root2();
+      return r ? proposalItems(store.get().backlog?.views.get(r), slug) : null;
+    },
     send: async (prompt) => {
       if (token === null) throw new Error("not connected");
       await sendSessionPrompt(sessionId, prompt, token);

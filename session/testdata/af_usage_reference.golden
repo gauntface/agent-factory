@@ -47,11 +47,11 @@ Tasks (deliver a prompt on a cron schedule, or whenever a long-running watch scr
   af tasks remove <id-or-name>
 Without --target-session each run creates a fresh session; {{line}} in a watch prompt is replaced by the emitted stdout line. On update, setting one trigger clears the other, --target-session "" reverts to session-per-run, and --project-path moves the task to another project (--repo still scopes its current project). A task is bound to one project at creation and "tasks add" echoes the binding as project_path — check it matches the project you meant, and never create a task from a scratch clone of a repo, which binds the automation to the clone instead of the real project. The background daemon runs all schedules; "af daemon install" / "af daemon uninstall" manage its login autostart.
 
-Backlog (one project's work items in a strict order; ids are B-12 or 12; items you add are always drafts, and only the user queues them):
+Backlog (one project's work items in a strict order; ids are B-12 or 12; items you add are always drafts; do not queue items unless the user asks):
   af backlog list [--all] [--state <s>]                Items in order, as a tree, with each one's state (--all includes done and dropped)
   af backlog show <id>                                 One item: body, state and reason, waits-on, children, runs, and thread
   af backlog add <title> [--body -] [--parent <id>] [--waits-on <id>,…]  Add one draft item
-  af backlog add --file <path or ->                    Add or update many items at once from JSON: {"proposal": "<slug>", "items": [{"key", "title", "body", "parent", "waits_on", "sequential"}]}; parent and waits_on take a key or an item id, and with "proposal" set an item with the same proposal and key is updated, not added again
+  af backlog add --file <path or ->                    Add or update many items at once from JSON: {"proposal": "<slug>", "items": [{"key", "title", "body", "parent", "waits_on", "program", "sequential"}]}; every item needs a title; parent and waits_on take a key (a string) or an item id (a number, such as 12) — "12" or "B-12" as a string is read as a key; with with "proposal" set an item with the same proposal and key is updated, not added again
 
 Root-agent configuration (global unless --project <id-or-path> selects a personal project override):
   af config set root_agent <compact-json>             Merge the enabled/program profile as one table
@@ -69,7 +69,7 @@ Backlog items: when af started your session for a backlog item (your first promp
   af backlog done --self [--pr <url>]                  The work is finished; the item goes to the user for review. Pass --pr when you opened a pull request
   af backlog ask --self <text>                         Ask the user a question on the item, then stop and wait; the answer arrives in this session as a prompt
   af backlog note --self <text>                        Add a note to the item's thread; nobody is notified
-From an item session af refuses queue, draft, start, run, done <id>, drop, delete, answer, and changing the runner or budget: those are the user's. If you need one of them, ask with "af backlog ask --self". Do not create other af sessions from an item session; their use is not counted against the backlog.
+From an item session af refuses queue, draft, review, reopen, start, run, done <id>, drop, delete, answer, and changing the runner or budget: those are the user's. If you need one of them, ask with "af backlog ask --self". Do not create other af sessions from an item session; their use is not counted against the backlog.
 
 Finishing up: when the user confirms your work is complete and asks you to wrap up, self-archive with "af sessions archive --self". It is non-destructive — the worktree is moved out, nothing is deleted, and the session is restorable later with "af sessions restore <title>". But it tears down THIS session's tmux, so it kills you the instant you run it: nothing you say or do after it is ever seen. Treat it as the ABSOLUTE LAST action — first finish every summary, result, and confirmation the user needs, and only once you have nothing left to report run "af sessions archive --self" as the very last step.
 

@@ -49,7 +49,7 @@ test("the request names the proposal and the batch command, and is not a pushed-
     const p = backlogItemsPrompt("backlog", items);
     assert.match(p, /proposal backlog\b/);
     assert.match(p, /af backlog add --file -/);
-    assert.match(p, /rule 9/);
+    assert.match(p, /proposal rule for backlog items/);
     assert.ok(!p.startsWith("Proposal backlog:"), p);
   }
   assert.match(backlogItemsPrompt("backlog", { count: 3, first: 3 }), /same keys/);

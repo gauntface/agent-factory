@@ -87,8 +87,10 @@ af backlog add --file - <<'EOF'
 EOF
 ```
 
-`key` is local to the file. `parent` and `waits_on` take a key or an existing
-item id. The batch is all or nothing, and prints each key's id.
+Every item needs a `title`; `body`, `program` and `sequential` are optional.
+`key` is local to the file. `parent` and `waits_on` take a key (a string) or an
+existing item id (a number, such as `12`); `"12"` or `"B-12"` as a string is
+read as a key. The batch is all or nothing, and prints each key's id.
 
 To add one item: `af backlog add "Fix the login redirect" --body -` (the body
 comes from stdin), or type a title in the **New item** row of the Backlog view.
@@ -129,7 +131,8 @@ carry a `B-14` chip that opens the item.
 
 To start an item yourself, use **Start now** in the item panel or
 `af backlog start 14`. It ignores the runner switch and the budget. **Run next**
-in the runner bar (or `af backlog run`) starts the top queued item the same way.
+in the runner bar (or `af backlog run`) starts the top queued item the same way,
+but only in a free slot: it never starts more than the project's max running.
 
 ### 4. Questions
 
@@ -141,6 +144,9 @@ answer**, or:
 ```bash
 af backlog answer 14 "Use the existing session cookie"
 ```
+
+The answer goes to the oldest open question; `--question <n>` picks another one
+(`af backlog show 14` lists them).
 
 af adds the answer to the item's thread and sends it to the session. If the
 session is archived, af restores it first. If the session is gone, the answer
@@ -233,7 +239,7 @@ runner when one is hit.
 ## Run the runner from a cron task
 
 `af backlog run` does one runner pass now: it starts up to `--count` queued
-items (default 1), top first, in free slots, and ignores the runner switch and
+items (default 1), top first, only in free slots up to max running, and ignores the runner switch and
 the budget. With the runner off, an af task can start backlog work on your
 schedule instead. A task delivers a prompt to an agent, so keep that agent in
 one session with `--target-session`:
@@ -248,8 +254,9 @@ af tasks add --name "Backlog at night" --cron "0 1 * * *" --program claude \
 
 Agents learn the backlog from af's own skill. Any agent can list, show, and add
 items; items an agent adds are always drafts. From an item session, af refuses
-`queue`, `draft`, `start`, `run`, `done <id>`, `drop`, `delete`, `answer`, and
-changes to the runner or budget, and tells the agent to ask you instead.
+`queue`, `draft`, `review`, `reopen`, `start`, `run`, `done <id>`, `drop`,
+`delete`, `answer`, and changes to the runner or budget, and tells the agent to
+ask you instead.
 
 This guard stops a confused agent, not a hostile one. The agent runs as you and
 could edit the backlog files directly. Sessions an item session creates are not

@@ -105,8 +105,8 @@ Each of those is one page in [Concepts](docs/concepts.md).
 ## Three surfaces, one daemon
 
 - **Web** — <http://localhost:8443>: sessions, real terminals, tabs, the
-  backlog, tasks, and config in a browser. Bundled into the daemon and on by default. →
-  [Web client](docs/web.md)
+  backlog, tasks, and config in a browser. Bundled into the daemon and on by
+  default. → [Web client](docs/web.md)
 - **TUI** — `af` in a git repo: a dense rail of every session, with in-place
   interaction and full-screen attach. → [TUI](docs/tui.md)
 - **CLI** — `af sessions` and `af tasks` emit JSON, so scripts and other agents
@@ -134,9 +134,9 @@ a second machine. → [Backends and remote access](docs/backends.md)
 ## Documentation
 
 Full docs: **<https://sachiniyer.github.io/agent-factory/>** — a **Use** section
-(getting started, concepts, the three surfaces, tasks, the backlog, accounts, backends,
-configuration, troubleshooting) and a **Develop and maintain** section. Start at
-[Getting started](docs/getting-started.md), or
+(getting started, concepts, the three surfaces, tasks, the backlog, accounts,
+backends, configuration, troubleshooting) and a **Develop and maintain**
+section. Start at [Getting started](docs/getting-started.md), or
 [Troubleshooting](docs/troubleshooting.md) when something looks wrong.
 
 ## Maintenance

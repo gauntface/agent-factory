@@ -308,6 +308,7 @@ export class DocsPane {
     const backlog = this.opts.backlog;
     if (!backlog) return [];
     const items = backlog.items();
+    if (!items) return [];
     const make = h("button", { type: "button", class: "af-docs-menuitem", role: "menuitem" }, backlogItemsLabel(items));
     make.addEventListener("click", () => {
       make.disabled = true;
@@ -316,7 +317,7 @@ export class DocsPane {
         (e: unknown) => {
           make.disabled = false;
           this.docMenu.querySelector(".af-docs-menu-error")?.remove();
-          make.after(h("p", { class: "af-docs-menu-error" }, `Could not send the request to the agent: ${errorText(e)}`));
+          make.after(h("p", { class: "af-docs-menu-error", role: "alert" }, `Could not send the request to the agent: ${errorText(e)}`));
         },
       );
     });
