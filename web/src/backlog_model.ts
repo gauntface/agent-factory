@@ -75,10 +75,14 @@ export interface BacklogView {
   runner: RunnerView;
 }
 
+/** The global budget: percents of the Claude plan, and an optional dollar
+ *  limit for accounts with no plan readings. */
 export interface Budget {
-  limit: number;
-  spent: number;
+  share: number;
+  stop_at: number;
   max_per_run: number;
+  usd_limit: number;
+  usd_spent: number;
 }
 
 /** One of before, after, into, top, bottom: the MoveBacklogItem target. */

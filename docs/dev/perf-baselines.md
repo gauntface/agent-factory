@@ -96,8 +96,8 @@ under the `perf-baselines` artifact.
 
 | Metric | Mean | Min–max | SD | Budget |
 | --- | ---: | ---: | ---: | ---: |
-| raw_bytes | 1114708.000 | 1114708.000–1114708.000 | 0.000 | 1170443.400 |
-| gzip_bytes | 250046.000 | 250046.000–250046.000 | 0.000 | 262548.300 |
+| raw_bytes | 1115091.000 | 1115091.000–1115091.000 | 0.000 | 1170845.550 |
+| gzip_bytes | 250166.000 | 250166.000–250166.000 | 0.000 | 262674.300 |
 | lazy_raw_bytes | 337368.000 | 337368.000–337368.000 | 0.000 | 354236.400 |
 | lazy_gzip_bytes | 110175.000 | 110175.000–110175.000 | 0.000 | 115683.750 |
 | first_terminal_ms | 2870.417 | 2675.500–3033.000 | 118.562 | 5740.833 |
@@ -151,11 +151,11 @@ stay inside their budgets, so the baselines are unchanged.
 
 Measured on the PR's final tree with `bundleBytes` from `scripts/perf/check.mjs`
 over the committed `web/dist`, the same metric `report.mjs` computes: raw_bytes
-1,114,708, gzip_bytes 250,046. The base branch measures 1,057,761 raw and 236,758
-gzip, inside the old budget with 13,379 bytes of headroom; the view adds 56,947
-raw and 13,288 gzip bytes and goes over it. The PR's `AF_UPDATE_GOLDENS=1 make
-perf-container` run measured the same tree (before two small focus fixes) at
-1,113,310 / 249,657. The added code is the Backlog view: the item tree, filters,
+1,115,091, gzip_bytes 250,166. The base branch measures 1,057,761 raw and 236,758
+gzip, inside the old budget with 13,379 bytes of headroom; the view adds 57,330
+raw and 13,408 gzip bytes and goes over it. The PR's `AF_UPDATE_GOLDENS=1 make
+perf-container` run measured an earlier tree of this PR (before focus fixes and
+the plan-share runner bar) at 1,113,310 / 249,657. The added code is the Backlog view: the item tree, filters,
 drag and keyboard reorder, the item panel, the waits-on cycle check and its CSS.
 Only the two shell bundle entries were updated; the lazy bundle (345,132 /
 112,328) stays inside its budget, and every timing and layout-shift baseline is

@@ -11,7 +11,14 @@ export async function getBacklog(root: string, token: string): Promise<BacklogVi
 
 export async function getBudget(token: string): Promise<Budget> {
   const resp = await af<{ budget?: Budget }>("GetBudget", {}, token);
-  return resp?.budget ?? { limit: 0, spent: 0, max_per_run: 0 };
+  const b = resp?.budget;
+  return {
+    share: Number(b?.share) || 0,
+    stop_at: Number(b?.stop_at) || 0,
+    max_per_run: Number(b?.max_per_run) || 0,
+    usd_limit: Number(b?.usd_limit) || 0,
+    usd_spent: Number(b?.usd_spent) || 0,
+  };
 }
 
 export interface NewItem {

@@ -33,13 +33,22 @@ function usd(v: number): string {
   return `$${v.toFixed(2)}`;
 }
 
+const RUNNER_STATES: Record<string, string> = {
+  off: "Runner off",
+  idle: "Runner on",
+  waiting: "Runner waiting",
+  stopped: "Runner paused",
+};
+
 /** The runner bar's words: its state and reason, the slots in use, and the budget. */
 export function runnerText(view: BacklogView, budget: Budget | null): { state: string; warn: boolean; parts: string[] } {
   const r = view.runner;
-  const state = r.state === "off" ? "Runner off" : r.state === "stopped" ? "Runner stopped" : "Runner on";
   const parts = [r.reason ?? "", `${r.used} of ${r.max} working`];
-  if (budget) parts.push(`${usd(budget.spent)} of ${usd(budget.limit)}`);
-  return { state, warn: r.state === "stopped", parts: parts.filter(Boolean) };
+  if (budget) {
+    parts.push(`Backlog share ${budget.share}% · stop at plan ${budget.stop_at}%`);
+    if (budget.usd_limit > 0) parts.push(`${usd(budget.usd_spent)} of ${usd(budget.usd_limit)}`);
+  }
+  return { state: RUNNER_STATES[r.state] ?? "Runner on", warn: r.state === "stopped", parts: parts.filter(Boolean) };
 }
 
 export class BacklogPane {
@@ -198,14 +207,14 @@ export class BacklogPane {
     const bar = h("div", { class: "af-backlog-runner" },
       h("span", { class: `af-backlog-runner-state${r.warn ? " af-backlog-warn" : ""}` }, r.state), ...r.parts.flatMap((p) => [" · ", p]));
     const budget = this.data?.budget;
-    if (budget && budget.limit > 0) {
+    if (budget && budget.usd_limit > 0) {
       const fill = h("span", { class: "af-backlog-meter-fill" });
-      fill.style.width = `${Math.min(100, (budget.spent / budget.limit) * 100)}%`;
+      fill.style.width = `${Math.min(100, (budget.usd_spent / budget.usd_limit) * 100)}%`;
       const meter = h("span", { class: "af-backlog-meter", role: "img" }, fill);
-      meter.setAttribute("aria-label", `${usd(budget.spent)} of ${usd(budget.limit)} spent`);
+      meter.setAttribute("aria-label", `${usd(budget.usd_spent)} of ${usd(budget.usd_limit)} spent`);
       bar.append(" ", meter);
     }
-    if (budget) bar.title = `All projects · API prices · ${usd(budget.max_per_run)} cap per run`;
+    if (budget) bar.title = `All projects · cap per run ${budget.max_per_run}% of the plan window`;
     return h("div", {}, h("span", { class: "af-backlog-heading" }, "Backlog"), bar);
   }
 

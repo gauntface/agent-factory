@@ -16806,7 +16806,14 @@ async function getBacklog(root2, token2) {
 }
 async function getBudget(token2) {
   const resp = await af("GetBudget", {}, token2);
-  return resp?.budget ?? { limit: 0, spent: 0, max_per_run: 0 };
+  const b = resp?.budget;
+  return {
+    share: Number(b?.share) || 0,
+    stop_at: Number(b?.stop_at) || 0,
+    max_per_run: Number(b?.max_per_run) || 0,
+    usd_limit: Number(b?.usd_limit) || 0,
+    usd_spent: Number(b?.usd_spent) || 0
+  };
 }
 async function addItem(root2, input, token2) {
   const resp = await af("AddBacklogItems", {
@@ -17327,12 +17334,20 @@ var EMPTY_COPY = "No items yet \xB7 Add one below, or ask an agent to make items
 function usd(v) {
   return `$${v.toFixed(2)}`;
 }
+var RUNNER_STATES = {
+  off: "Runner off",
+  idle: "Runner on",
+  waiting: "Runner waiting",
+  stopped: "Runner paused"
+};
 function runnerText(view, budget) {
   const r = view.runner;
-  const state = r.state === "off" ? "Runner off" : r.state === "stopped" ? "Runner stopped" : "Runner on";
   const parts = [r.reason ?? "", `${r.used} of ${r.max} working`];
-  if (budget) parts.push(`${usd(budget.spent)} of ${usd(budget.limit)}`);
-  return { state, warn: r.state === "stopped", parts: parts.filter(Boolean) };
+  if (budget) {
+    parts.push(`Backlog share ${budget.share}% \xB7 stop at plan ${budget.stop_at}%`);
+    if (budget.usd_limit > 0) parts.push(`${usd(budget.usd_spent)} of ${usd(budget.usd_limit)}`);
+  }
+  return { state: RUNNER_STATES[r.state] ?? "Runner on", warn: r.state === "stopped", parts: parts.filter(Boolean) };
 }
 var BacklogPane = class {
   constructor(host) {
@@ -17496,14 +17511,14 @@ var BacklogPane = class {
       ...r.parts.flatMap((p) => [" \xB7 ", p])
     );
     const budget = this.data?.budget;
-    if (budget && budget.limit > 0) {
+    if (budget && budget.usd_limit > 0) {
       const fill = h("span", { class: "af-backlog-meter-fill" });
-      fill.style.width = `${Math.min(100, budget.spent / budget.limit * 100)}%`;
+      fill.style.width = `${Math.min(100, budget.usd_spent / budget.usd_limit * 100)}%`;
       const meter = h("span", { class: "af-backlog-meter", role: "img" }, fill);
-      meter.setAttribute("aria-label", `${usd(budget.spent)} of ${usd(budget.limit)} spent`);
+      meter.setAttribute("aria-label", `${usd(budget.usd_spent)} of ${usd(budget.usd_limit)} spent`);
       bar.append(" ", meter);
     }
-    if (budget) bar.title = `All projects \xB7 API prices \xB7 ${usd(budget.max_per_run)} cap per run`;
+    if (budget) bar.title = `All projects \xB7 cap per run ${budget.max_per_run}% of the plan window`;
     return h("div", {}, h("span", { class: "af-backlog-heading" }, "Backlog"), bar);
   }
   filters(v) {
