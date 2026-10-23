@@ -34,7 +34,7 @@ func (backlogTestHost) Gate(string) backlog.Gate                    { return bac
 func (backlogTestHost) Usage() planusage.Usage {
 	at := backlogTestNow.Add(-90 * time.Second)
 	return planusage.Usage{Account: planusage.DefaultAccount, ReadingAt: &at,
-		Windows: planusage.Windows{SevenDay: planusage.PlanWindow{Plan: 40, Backlog: 10, ResetsAt: &at}}}
+		Windows: planusage.Windows{SevenDay: planusage.PlanWindow{Plan: 40, ResetsAt: &at}}}
 }
 func backlogRoute[Req, Resp any](call func(Req) (Resp, error)) func([]byte) (any, error) {
 	return func(raw []byte) (any, error) {
@@ -333,7 +333,7 @@ func TestBacklogRunnerAndBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	v := decodeOut[backlogRunnerView](t, out)
-	if v.State != backlog.RunnerOff || v.Runner || v.MaxRunning != 1 || v.OnDone != backlog.OnDoneKeep || v.Budget.Share != 50 || v.Budget.MaxPerRun != 10 {
+	if v.State != backlog.RunnerOff || v.Runner || v.MaxRunning != 1 || v.OnDone != backlog.OnDoneKeep || v.Budget.Limit != 50 || v.Budget.MaxPerRun != 10 {
 		t.Fatalf("%+v", v)
 	}
 	if out, err = runBacklogCmd(t, "runner", "on", "--max-running", "2", "--on-done", "archive"); err != nil {
@@ -352,14 +352,14 @@ func TestBacklogRunnerAndBudget(t *testing.T) {
 		args []string
 		want func(backlog.Budget) bool
 	}{
-		{[]string{"budget"}, func(b backlog.Budget) bool { return b.Share == 50 && b.StopAt == 90 && b.USDLimit == 0 }},
-		{[]string{"budget", "--share", "30%", "--stop-at", "95"}, func(b backlog.Budget) bool { return b.Share == 30 && b.StopAt == 95 }},
-		{[]string{"budget", "--max-per-run", "0"}, func(b backlog.Budget) bool { return b.MaxPerRun == 0 && b.Share == 30 }},
+		{[]string{"budget"}, func(b backlog.Budget) bool { return b.Limit == 50 && b.USDLimit == 0 }},
+		{[]string{"budget", "--limit", "30%"}, func(b backlog.Budget) bool { return b.Limit == 30 }},
+		{[]string{"budget", "--max-per-run", "0"}, func(b backlog.Budget) bool { return b.MaxPerRun == 0 && b.Limit == 30 }},
 		{[]string{"budget", "--usd-limit", "$12.50"}, func(b backlog.Budget) bool { return b.USDLimit == 12.5 }},
 	} {
 		out, err := runBacklogCmd(t, step.args...)
 		v := decodeOut[backlogBudgetView](t, out)
-		if err != nil || !step.want(v.Budget) || v.Windows.SevenDay.Backlog != 10 || v.ReadingAge != "1m30s" {
+		if err != nil || !step.want(v.Budget) || v.Windows.SevenDay.Plan != 40 || v.ReadingAge != "1m30s" {
 			t.Fatalf("%v: %s %v", step.args, out, err)
 		}
 	}
@@ -367,10 +367,10 @@ func TestBacklogRunnerAndBudget(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"budget", "--share", "101"}, "--share must be between 0 and 100"},
-		{[]string{"budget", "--stop-at=-1"}, "--stop-at must be between 0 and 100"},
+		{[]string{"budget", "--limit", "101"}, "--limit must be between 0 and 100"},
+		{[]string{"budget", "--limit=-1"}, "--limit must be between 0 and 100"},
 		{[]string{"budget", "--max-per-run", "NaN"}, "--max-per-run must be between 0 and 100"},
-		{[]string{"budget", "--share", "half"}, "--share must be between 0 and 100"},
+		{[]string{"budget", "--limit", "half"}, "--limit must be between 0 and 100"},
 		{[]string{"budget", "--usd-limit", "inf"}, `--usd-limit must be a finite amount of US dollars, 0 or more — for example 5 or 2.50, not "inf"`},
 		{[]string{"budget", "--usd-limit", "1e400"}, `--usd-limit must be a finite amount of US dollars, 0 or more — for example 5 or 2.50, not "1e400"`},
 		{[]string{"budget", "--usd-limit=-1"}, `--usd-limit must be a finite amount of US dollars, 0 or more — for example 5 or 2.50, not "-1"`},
@@ -379,7 +379,7 @@ func TestBacklogRunnerAndBudget(t *testing.T) {
 			t.Errorf("%v: %v", c.args, err)
 		}
 	}
-	if _, err := runBacklogCmd(t, "budget", "--share", "101"); err == nil || err.Error() != "--share must be between 0 and 100" {
+	if _, err := runBacklogCmd(t, "budget", "--limit", "101"); err == nil || err.Error() != "--limit must be between 0 and 100" {
 		t.Fatal(err)
 	}
 	if out, _ := runBacklogCmd(t, "runner"); decodeOut[backlogRunnerView](t, out).State != backlog.RunnerIdle {

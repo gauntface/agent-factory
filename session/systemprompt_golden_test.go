@@ -162,7 +162,7 @@ func TestAfUsageReferenceJoints(t *testing.T) {
 		{
 			// backlog + "\n\n" + outro: a blank line, a new paragraph.
 			name: "backlog to inside outro",
-			want: "not counted against the backlog.\n\nFinishing up: when the user confirms",
+			want: "does not count their use.\n\nFinishing up: when the user confirms",
 		},
 		{
 			// outro + "\n\n" + tail.

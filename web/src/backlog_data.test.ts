@@ -53,7 +53,7 @@ function loader(roots = ["/a"]): BacklogLoader {
 }
 
 const backlogOf = (title: string): unknown => ({ backlog: { items: [{ id: 1, title, status: "draft" }] } });
-const budgetOf = (spent: number): unknown => ({ budget: { share: 30, stop_at: 80, max_per_run: 10, usd_limit: 5, usd_spent: spent } });
+const budgetOf = (spent: number): unknown => ({ budget: { limit: 80, max_per_run: 10, usd_limit: 5, usd_spent: spent } });
 
 function answer(method: string, data: unknown, root = ""): void {
   const i = pending.findIndex((p) => p.method === method && (root === "" || p.root === root));
@@ -120,21 +120,21 @@ test("a spend event applies in place and wins over a budget read before it", asy
   void l.refresh();
   await settle();
   l.applySpend({
-    five_hour: { plan: 40, backlog: 12, resets_at: "2000-01-01T05:00:00Z", all_cost: 20 },
-    seven_day: { plan: 30, backlog: 18, resets_at: null },
+    five_hour: { plan: 40, resets_at: "2000-01-01T05:00:00Z", all_cost: 20 },
+    seven_day: { plan: 30, resets_at: null },
     reading_at: "2000-01-01T00:00:00Z",
     runs: { s1: 1.25 },
   });
   assert.deepEqual(pending.map((p) => p.method).sort(), ["GetBacklog", "GetBudget"]);
-  assert.equal(state.usage?.five_hour.backlog, 12);
+  assert.equal(state.usage?.five_hour.plan, 40);
   assert.equal(state.usage?.runs.s1, 1.25);
   assert.equal(state.views, views);
   answer("GetBacklog", backlogOf("b"));
-  answer("GetBudget", { ...(budgetOf(2) as object), windows: { five_hour: { plan: 1, backlog: 1, resets_at: null } }, runs: {},
+  answer("GetBudget", { ...(budgetOf(2) as object), windows: { five_hour: { plan: 1, resets_at: null } }, runs: {},
     unmeterable: { s7: "the runner can't meter aider" } });
   await settle();
   assert.equal(state.budget?.usd_spent, 2);
-  assert.equal(state.usage?.five_hour.backlog, 12);
+  assert.equal(state.usage?.five_hour.plan, 40);
   assert.equal(state.usage?.runs.s1, 1.25);
   assert.deepEqual(state.usage?.unmeterable, { s7: "the runner can't meter aider" }, "an older spend payload names no unmeterable runs");
 });

@@ -2,14 +2,14 @@
 
 For anyone who wants agents to work through a list of items, in order, without
 starting each session by hand. After this page you will be able to turn a
-proposal into backlog items, queue them, let the runner start them within a
-share of your Claude plan, answer the agents' questions, and review their work.
+proposal into backlog items, queue them, let the runner start them while your
+Claude plan use is low, answer the agents' questions, and review their work.
 
 The backlog is one project's work items in one strict order. You decide what is
 next by moving items above or below each other: there is no priority number,
 so no two items tie. The daemon's **runner** starts a session for the top
-queued items, up to a limit you set, while the backlog's use of your Claude
-plan stays under its **budget**. You can also start any item by hand at any
+queued items, up to a limit you set, while your total Claude plan use stays
+under the **budget**'s limit, so backlog work never gets in the way of your own. You can also start any item by hand at any
 time.
 
 Backlog data stays on your machine: one file per project,
@@ -30,7 +30,7 @@ af uses one word per concept, the same in the CLI, the web, and agent text.
 | Review | You check finished work and mark it done. |
 | Runner | The part of the daemon that starts sessions for queued items. |
 | Run | One stretch of agent work on an item, from a prompt to the next idle. |
-| Budget | The share of your Claude plan (5-hour and weekly windows) the backlog may use. |
+| Budget | The plan use (5-hour and weekly windows) under which the runner starts items. |
 
 An af **task** is something else: a cron or watch automation (see
 [Tasks](tasks.md)). A task can drive the runner, as shown in
@@ -177,31 +177,37 @@ thread), and `af backlog note 14 "…"` to add a note to the thread.
 
 ## The budget
 
-The budget is the part of your Claude plan (Pro or Max) the backlog may use.
-It is global, for all your projects:
+The budget keeps backlog work out of the way of your own: the runner starts
+items only while your Claude plan (Pro or Max) is lightly used. It is global,
+for all your projects:
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
-| Share | 50% | The backlog's share of each plan window, 5-hour and weekly. The rest stays yours. |
-| Stop at | 90% | Plan use, from any source, at which the runner starts nothing new, so backlog work never walks you into the limit. |
+| Limit | 50% | Total plan use, from any source, under which the runner starts items. It must be under the limit in both windows, 5-hour and weekly. |
 | Cap per run | 10% | How much of the 5-hour window one run may use. A run over the cap is interrupted and its item asks you whether to continue. |
 | Dollar limit | off | For accounts with no plan readings (API keys): a limit at API prices instead, per 5-hour and per 7-day window. |
 
 Change them in the runner bar's `⋯` menu, or:
 
 ```bash
-af backlog budget                          # each window: plan %, backlog %, reset time, reading age
-af backlog budget --share 30 --stop-at 85 --max-per-run 5
+af backlog budget                          # each window: plan %, reset time, reading age
+af backlog budget --limit 40 --max-per-run 5
 af backlog budget --usd-limit 10           # 0 turns it off
 ```
 
-The runner starts nothing new while, in either window, the backlog used its
-share, the plan is at the stop-at level, a usage limit is seen, or there is no
-plan reading yet. The runner bar says which, and when it resumes. Window resets
-start it again on their own. Running sessions are never stopped by the budget,
-and you can always start an item by hand; its use still counts. So the backlog
-can pass its share by at most `max running × cap per run` per project, plus what
-you start by hand.
+The runner starts nothing new while, in either window, the plan is at or over
+the limit, a usage limit is seen, or there is no plan reading yet. The runner
+bar says which, and when it resumes, for example "Runner paused · Plan at 52%
+of the 5-hour window (limit 50%) · resumes 14:00". Window resets start it again
+on their own. Item sessions that are already running keep going when plan use
+passes the limit; only new starts wait. You can always start an item by hand;
+its use still counts. So plan use can pass the limit by at most
+`max running × cap per run` per project, plus what you start by hand and your
+own use.
+
+A `budget.json` from before the limit had a share of the plan and a stop-at
+level. af reads it as one limit: the old stop-at when you changed it from 90%,
+else 50%. It then saves the file in the new shape.
 
 ### Where the readings come from
 
@@ -217,11 +223,11 @@ touch your Claude settings files. It cannot add the tap when your `claude`
 command already passes `--settings`, or when managed settings set the status
 line; then af logs a warning and gets no readings from those sessions.
 
-Plan use is for your whole account. To find the backlog's part, af meters the
-API-price cost of every Claude Code transcript on this machine and of the item
-runs alone, and takes the backlog's share of the plan percent in that ratio.
-Use af cannot see, such as claude.ai chat or other computers, makes the
-backlog's part look larger, never smaller.
+Plan use is for your whole account, so the limit counts everything: your own
+sessions, claude.ai chat and other computers too. To size one run against the
+cap per run, af meters the API-price cost of every Claude Code transcript on
+this machine and of the item runs alone, and takes the run's part of the plan
+percent in that ratio.
 
 A new model with no known price makes its runs unmeterable, and the runner
 waits. Add the price to `config.toml`, in US dollars per million tokens:

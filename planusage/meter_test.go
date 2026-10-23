@@ -49,11 +49,11 @@ func TestScanBucketsBacklogAndSurvivesRestart(t *testing.T) {
 		FiveHour: &Limit{UsedPercentage: 40, ResetsAt: time.Date(2026, 10, 20, 14, 0, 0, 0, time.UTC).Unix()},
 		SevenDay: &Limit{UsedPercentage: 10, ResetsAt: time.Date(2026, 10, 20, 11, 0, 0, 0, time.UTC).Unix()},
 	}
-	w := Attribute(reading, loaded.Accounts[DefaultAccount], now)
-	if !w.FiveHour.Valid() || w.FiveHour.Plan != 40 || !near(w.FiveHour.Backlog, 40*8.0/28) {
+	w := WindowsOf(reading, loaded.Accounts[DefaultAccount], now)
+	if !w.FiveHour.Valid() || w.FiveHour.Plan != 40 || !near(w.FiveHour.All, 28) {
 		t.Fatalf("five hour %+v", w.FiveHour)
 	}
-	if w.SevenDay.Valid() || w.SevenDay.Plan != 0 || w.SevenDay.Backlog != 0 {
+	if w.SevenDay.Valid() || w.SevenDay.Plan != 0 || w.SevenDay.All != 0 {
 		t.Fatalf("a window past its reset should count as 0: %+v", w.SevenDay)
 	}
 }
@@ -96,8 +96,8 @@ func TestLoadMeterRefusesNewerSchema(t *testing.T) {
 	}
 }
 
-func TestAttributeWithoutReading(t *testing.T) {
-	w := Attribute(nil, nil, time.Now())
+func TestWindowsOfWithoutReading(t *testing.T) {
+	w := WindowsOf(nil, nil, time.Now())
 	if w.FiveHour.Valid() || w.SevenDay.Valid() {
 		t.Fatal(w)
 	}
@@ -175,11 +175,11 @@ func TestRunWindowCost(t *testing.T) {
 	}
 }
 
-func TestAttributeReportsAllCost(t *testing.T) {
+func TestWindowsOfReportsAllCost(t *testing.T) {
 	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
 	a := &AccountMeter{Buckets: map[int64]Bucket{now.Add(-time.Hour).Unix(): {All: 8, Backlog: 2}}}
 	r := &Reading{FiveHour: &Limit{UsedPercentage: 40, ResetsAt: now.Add(time.Hour).Unix()}}
-	if w := Attribute(r, a, now).FiveHour; w.All != 8 || !near(w.Backlog, 10) {
+	if w := WindowsOf(r, a, now).FiveHour; w.All != 8 || w.Plan != 40 {
 		t.Fatalf("%+v", w)
 	}
 }
