@@ -1025,6 +1025,14 @@ export function removeTaskModal(name: string, onConfirm: () => void, onCancel: (
   return handle;
 }
 
+/** A plain yes-or-no confirm: a title, one paragraph, and the action. */
+export function textConfirmModal(opts: { title: string; body: string; confirmLabel: string; onConfirm: () => void; onCancel: () => void }): ModalHandle {
+  const { handle, body } = modalChrome({ title: opts.title, confirmLabel: opts.confirmLabel, confirmClass: "af-primary", onCancel: opts.onCancel });
+  body.append(h("p", { class: "af-modal-text" }, opts.body));
+  asForm(handle.el.firstElementChild as HTMLElement, opts.onConfirm);
+  return handle;
+}
+
 /** The "mark delivered" attestation for an ambiguous handoff mission (#4429).
  *  The modal IS the confirmation: the daemon will retire the pending mission
  *  WITHOUT resending it, so the copy makes the operator's claim — the pane

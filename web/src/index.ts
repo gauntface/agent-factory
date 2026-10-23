@@ -80,6 +80,7 @@ import {
   newSessionModal,
   rebindProjectModal,
   removeTaskModal,
+  textConfirmModal,
 } from "./modals.js";
 import { confirmDeleteTabModal } from "./delete_tab_modal.js";
 import { InstallAffordance } from "./install.js";
@@ -1192,6 +1193,20 @@ function openConfirm(
     }),
   );
   if (immediateRestore) onConfirm();
+}
+
+/** The backlog's one-time confirm before a start by hand while a budget gate
+ *  is closed. A modal that another overlay replaces counts as a no. */
+function confirmBacklog(title: string, body: string, confirmLabel: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    let mounted: ModalHandle | null = null;
+    const finish = (ok: boolean): void => {
+      if (modal === mounted) closeModal();
+      resolve(ok);
+    };
+    mounted = textConfirmModal({ title, body, confirmLabel, onConfirm: () => finish(true), onCancel: () => finish(false) });
+    openModal(mounted, true);
+  });
 }
 
 /** Opens the delete-project confirm for a project row (#1735). On confirm it
@@ -2665,6 +2680,7 @@ const actions = {
       if (s && isActionableSession(s)) openConfirm("restore", s);
     },
     addProject: () => openAddProject(),
+    confirm: confirmBacklog,
   },
   notice: surfaceNotice,
   paneDropHintAt: (x: number, y: number) => splitView.showTabDropHintAt(x, y),
@@ -2845,7 +2861,7 @@ function onEvent(ev: WireEvent): void {
   // no-ops these, so run both: the reducer for session.* and the task refetch for
   // task.*.
   if (ev.type === "backlog.spend") {
-    backlogLoader.requestBudget();
+    backlogLoader.applySpend(ev.data);
     return;
   }
   if (ev.type === "backlog.changed" || ev.type === "backlog.runner") {
