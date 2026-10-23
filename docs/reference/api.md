@@ -65,6 +65,16 @@ Request fields are the JSON keys of each route's request body; a `—` means the
 | `POST` | `/v1/SetProposalPushMode` | `session_id`, `mode` | Set the push mode (auto or manual) of the session's Proposal tabs for its proposal, and return its push status. |
 | `POST` | `/v1/HoldProposalPush` | `session_id` | Hold the session's pending proposal push until the next human save, and return its push status. |
 | `POST` | `/v1/SendProposalChanges` | `session_id` | Send the session its unseen proposal edits as a prompt now when the agent is Ready, or on the next tick where it is, and return its push status. |
+| `POST` | `/v1/GetBacklog` | `repo_id`, `repo_path` | Read a project's backlog in tree order, with each item's derived state and reason and the runner's state and slots. |
+| `POST` | `/v1/AddBacklogItems` | `repo_id`, `repo_path`, `proposal`, `items`, `before`, `after` | Add draft items to a project's backlog, or, with a proposal, update the items that have the same proposal and key; returns each key's id. |
+| `POST` | `/v1/UpdateBacklogItem` | `repo_id`, `repo_path`, `id`, `title`, `body`, `waits_on`, `program`, `sequential` | Change an item's title, body, waits-on, program or sequential flag. |
+| `POST` | `/v1/MoveBacklogItem` | `repo_id`, `repo_path`, `id`, `before`, `after`, `into`, `top`, `bottom` | Move an item and its subtree before or after an item, to the top or bottom of its parent, or into a parent. |
+| `POST` | `/v1/SetBacklogItemStatus` | `repo_id`, `repo_path`, `id`, `status`, `session_id`, `pr` | Set an item's status (draft, queued, review, done, dropped); on a parent, queue queues its draft children and drop drops its open children. |
+| `POST` | `/v1/DeleteBacklogItem` | `repo_id`, `repo_path`, `id` | Delete a draft item that has no runs, thread or children. |
+| `POST` | `/v1/PostBacklogMessage` | `repo_id`, `repo_path`, `id`, `kind`, `text`, `session_id`, `question_id` | Add a note to an item's thread; notes are not delivered to a session. |
+| `POST` | `/v1/SetBacklogSettings` | `repo_id`, `repo_path`, `runner`, `max_running`, `on_done` | Change a project's runner switch, max running, or what happens to an item's session when the item is done. |
+| `POST` | `/v1/GetBudget` | — | Read the global backlog budget: limit, spent, and cap per run, in US dollars at API prices. |
+| `POST` | `/v1/SetBudget` | `add`, `set`, `reset`, `max_per_run` | Add to, set, or reset the global backlog budget, or change its cap per run. |
 | `POST` | `/v1/ListOnComplete` | — | List task spawned-session lifecycle choices and consequences, least destructive first. |
 | `POST` | `/v1/ListTasks` | — | List every task across all repos. |
 | `POST` | `/v1/AddTask` | `task`, `actor` | Append a new task and re-arm the scheduler; an enabled archived/archiving target_session is refused before commit. |
