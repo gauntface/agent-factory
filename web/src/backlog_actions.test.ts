@@ -264,8 +264,8 @@ test("the runner bar shows the tighter window, the share, your own use, and both
   assert.equal(toggle.textContent, "Runner on");
   assert.equal(toggle.getAttribute("aria-checked"), "true");
   const plan = bar.querySelector(".af-backlog-plan")!;
-  assert.equal(plan.textContent, "Backlog 18% of week  50% · You 22%");
-  assert.equal(plan.querySelector(".af-backlog-meter-fill")!.style.width, "36%");
+  assert.equal(plan.textContent, "Backlog 12% of 5-hour window  50% · You 29%");
+  assert.equal(plan.querySelector(".af-backlog-meter-fill")!.style.width, "24%");
   mock.timers.tick(5 * 60_000);
   plan.dispatchEvent(new FakeEvent("pointerenter"));
   assert.equal(plan.title, "5-hour · plan 41% · backlog 12% · resets 14:00\n" +

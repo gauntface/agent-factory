@@ -16889,12 +16889,18 @@ function pct(v) {
 function usd(v) {
   return `$${v.toFixed(2)}`;
 }
-function tighterWindow(u, now) {
+function tighterWindow(u, b, now) {
+  const ratio = (v, limit) => limit > 0 ? v / limit : Infinity;
   let best = null;
+  let score = -Infinity;
   for (const k of WINDOWS) {
-    if (!valid(u[k], now)) continue;
-    const b = best === null ? null : u[best];
-    if (!b || u[k].backlog > b.backlog || u[k].backlog === b.backlog && u[k].plan > b.plan) best = k;
+    const w = u[k];
+    if (!valid(w, now)) continue;
+    const s = Math.max(ratio(w.backlog, b.share), ratio(w.plan, b.stop_at));
+    if (s > score) {
+      best = k;
+      score = s;
+    }
   }
   return best;
 }
@@ -17777,7 +17783,7 @@ var RunnerBar = class {
       this.plan.replaceChildren("Reading plan usage\u2026");
       return;
     }
-    const k = tighterWindow(u, this.now());
+    const k = tighterWindow(u, b, this.now());
     if (k === null) {
       this.plan.replaceChildren(b.usd_limit > 0 ? `Backlog limit ${usd(b.usd_limit)} per window` : `Backlog share ${pct(b.share)}`);
       return;

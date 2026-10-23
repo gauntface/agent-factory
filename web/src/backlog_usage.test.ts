@@ -50,12 +50,15 @@ test("applySpend replaces windows and runs but keeps what the event does not car
   assert.equal(applySpend(prev, "junk"), prev);
 });
 
-test("the bar shows the window the backlog used more of", () => {
-  assert.equal(tighterWindow(usage(), NOW), "seven_day");
-  assert.equal(tighterWindow(usage({ five_hour: { plan: 89, backlog: 18, resets_at: SOON } }), NOW), "five_hour");
-  assert.equal(tighterWindow(usage({ seven_day: { plan: 0, backlog: 0, resets_at: null } }), NOW), "five_hour");
+test("the bar shows the window closest to stopping the runner", () => {
+  assert.equal(tighterWindow(usage(), budget(), NOW), "five_hour", "plan 41/90 beats backlog 18/50");
+  assert.equal(tighterWindow(usage({ seven_day: { plan: 40, backlog: 30, resets_at: MONDAY } }), budget(), NOW), "seven_day");
+  assert.equal(tighterWindow(usage({ five_hour: { plan: 45, backlog: 0, resets_at: SOON },
+    seven_day: { plan: 0, backlog: 25, resets_at: MONDAY } }), budget(), NOW), "five_hour", "a tie goes to the 5-hour window");
+  assert.equal(tighterWindow(usage(), budget({ share: 0 }), NOW), "five_hour");
+  assert.equal(tighterWindow(usage({ five_hour: { plan: 0, backlog: 0, resets_at: null } }), budget(), NOW), "seven_day");
   assert.equal(tighterWindow(usage({ five_hour: { plan: 9, backlog: 9, resets_at: at("2000-01-03T09:00:00") },
-    seven_day: { plan: 0, backlog: 0, resets_at: null } }), NOW), null);
+    seven_day: { plan: 0, backlog: 0, resets_at: null } }), budget(), NOW), null);
 });
 
 test("hover text shows both windows, the reading age and the scope", () => {

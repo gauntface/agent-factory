@@ -101,15 +101,21 @@ export function usd(v: number): string {
   return `$${v.toFixed(2)}`;
 }
 
-/** The window the backlog is closer to its share in: the higher backlog
- *  percent, as one share covers both; a tie goes to the higher plan percent.
- *  null when neither window has a valid reading. */
-export function tighterWindow(u: Usage, now: number): WindowKey | null {
+/** The window closest to stopping the runner: the larger of backlog / share
+ *  and plan / stop at; a tie goes to the 5-hour window. null when neither
+ *  window has a valid reading. */
+export function tighterWindow(u: Usage, b: Budget, now: number): WindowKey | null {
+  const ratio = (v: number, limit: number): number => (limit > 0 ? v / limit : Infinity);
   let best: WindowKey | null = null;
+  let score = -Infinity;
   for (const k of WINDOWS) {
-    if (!valid(u[k], now)) continue;
-    const b = best === null ? null : u[best];
-    if (!b || u[k].backlog > b.backlog || (u[k].backlog === b.backlog && u[k].plan > b.plan)) best = k;
+    const w = u[k];
+    if (!valid(w, now)) continue;
+    const s = Math.max(ratio(w.backlog, b.share), ratio(w.plan, b.stop_at));
+    if (s > score) {
+      best = k;
+      score = s;
+    }
   }
   return best;
 }

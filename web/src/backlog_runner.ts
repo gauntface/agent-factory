@@ -216,7 +216,7 @@ export class RunnerBar {
       this.plan.replaceChildren("Reading plan usage…");
       return;
     }
-    const k = tighterWindow(u, this.now());
+    const k = tighterWindow(u, b, this.now());
     if (k === null) {
       this.plan.replaceChildren(b.usd_limit > 0 ? `Backlog limit ${usd(b.usd_limit)} per window` : `Backlog share ${pct(b.share)}`);
       return;
