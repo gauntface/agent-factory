@@ -302,6 +302,8 @@ export interface Actions {
    *  TUI: it is not destructive (it re-delivers the prompt the session was already
    *  going to run) and it is the obvious next step for a session that is stuck. */
   retryLimit(): void;
+  /** Dismisses the selection's attention request — the × on the header chip. */
+  clearAttention(): void;
   /** Retires the selection's pending handoff mission WITHOUT resending it
    *  (#4429) — the web half of the TUI resolve picker's "Mark delivered" row.
    *  Opens a confirm modal: the attestation is the operator's, so the click must
@@ -1003,6 +1005,7 @@ export class AppShell {
   // treatment, and for the same reason, as lifecycleBtn above: a session hits the
   // limit wall — or is resumed off it — WITHOUT a selection change, which is the
   // only thing that rebuilds the header, so patchMainHead toggles it in place.
+  private attentionChip: ReturnType<typeof terminalChrome>["attention"] | null = null;
   private retryBtn: HTMLElement | null = null;
   private retryKind: RetryActionPresentation["kind"] | null = null;
   // The "Mark delivered" button and whether it is currently shown (#4429). Same
@@ -2169,6 +2172,7 @@ export class AppShell {
     const selected = selectedSession(state);
     if (!selected) {
       this.headTitle = null;
+      this.attentionChip = null;
       this.archiveWarning = null;
       this.headActions = null;
       this.headActionSig = "";
@@ -2205,10 +2209,12 @@ export class AppShell {
       newTab: (kind) => this.actions.newTab(kind),
       retry: () => this.actions.retryLimit(),
       markDelivered: () => this.actions.markDelivered(),
+      clearAttention: () => this.actions.clearAttention(),
       closePane: () => this.actions.closePane?.(),
     });
     this.terminalChrome = chrome;
     this.headTitle = chrome.title;
+    this.attentionChip = chrome.attention;
     this.retryBtn = chrome.retry;
     const retryAction = retryActionForSession(selected);
     this.retryKind = retryAction?.kind ?? null;
@@ -2786,6 +2792,7 @@ export class AppShell {
     if (this.terminalChrome) {
       this.terminalChrome.closePane.hidden = state.shownTabs.length < 2;
     }
+    this.attentionChip?.patch(hasAttention(selected), attentionReason(selected));
     const warningText = archiveWarningText(selected);
     if (this.archiveWarning) {
       if (this.archiveWarning.textContent !== warningText) {

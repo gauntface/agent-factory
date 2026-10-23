@@ -18,3 +18,27 @@ func TestIsTypedInputIgnoresTerminalReplies(t *testing.T) {
 		}
 	}
 }
+
+type nopTabBinding struct{ ptyTabBinding }
+
+func (nopTabBinding) input([]byte) error { return nil }
+
+func TestAttentionClearsOnlyOnSubmittedLine(t *testing.T) {
+	var cleared, submitted int
+	b := attentionClearingBinding{ptyTabBinding: nopTabBinding{},
+		clear: func() { cleared++ }, submitted: func() { submitted++ }}
+	for _, frame := range []string{"h", "i", "\x1b[I", "\x7f"} {
+		if err := b.input([]byte(frame)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if cleared != 0 || submitted != 0 {
+		t.Fatalf("keystrokes cleared attention: cleared=%d submitted=%d", cleared, submitted)
+	}
+	if err := b.input([]byte("\r")); err != nil {
+		t.Fatal(err)
+	}
+	if cleared != 1 || submitted != 1 {
+		t.Fatalf("a submitted line: cleared=%d submitted=%d, want 1 and 1", cleared, submitted)
+	}
+}

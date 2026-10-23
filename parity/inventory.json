@@ -556,14 +556,14 @@
       },
       "web": {
         "status": "yes",
-        "pointer": "web/src/status.ts rowDot (attention arm) → web/src/ui.ts sessionRow (blinking yellow dot; the reason in the row title); web/src/attention_seen.ts AttentionClearer clears it via SetAttention when the agent tab is in view"
+        "pointer": "web/src/status.ts rowDot (attention arm) → web/src/ui.ts sessionRow (blinking yellow dot; the reason in the row title); web/src/components.ts terminalChrome (an Attention chip in the session header; its × clears it via SetAttention)"
       },
       "cli": {
         "status": "yes",
         "pointer": "api/sessions_attention.go newSessionsAttentionCmd (af sessions attention) → daemon SetAttention RPC"
       },
       "verdict": "deliberate",
-      "notes": "Agents set it with `af sessions attention --self`, as the af skill teaches. The web rail is the surface that shows it; the TUI is not maintained in this fork. session.Instance owns the clear rules: typed input on the agent pane (daemon/attention.go attentionClearingBinding), the web showing the agent tab in a focused page (web/src/attention_seen.ts), or a Running edge after the agent went idle (session/attention.go noteAttentionLivenessLocked)."
+      "notes": "Agents set it with `af sessions attention --self`, as the af skill teaches. The web rail is the surface that shows it; the TUI is not maintained in this fork. session.Instance owns the clear rules: a submitted line on the agent pane (daemon/attention.go attentionClearingBinding), the dismiss control in the web session header (web/src/components.ts terminalChrome), or a Running edge after the agent went idle (session/attention.go noteAttentionLivenessLocked)."
     },
     {
       "id": "project.color",

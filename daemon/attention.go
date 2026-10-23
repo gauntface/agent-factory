@@ -84,8 +84,8 @@ func (m *Manager) SetAttention(req SetAttentionRequest) (string, string, error) 
 	return id, title, nil
 }
 
-// clearAttentionOnInput clears the attention request when the user types into
-// the agent pane. It is on the keystroke path, so the common case is one
+// clearAttentionOnInput clears the attention request when the user submits a
+// line in the agent pane. It is on the input path, so the common case is one
 // read lock and a return.
 func (m *Manager) clearAttentionOnInput(instance *session.Instance) {
 	if instance == nil || !instance.HasAttention() {
@@ -111,8 +111,9 @@ func (m *Manager) clearAttentionOnInput(instance *session.Instance) {
 	m.publishEvent(agentproto.EventSessionUpdated, data)
 }
 
-// attentionClearingBinding clears the session's attention request when the
-// user types into the agent pane, and reports a submitted line.
+// attentionClearingBinding clears the session's attention request and reports
+// the line when the user submits one in the agent pane. A keystroke alone does
+// not clear it, so focusing the pane and typing a draft keeps the request.
 type attentionClearingBinding struct {
 	ptyTabBinding
 	clear     func()
@@ -121,9 +122,9 @@ type attentionClearingBinding struct {
 
 func (b attentionClearingBinding) input(p []byte) error {
 	err := b.ptyTabBinding.input(p)
-	if err == nil && isTypedInput(p) {
+	if err == nil && isSubmittedInput(p) {
 		b.clear()
-		if b.submitted != nil && isSubmittedInput(p) {
+		if b.submitted != nil {
 			b.submitted()
 		}
 	}
