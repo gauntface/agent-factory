@@ -2653,6 +2653,7 @@ const actions = {
   backlog: {
     token: () => token,
     refresh: () => backlogLoader.refresh(),
+    started: () => backlogLoader.started(),
     notify: (message: string) => showTransientNotice(message),
     openSession: openBacklogSession,
     archiveSession: (id: string) => {
@@ -2843,7 +2844,11 @@ function onEvent(ev: WireEvent): void {
   // ListTasks refetch (the authoritative task projection). The session reducer
   // no-ops these, so run both: the reducer for session.* and the task refetch for
   // task.*.
-  if (ev.type === "backlog.changed" || ev.type === "backlog.spend" || ev.type === "backlog.runner") {
+  if (ev.type === "backlog.spend") {
+    backlogLoader.requestBudget();
+    return;
+  }
+  if (ev.type === "backlog.changed" || ev.type === "backlog.runner") {
     backlogLoader.request();
     return;
   }

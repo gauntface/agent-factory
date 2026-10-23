@@ -20,12 +20,16 @@ import type { SessionData } from "./types.js";
 export interface BacklogHost {
   token(): string | null;
   refresh(): Promise<void>;
+  /** The newest backlog refresh started so far. */
+  started(): number;
   notify(message: string): void;
   openSession(id: string): void;
   archiveSession(id: string): void;
   restoreSession(id: string): void;
   addProject?(): void;
 }
+
+const DRAG_TYPE = "application/x-af-backlog-item";
 
 export const EMPTY_COPY = "No items yet · Add one below, or ask an agent to make items from a proposal.";
 
@@ -40,10 +44,10 @@ const RUNNER_STATES: Record<string, string> = {
   stopped: "Runner paused",
 };
 
-/** The runner bar's words: its state and reason, the slots in use, and the budget. */
+/** The runner bar's words: its state, reason, the slots in use, and the budget. */
 export function runnerText(view: BacklogView, budget: Budget | null): { state: string; warn: boolean; parts: string[] } {
   const r = view.runner;
-  const parts = [r.reason ?? "", `${r.used} of ${r.max} working`];
+  const parts = [(r.reason ?? "").replace(/\.$/, ""), `${r.used} of ${r.max} working`];
   if (budget) {
     parts.push(`Backlog share ${budget.share}% · stop at plan ${budget.stop_at}%`);
     if (budget.usd_limit > 0) parts.push(`${usd(budget.usd_spent)} of ${usd(budget.usd_limit)}`);
@@ -61,10 +65,17 @@ export class BacklogPane {
   private source: string | null = null;
   private showDone = false;
   private readonly folded = new Set<number>();
-  private pending: { root: string; backlog: Backlog } | null = null;
+  // A reorder shown before the daemon has it. It stays until data from a refresh
+  // started after the move committed arrives; gen is Infinity until then.
+  private pending: { root: string; backlog: Backlog; gen: number } | null = null;
   private panel: ItemPanel | null = null;
   private dragId: number | null = null;
   private focusId: number | null = null;
+  private cursor: number | null = null;
+  private focusPanel = false;
+  private want: { root: string; id: number } | null = null;
+  private readonly requested = new Set<string>();
+  private rowEls = new Map<number, HTMLElement>();
   private readonly newItem: HTMLInputElement;
   private readonly headSlot = h("div", { class: "af-backlog-head" });
   private readonly filterSlot = h("div", {});
@@ -79,6 +90,9 @@ export class BacklogPane {
     const listWrap = h("div", { class: "af-backlog-listwrap" }, this.filterSlot, this.listSlot, this.emptySlot,
       h("div", { class: "af-backlog-new" }, icon("plus"), this.newItem));
     this.main = h("div", { class: "af-backlog-main" }, listWrap);
+    const endDrag = (): void => { this.dragId = null; };
+    this.listSlot.addEventListener("dragend", endDrag);
+    this.listSlot.addEventListener("drop", endDrag);
   }
 
   update(data: BacklogData, root: string | null, sessions: SessionData[]): void {
@@ -90,12 +104,16 @@ export class BacklogPane {
       this.render();
       return;
     }
-    if (data !== this.data) this.pending = null;
     if (root !== this.root) {
-      this.selected = null;
+      this.closePanel();
+      this.selected = this.want?.root === root ? this.want.id : null;
+      this.focusPanel = this.selected !== null;
+      this.want = null;
       this.source = null;
+      this.cursor = null;
       this.folded.clear();
     }
+    if (this.pending && data.generation > this.pending.gen) this.pending = null;
     this.data = data;
     this.root = root;
     this.sessions = sessions;
@@ -111,9 +129,16 @@ export class BacklogPane {
     }));
   }
 
-  /** Selects an item, as the Sessions view's item chip does. */
-  select(id: number): void {
+  /** Opens an item's panel. The Sessions view's item chip names the project it
+   *  is switching to, which may not have reached update() yet. */
+  select(id: number, root: string | null = this.root): void {
+    if (root !== this.root) {
+      this.want = root ? { root, id } : null;
+      return;
+    }
     this.selected = id;
+    this.cursor = id;
+    this.focusPanel = true;
     this.render();
   }
 
@@ -123,11 +148,14 @@ export class BacklogPane {
     return v;
   }
 
-  private mutate(run: (token: string) => Promise<unknown>, onError?: () => void): void {
+  private mutate(run: (token: string) => Promise<unknown>): void {
+    if (this.root) this.write(run);
+  }
+
+  private write(run: (token: string) => Promise<unknown>): void {
     const token = this.host.token();
-    if (token === null || !this.root) return;
+    if (token === null) return;
     run(token).then(() => this.host.refresh(), (e: unknown) => {
-      onError?.();
       this.host.notify(errorText(e));
       void this.host.refresh();
     });
@@ -138,14 +166,25 @@ export class BacklogPane {
     const root = this.root;
     if (!v || !root) return;
     const next = applyMove(v.backlog, id, to);
-    if (next) {
-      this.pending = { root, backlog: next };
+    const pending = next ? { root, backlog: next, gen: Infinity } : null;
+    if (pending) {
+      this.pending = pending;
       this.focusId = id;
       this.render();
     }
-    this.mutate((t) => moveItem(root, id, to, t), () => {
-      this.pending = null;
-      this.render();
+    const token = this.host.token();
+    if (token === null) return;
+    moveItem(root, id, to, token).then(() => {
+      if (pending) pending.gen = this.host.started();
+      return this.host.refresh();
+    }, (e: unknown) => {
+      if (pending && this.pending === pending) {
+        this.pending = null;
+        this.focusId = id;
+        this.render();
+      }
+      this.host.notify(errorText(e));
+      void this.host.refresh();
     });
   }
 
@@ -162,16 +201,24 @@ export class BacklogPane {
           action: "Retry", run: () => void this.host.refresh() }));
       } else {
         this.el.replaceChildren(h("p", { class: "af-backlog-empty" }, "Loading backlog…"));
+        if (!this.requested.has(this.root)) {
+          this.requested.add(this.root);
+          void this.host.refresh();
+        }
       }
       return;
     }
+    this.requested.delete(this.root);
     if (this.el.firstChild !== this.headSlot) this.el.replaceChildren(this.headSlot, this.main);
     if (this.selected !== null && !itemByID(v.backlog, this.selected)) this.selected = null;
     const focusedRow = (document.activeElement as HTMLElement | null)?.closest<HTMLElement>(".af-backlog-row");
     if (focusedRow && this.focusId === null && this.listSlot.contains(focusedRow)) this.focusId = Number(focusedRow.dataset.itemId);
     const rows = listRows(v, { filter: this.filter, showDone: this.showDone, folded: this.folded, source: this.source });
+    const shown = (id: number | null): boolean => id !== null && rows.some((r) => r.item.id === id);
+    this.cursor = [this.focusId, this.cursor, this.selected].find(shown) ?? rows[0]?.item.id ?? null;
     const list = h("ul", { class: "af-backlog-list", role: "tree" });
     list.setAttribute("aria-label", "Items");
+    this.rowEls = new Map();
     for (const row of rows) list.append(this.row(v, row));
     this.headSlot.replaceChildren(...this.runnerBar(v).childNodes);
     this.filterSlot.replaceChildren(this.filters(v));
@@ -182,18 +229,20 @@ export class BacklogPane {
     if (this.selected !== null) {
       if (this.panel?.id !== this.selected) {
         this.closePanel();
-        this.panel = new ItemPanel(this.selected, this.panelActions());
+        this.panel = new ItemPanel(this.root, this.selected, this.panelActions(this.root));
         this.main.append(this.panel.el);
       }
-      this.panel?.render(v, this.sessions);
+      this.panel.render(v, this.sessions);
     } else {
       this.closePanel();
     }
     this.el.classList.toggle("af-backlog-has-panel", this.selected !== null);
-    if (this.focusId !== null) {
-      list.querySelector<HTMLElement>(`[data-item-id="${this.focusId}"]`)?.focus({ preventScroll: true });
-      this.focusId = null;
+    if (this.focusPanel && this.panel) this.panel.focus();
+    else if (this.focusId !== null) {
+      (this.rowEls.get(this.focusId) ?? (this.cursor !== null ? this.rowEls.get(this.cursor) : undefined))?.focus({ preventScroll: true });
     }
+    this.focusPanel = false;
+    this.focusId = null;
   }
 
   private closePanel(): void {
@@ -240,7 +289,9 @@ export class BacklogPane {
 
   private row(v: BacklogView, row: ListRow): HTMLElement {
     const it = row.item;
-    const li = h("li", { class: `af-backlog-row${it.id === this.selected ? " af-backlog-row-selected" : ""}`, tabIndex: 0, draggable: true });
+    const li = h("li", { class: `af-backlog-row${it.id === this.selected ? " af-backlog-row-selected" : ""}`,
+      tabIndex: it.id === this.cursor ? 0 : -1, draggable: true });
+    this.rowEls.set(it.id, li);
     li.dataset.itemId = String(it.id);
     li.style.paddingLeft = `calc(var(--af-space-2) + var(--af-space-4) * ${row.depth})`;
     li.setAttribute("role", "treeitem");
@@ -252,21 +303,32 @@ export class BacklogPane {
     fold.setAttribute("aria-label", row.folded ? `Expand ${formatID(it.id)}` : `Collapse ${formatID(it.id)}`);
     fold.addEventListener("click", (e) => {
       e.stopPropagation();
-      if (this.folded.has(it.id)) this.folded.delete(it.id);
-      else this.folded.add(it.id);
-      this.focusId = it.id;
-      this.render();
+      this.toggleFold(it.id, !this.folded.has(it.id));
     });
     li.append(handle, fold, h("span", { class: "af-backlog-id" }, formatID(it.id)),
       h("span", { class: "af-backlog-row-title" }, it.title), stateChip(v, it.id, row.reason));
     li.addEventListener("click", () => this.select(it.id));
-    li.addEventListener("keydown", (e) => this.rowKey(e, v, it.id, li));
+    li.addEventListener("focus", () => this.setCursor(it.id));
+    li.addEventListener("keydown", (e) => this.rowKey(e, v, row, li));
     this.wireDrag(li, v.backlog, it.id);
     return li;
   }
 
-  private rowKey(e: KeyboardEvent, v: BacklogView, id: number, li: HTMLElement): void {
+  private setCursor(id: number): void {
+    this.cursor = id;
+    for (const [rid, el] of this.rowEls) el.tabIndex = rid === id ? 0 : -1;
+  }
+
+  private toggleFold(id: number, fold: boolean): void {
+    if (fold) this.folded.add(id);
+    else this.folded.delete(id);
+    this.focusId = id;
+    this.render();
+  }
+
+  private rowKey(e: KeyboardEvent, v: BacklogView, row: ListRow, li: HTMLElement): void {
     if (e.target !== li) return;
+    const id = row.item.id;
     const dirs: Record<string, "up" | "down" | "in" | "out"> = { ArrowUp: "up", ArrowDown: "down", ArrowRight: "in", ArrowLeft: "out" };
     if (e.altKey && dirs[e.key]) {
       e.preventDefault();
@@ -274,14 +336,49 @@ export class BacklogPane {
       if (to) this.move(id, to);
       return;
     }
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      this.select(id);
-    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      e.preventDefault();
-      const next = (e.key === "ArrowDown" ? li.nextElementSibling : li.previousElementSibling) as HTMLElement | null;
-      next?.focus();
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    const els = [...this.rowEls.values()];
+    const at = els.indexOf(li);
+    let next: HTMLElement | undefined;
+    switch (e.key) {
+      case "Enter":
+      case " ":
+        e.preventDefault();
+        this.select(id);
+        return;
+      case "ArrowDown":
+        next = els[at + 1];
+        break;
+      case "ArrowUp":
+        next = els[at - 1];
+        break;
+      case "Home":
+        next = els[0];
+        break;
+      case "End":
+        next = els[els.length - 1];
+        break;
+      case "ArrowRight":
+        if (row.parent && row.folded) {
+          e.preventDefault();
+          this.toggleFold(id, false);
+          return;
+        }
+        if (row.parent && els[at + 1] && Number(els[at + 1].getAttribute("aria-level")) > row.depth + 1) next = els[at + 1];
+        break;
+      case "ArrowLeft":
+        if (row.parent && !row.folded) {
+          e.preventDefault();
+          this.toggleFold(id, true);
+          return;
+        }
+        next = row.item.parent ? this.rowEls.get(row.item.parent) : undefined;
+        break;
+      default:
+        return;
     }
+    e.preventDefault();
+    next?.focus();
   }
 
   private wireDrag(li: HTMLElement, b: Backlog, id: number): void {
@@ -294,22 +391,26 @@ export class BacklogPane {
       return y < 0.5 ? "before" : "after";
     };
     const clear = (): void => li.classList.remove("af-backlog-drop-before", "af-backlog-drop-after", "af-backlog-drop-into");
+    const ours = (e: DragEvent): boolean => this.dragId !== null && (e.dataTransfer?.types ?? []).includes(DRAG_TYPE);
     li.addEventListener("dragstart", (e) => {
       this.dragId = id;
+      e.dataTransfer?.setData(DRAG_TYPE, String(id));
       e.dataTransfer?.setData("text/plain", formatID(id));
       if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
     });
     li.addEventListener("dragend", () => { this.dragId = null; });
     li.addEventListener("dragover", (e) => {
-      if (this.dragId === null || dropMove(b, this.dragId, id, zoneAt(e)) === null) return;
+      if (!ours(e) || dropMove(b, this.dragId ?? 0, id, zoneAt(e)) === null) return;
       e.preventDefault();
       clear();
       li.classList.add(`af-backlog-drop-${zoneAt(e)}`);
     });
-    li.addEventListener("dragleave", clear);
+    li.addEventListener("dragleave", (e) => {
+      if (!li.contains(e.relatedTarget as Node | null)) clear();
+    });
     li.addEventListener("drop", (e) => {
       clear();
-      const drag = this.dragId;
+      const drag = ours(e) ? this.dragId : null;
       this.dragId = null;
       if (drag === null) return;
       e.preventDefault();
@@ -318,20 +419,24 @@ export class BacklogPane {
     });
   }
 
-  private panelActions() {
-    const root = (): string => this.root ?? "";
+  /** Actions bound to one project, so a panel never writes to another. */
+  private panelActions(root: string) {
+    const here = (): boolean => this.root === root;
     return {
-      update: (id: number, u: Parameters<typeof updateItem>[2]) => this.mutate((t) => updateItem(root(), id, u, t)),
-      status: (id: number, s: Parameters<typeof setItemStatus>[2]) => this.mutate((t) => setItemStatus(root(), id, s, t)),
+      update: (id: number, u: Parameters<typeof updateItem>[2]) => this.write((t) => updateItem(root, id, u, t)),
+      status: (id: number, s: Parameters<typeof setItemStatus>[2]) => this.write((t) => setItemStatus(root, id, s, t)),
       remove: (id: number) => {
-        this.selected = null;
-        this.mutate((t) => deleteItem(root(), id, t));
+        if (here()) this.selected = null;
+        this.write((t) => deleteItem(root, id, t));
       },
-      move: (id: number, to: MoveTarget) => this.move(id, to),
-      note: (id: number, text: string) => this.mutate((t) => addNote(root(), id, text, t)),
-      addChild: (parent: number, title: string) => this.mutate((t) => addItem(root(), { title, parent }, t)),
-      select: (id: number) => this.select(id),
+      move: (id: number, to: MoveTarget) => {
+        if (here()) this.move(id, to);
+      },
+      note: (id: number, text: string) => this.write((t) => addNote(root, id, text, t)),
+      addChild: (parent: number, title: string) => this.write((t) => addItem(root, { title, parent }, t)),
+      select: (id: number) => this.select(id, root),
       close: () => {
+        if (!here()) return;
         const id = this.selected;
         this.selected = null;
         this.focusId = id;

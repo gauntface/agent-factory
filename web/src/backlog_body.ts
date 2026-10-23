@@ -1,10 +1,13 @@
 // An item body in the CodeMirror live preview from the lazy Docs bundle. Until
 // the bundle loads, and if it fails to, the body shows as plain text.
 
-import { loadDocsModule } from "./docs_tab.js";
+import { type DocsModule, loadDocsModule } from "./docs_tab.js";
 import type { DocsEditor } from "./docs_editor.js";
 
-const SAVE_DELAY_MS = 800;
+export const SAVE_DELAY_MS = 800;
+
+/** Where the editor bundle comes from; tests swap in a fake. */
+export const bodyEditorLoader: { load(): Promise<Pick<DocsModule, "createDocsEditor">> } = { load: loadDocsModule };
 
 export class BodyEditor {
   readonly el: HTMLElement;
@@ -19,7 +22,7 @@ export class BodyEditor {
     const fallback = document.createElement("pre");
     fallback.className = "af-backlog-body-text";
     this.el.append(fallback);
-    loadDocsModule().then((mod) => {
+    bodyEditorLoader.load().then((mod) => {
       if (this.disposed) return;
       this.el.replaceChildren();
       this.editor = mod.createDocsEditor(this.el, { text: this.text, label, onChange: (t) => this.changed(t) });

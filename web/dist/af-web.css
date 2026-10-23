@@ -3639,10 +3639,6 @@ textarea[class] {
   margin-right: var(--af-space-2);
 }
 .af-backlog-runner {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--af-space-1);
   font-size: var(--af-type-caption);
 }
 .af-backlog-runner-state {

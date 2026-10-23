@@ -1,6 +1,7 @@
 // The Backlog view's item panel (backlog proposal, ui.md "Item panel"). The
-// title field, the body editor and the note box live across renders so a
-// backlog.changed event never eats what the user is typing; the rest rebuilds.
+// title field, the body section and the note box live across renders so a
+// backlog.changed event never eats what the user is typing, or their focus;
+// the parts above and below the body rebuild.
 
 import { h } from "./dom.js";
 import { icon } from "./icon.js";
@@ -9,7 +10,7 @@ import { waitsOnBlock } from "./backlog_cycle.js";
 import type { ItemUpdate } from "./backlog_api.js";
 import {
   ACTION_LABELS, type BacklogView, type Item, type ItemAction, type MoveTarget, STATE_GLYPHS, STATE_LABELS, type Status,
-  childrenOf, derivedOf, formatID, isAncestor, isParent, itemActions, itemByID, neededBy, openQuestion,
+  childrenOf, derivedOf, formatID, isAncestor, isParent, itemActions, itemByID, neededBy, openQuestion, safeHttpUrl,
 } from "./backlog_model.js";
 import { ROW_KIND_LABELS, isArchived, rowKind } from "./status.js";
 import { formatTime } from "./time.js";
@@ -75,15 +76,17 @@ export class ItemPanel {
   private readonly body: BodyEditor;
   private readonly note: HTMLTextAreaElement;
   private readonly head: HTMLElement;
-  private readonly rest: HTMLElement;
-  private readonly bodySection: HTMLElement;
+  private readonly above: HTMLElement;
+  private readonly below: HTMLElement;
   private readonly threadList: HTMLElement;
+  private readonly closeButton: HTMLButtonElement;
   private pickerQuery = "";
   private pickerOpen = false;
+  private moveOpen = false;
   private view: BacklogView | null = null;
   private sessions: SessionData[] = [];
 
-  constructor(readonly id: number, private readonly actions: PanelActions) {
+  constructor(readonly root: string, readonly id: number, private readonly actions: PanelActions) {
     this.title = h("input", { type: "text", class: "af-backlog-title-input" });
     this.title.setAttribute("aria-label", "Title");
     const commitTitle = (): void => {
@@ -107,17 +110,27 @@ export class ItemPanel {
       actions.note(id, text);
     });
     this.head = h("div", { class: "af-backlog-panel-state" });
-    this.rest = h("div", { class: "af-backlog-panel-rest" });
-    this.bodySection = section("Body", this.body.el);
+    this.above = h("div", { class: "af-backlog-panel-rest" });
+    this.below = h("div", { class: "af-backlog-panel-rest" });
     this.threadList = h("ol", { class: "af-backlog-thread" });
     const close = h("button", { type: "button", class: "af-ghost af-backlog-close", title: "Close" }, icon("x"));
     close.setAttribute("aria-label", "Close item");
     close.addEventListener("click", () => actions.close());
+    this.closeButton = close;
     const top = h("div", { class: "af-backlog-panel-top" },
       h("span", { class: "af-backlog-id" }, formatID(id)), this.title, close);
-    this.el = h("aside", { class: "af-backlog-panel" }, top, this.head, this.rest,
+    this.el = h("aside", { class: "af-backlog-panel" }, top, this.head, this.above, section("Body", this.body.el), this.below,
       section("Thread", this.threadList, h("div", { class: "af-backlog-note-row" }, this.note, addNote)));
     this.el.setAttribute("aria-label", `Item ${formatID(id)}`);
+    this.el.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape" || e.defaultPrevented || e.isComposing) return;
+      e.preventDefault();
+      actions.close();
+    });
+  }
+
+  focus(): void {
+    this.closeButton.focus({ preventScroll: true });
   }
 
   private item(): Item | undefined {
@@ -134,14 +147,16 @@ export class ItemPanel {
     const restore = this.keepField();
     this.head.replaceChildren(stateChip(view, it.id));
     const q = openQuestion(it);
-    const parts: HTMLElement[] = [];
-    if (q) parts.push(h("div", { class: "af-backlog-question", role: "status" }, icon("circle-question"), h("span", {}, q.text)));
-    parts.push(this.actionsRow(view, it), this.bodySection, this.waitsSection(view, it));
+    const above: HTMLElement[] = [];
+    if (q) above.push(h("div", { class: "af-backlog-question", role: "status" }, icon("circle-question"), h("span", {}, q.text)));
+    above.push(this.actionsRow(view, it));
+    this.above.replaceChildren(...above);
+    const below: HTMLElement[] = [this.waitsSection(view, it)];
     const children = this.childrenSection(view, it);
-    if (children) parts.push(children);
-    parts.push(this.runsSection(it));
-    if (it.source?.proposal) parts.push(h("p", { class: "af-backlog-source" }, icon("file-text"), `From proposal ${it.source.proposal}`));
-    this.rest.replaceChildren(...parts);
+    if (children) below.push(children);
+    below.push(this.runsSection(it));
+    if (it.source?.proposal) below.push(h("p", { class: "af-backlog-source" }, icon("file-text"), `From proposal ${it.source.proposal}`));
+    this.below.replaceChildren(...below);
     this.threadList.replaceChildren(...(it.thread ?? []).map((m) => h("li", { class: `af-backlog-msg af-backlog-msg-${m.kind}` },
       h("div", { class: "af-backlog-msg-meta" }, [m.kind === "note" ? "Note" : m.kind === "question" ? "Question" : "Answer",
         m.author === "user" ? "you" : m.author.startsWith("agent:") ? "agent" : m.author, formatTime(m.at),
@@ -150,16 +165,22 @@ export class ItemPanel {
     restore();
   }
 
-  /** Keeps the value and focus of a rebuilt field, found again by its label. */
+  /** Keeps the focus, and a field's value, across a rebuild: the same control
+   *  is found again by its tag, label and text. */
   private keepField(): () => void {
-    const active = document.activeElement;
-    if (!(active instanceof HTMLInputElement) || !this.rest.contains(active)) return () => {};
+    const active = document.activeElement as HTMLInputElement | null;
+    const box = [this.above, this.below].find((b) => active && b.contains(active));
+    if (!box || !active) return () => {};
+    const tag = active.tagName;
     const label = active.getAttribute("aria-label");
-    const value = active.value;
+    const text = active.textContent;
+    const field = tag === "INPUT" || tag === "SELECT";
+    const value = field ? active.value : "";
     return () => {
-      const next = label ? this.rest.querySelector<HTMLInputElement>(`input[aria-label="${CSS.escape(label)}"]`) : null;
+      const next = [...box.querySelectorAll<HTMLInputElement>(tag.toLowerCase())]
+        .find((el) => el.getAttribute("aria-label") === label && (field || el.textContent === text));
       if (!next) return;
-      next.value = value;
+      if (field) next.value = value;
       next.focus({ preventScroll: true });
     };
   }
@@ -194,7 +215,8 @@ export class ItemPanel {
       pick("Above…", others, (id) => ({ before: id })),
       pick("Into…", others.filter((o) => o.id !== it.parent && o.status !== "running" && (o.runs ?? []).length === 0),
         (id) => ({ into: id })));
-    const details = h("details", { class: "af-backlog-move" }, h("summary", { class: "af-ghost" }, "Move…"), panel);
+    const details = h("details", { class: "af-backlog-move", open: this.moveOpen }, h("summary", { class: "af-ghost" }, "Move…"), panel);
+    details.addEventListener("toggle", () => { this.moveOpen = details.open; });
     return details;
   }
 
@@ -215,6 +237,7 @@ export class ItemPanel {
       this.render(view, this.sessions);
       this.el.querySelector<HTMLInputElement>(".af-backlog-picker input")?.focus();
     });
+    add.classList.add("af-backlog-wait-add");
     add.setAttribute("aria-expanded", String(this.pickerOpen));
     chips.append(add);
     const parts: (Node | string)[] = [chips];
@@ -255,8 +278,10 @@ export class ItemPanel {
     });
     input.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
+        e.preventDefault();
         this.pickerOpen = false;
         this.render(view, this.sessions);
+        this.below.querySelector<HTMLElement>(".af-backlog-wait-add")?.focus();
       }
     });
     fill();
@@ -289,10 +314,8 @@ export class ItemPanel {
   private runsSection(it: Item): HTMLElement {
     const runs = it.runs ?? [];
     const parts: (Node | string)[] = [];
-    if (it.pr) {
-      const a = h("a", { class: "af-backlog-pr", href: it.pr, target: "_blank", rel: "noopener noreferrer" }, icon("external-link"), "Pull request");
-      parts.push(a);
-    }
+    const pr = safeHttpUrl(it.pr);
+    if (pr) parts.push(h("a", { class: "af-backlog-pr", href: pr, target: "_blank", rel: "noopener noreferrer" }, icon("external-link"), "Pull request"));
     if (runs.length === 0) parts.push(h("p", { class: "af-backlog-reason" }, "No runs yet"));
     const list = h("ul", { class: "af-backlog-runs" });
     for (const run of [...runs].reverse()) {

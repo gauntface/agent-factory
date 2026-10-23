@@ -4188,10 +4188,6 @@ button[class], input[class], select[class], textarea[class] { font-size: var(--a
 }
 
 .af-backlog-runner {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--af-space-1);
   font-size: var(--af-type-caption);
 }
 

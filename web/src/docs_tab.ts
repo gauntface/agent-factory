@@ -7,7 +7,7 @@
 import { errorText } from "./api.js";
 import type { ProposalChange, PushStatus } from "./proposal_api.js";
 
-type DocsModule = typeof import("./docs_pane.js");
+export type DocsModule = typeof import("./docs_pane.js");
 
 let docsModule: Promise<DocsModule> | null = null;
 

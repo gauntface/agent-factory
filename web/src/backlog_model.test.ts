@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 
 import {
   type Backlog, type BacklogView, type Item, type ListOptions, type State,
-  applyMove, dropMove, itemActions, keyboardMove, listRows, needsYouCount, neededBy, parseBacklogView, sessionItems, sources,
+  applyMove, dropMove, itemActions, keyboardMove, listRows, needsYouCount, needsYouLabel, neededBy, parseBacklogView, safeHttpUrl,
+  sessionItems, sources,
 } from "./backlog_model.js";
 import { waitsOnBlock } from "./backlog_cycle.js";
 
@@ -200,4 +201,17 @@ test("listRows source filter keeps a proposal's items", () => {
   b.items[4].source = { proposal: "other", key: "b" };
   assert.deepEqual(sources(b), ["docs", "other"]);
   assert.deepEqual(listRows(view(b), { ...ALL, source: "docs" }).map((r) => r.item.id), [1, 2]);
+});
+
+test("safeHttpUrl keeps http and https links only", () => {
+  assert.equal(safeHttpUrl("https://github.com/o/r/pull/1"), "https://github.com/o/r/pull/1");
+  assert.equal(safeHttpUrl("http://x.test/p"), "http://x.test/p");
+  for (const bad of ["javascript:alert(1)", "JAVASCRIPT:alert(1)", "data:text/html,x", "/pull/1", "", undefined, "https://"]) {
+    assert.equal(safeHttpUrl(bad), null, String(bad));
+  }
+});
+
+test("needsYouLabel agrees with its count", () => {
+  assert.equal(needsYouLabel(1), "1 needs you");
+  assert.equal(needsYouLabel(3), "3 need you");
 });

@@ -71,7 +71,7 @@ import { listToken, rebuildKeepingScroll } from "./scrollkeep.js";
 import { TasksPane } from "./tasks.js";
 import { BacklogPane, type BacklogHost } from "./backlog_pane.js";
 import type { BacklogData } from "./backlog_data.js";
-import { type SessionItem, formatID, needsYouCount, sessionItems } from "./backlog_model.js";
+import { type SessionItem, formatID, needsYouCount, needsYouLabel, sessionItems } from "./backlog_model.js";
 import { type ThemeChoice, currentMode, themeColorMetaContents } from "./theme.js";
 import type { TerminalStatus } from "./terminal.js";
 import {
@@ -1236,6 +1236,7 @@ export class AppShell {
     this.backlogPane = new BacklogPane(this.actions.backlog ?? {
       token: () => null,
       refresh: async () => {},
+      started: () => 0,
       notify: () => {},
       openSession: () => {},
       archiveSession: () => {},
@@ -1432,7 +1433,7 @@ export class AppShell {
       const n = needsYouCount(state.backlog.views.values());
       this.backlogBadge.hidden = n === 0;
       this.backlogBadge.textContent = String(n);
-      this.backlogBadge.setAttribute("aria-label", `${n} need you`);
+      this.backlogBadge.setAttribute("aria-label", needsYouLabel(n));
     }
     if (state.backlog) this.backlogPane.update(state.backlog, state.selectedProject, state.sessions);
 
@@ -2052,7 +2053,7 @@ export class AppShell {
     chip.addEventListener("click", (e) => {
       e.stopPropagation();
       this.actions.switchProject(item.root);
-      this.backlogPane.select(item.id);
+      this.backlogPane.select(item.id, item.root);
       this.switchView("backlog");
     });
     return chip;
