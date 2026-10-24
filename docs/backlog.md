@@ -136,7 +136,7 @@ but only in a free slot: it never starts more than the project's max running.
 
 ### 4. Questions
 
-An agent that needs you runs `af backlog ask --self "…"` and stops. The item and
+An agent that needs you runs `af backlog ask --self "…"` and ends its turn. The item and
 its parent show Needs you, the Backlog tab shows the selected project's count,
 and the session's attention dot lights, from any view. The project switcher
 shows the count for each other project next to its name. Answer in the item panel with **Send

@@ -147,7 +147,8 @@ const afUsageProposalsInside = `Proposals: when the user asks you to make a prop
 // it works only in a session af started for a backlog item.
 const afUsageBacklogInside = `Backlog items: when af started your session for a backlog item (your first prompt says "You are working on backlog item B-12"), report through that item, not only in your reply:
   af backlog done --self [--pr <url>]                  The work is finished; the item goes to the user for review. Pass --pr when you opened a pull request
-  af backlog ask --self <text>                         Ask the user a question on the item, then stop and wait; the answer arrives in this session as a prompt
+  af backlog ask --self [--handoff-file <path|->] [--then archive|wait] <text>  Ask the user one question on the item, then end your turn at once. With --then archive (the default) af archives this session when the turn ends; the answer restores it and arrives as a prompt. --handoff-file stores notes (at most 8 KB) for a new session if this one is gone; write what the next agent needs to continue. --then wait keeps this session live until the answer
+  af backlog add <title> --parent <id>                 Add more work you found as a draft under the item yours is part of (the "It is part of B-1" line of your first prompt); the user queues it
   af backlog note --self <text>                        Add a note to the item's thread; nobody is notified
 From an item session af refuses queue, draft, review, reopen, start, run, done <id>, drop, delete, answer, and changing the runner or budget: those are the user's. If you need one of them, ask with "af backlog ask --self". Do not create other af sessions from an item session; the cap per run does not count their use.`
 

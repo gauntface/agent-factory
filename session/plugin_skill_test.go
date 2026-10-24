@@ -132,7 +132,7 @@ func TestBacklogUsageReachesBothAudiences(t *testing.T) {
 		assert.Contains(t, AfPluginUsageReference, cmd)
 	}
 	assert.Contains(t, afUsageReference, afUsageBacklogInside)
-	for _, cmd := range []string{"af backlog done --self", "af backlog ask --self", "af backlog note --self"} {
+	for _, cmd := range []string{"af backlog done --self", "af backlog ask --self", "af backlog note --self", "--handoff-file", "--then archive"} {
 		assert.Contains(t, afUsageBacklogInside, cmd)
 		assert.NotContains(t, AfPluginUsageReference, cmd)
 	}
