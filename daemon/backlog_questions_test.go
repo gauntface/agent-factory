@@ -266,8 +266,13 @@ func mustLoad(t *testing.T, repoID string) *backlog.Backlog {
 
 func TestBacklogAnsweredInSessionOnSubmit(t *testing.T) {
 	m, repoID, inst := askedItem(t)
-	if _, err := m.backlogService().PostMessage(backlog.PostMessageRequest{RepoID: repoID, ID: 1,
-		Kind: backlog.KindQuestion, Text: "And the port?", SessionID: inst.ID}); err != nil {
+	// A second open question, as items from before one-question-per-ask hold.
+	if _, err := backlog.Update(repoID, func(b *backlog.Backlog) error {
+		it := b.Item(1)
+		it.Thread = append(it.Thread, backlog.Message{ID: 2, Kind: backlog.KindQuestion,
+			Author: "agent:" + inst.ID, Text: "And the port?", At: time.Now()})
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	m.noteBacklogSubmitted(inst)
