@@ -68,7 +68,7 @@ Request fields are the JSON keys of each route's request body; a `—` means the
 | `POST` | `/v1/RequestProposalBacklogItems` | `session_id`, `slug`, `update` | Ask the agent of a session with a Docs tab for the proposal to make or update the proposal's backlog items, by sending it a prompt. |
 | `POST` | `/v1/GetBacklog` | `repo_id`, `repo_path` | Read a project's backlog in tree order, with each item's derived state and reason and the runner's state and slots. |
 | `POST` | `/v1/AddBacklogItems` | `repo_id`, `repo_path`, `proposal`, `items`, `before`, `after` | Add draft items to a project's backlog, or, with a proposal, update the items that have the same proposal and key; returns each key's id. |
-| `POST` | `/v1/UpdateBacklogItem` | `repo_id`, `repo_path`, `id`, `title`, `body`, `waits_on`, `program`, `sequential` | Change an item's title, body, waits-on, program or sequential flag. |
+| `POST` | `/v1/UpdateBacklogItem` | `repo_id`, `repo_path`, `id`, `title`, `body`, `waits_on`, `program`, `sequential`, `paused`, `archived` | Change an item's title, body, waits-on, program or sequential flag, or pause, unpause, archive or unarchive a group. |
 | `POST` | `/v1/MoveBacklogItem` | `repo_id`, `repo_path`, `id`, `before`, `after`, `into`, `top`, `bottom` | Move an item and its subtree before or after an item, to the top or bottom of its parent, or into a parent. |
 | `POST` | `/v1/SetBacklogItemStatus` | `repo_id`, `repo_path`, `id`, `status`, `session_id`, `pr` | Set an item's status (draft, queued, review, done, dropped); on a parent, queue queues its draft children and drop drops its open children. |
 | `POST` | `/v1/DeleteBacklogItem` | `repo_id`, `repo_path`, `id` | Delete a draft item that has no runs, thread or children. |
