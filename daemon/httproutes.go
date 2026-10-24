@@ -215,6 +215,13 @@ var httpRoutes = []HTTPRoute{
 	},
 	{
 		Method:      http.MethodPost,
+		Path:        "/v1/PreviewSession",
+		Description: "Read the last lines (1-40, default 40) of a session's agent tab, by stable id, as plain text with escapes and control characters removed; read only.",
+		requestType: reflect.TypeOf(PreviewSessionRequest{}),
+		handler:     func(cs *controlServer) http.HandlerFunc { return rpcHandler(cs.PreviewSession) },
+	},
+	{
+		Method:      http.MethodPost,
 		Path:        "/v1/SendPrompt",
 		Description: "Send a prompt to an existing session's agent.",
 		requestType: reflect.TypeOf(SendPromptRequest{}),
