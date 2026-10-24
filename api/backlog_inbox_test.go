@@ -31,6 +31,16 @@ func TestBacklogInbox(t *testing.T) {
 	}
 }
 
+func TestFormatBacklogInboxStripsControls(t *testing.T) {
+	now := time.Now()
+	got := formatBacklogInbox([]backlog.InboxEntry{{ID: 1, Title: "a\x1b]0;pwned\x07",
+		Question: backlog.Message{Text: "q\x1b[2J\u009b?", At: now, Handoff: "x\r\ny\x1b[31m"}}}, now)
+	want := "B-1  a]0;pwned  · <1m ago\n  q[2J?\n  Notes from the agent:\n    x\n    y[31m\n"
+	if got != want {
+		t.Fatalf("got %q\nwant %q", got, want)
+	}
+}
+
 func TestFormatBacklogInbox(t *testing.T) {
 	now := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
 	got := formatBacklogInbox([]backlog.InboxEntry{

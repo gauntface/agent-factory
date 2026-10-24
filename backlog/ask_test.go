@@ -109,7 +109,7 @@ func TestKeptLive(t *testing.T) {
 	if _, err := b.Ask(1, "s1", Question{Text: "q", Then: ThenArchive}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	id, err := b.KeptLive("s1", "the session changed after its run ended", time.Now())
+	id, err := b.KeptLive("s1", ArchiveAsk, "the session changed after its run ended", time.Now())
 	if err != nil || id != 1 {
 		t.Fatal(id, err)
 	}
@@ -123,8 +123,22 @@ func TestKeptLive(t *testing.T) {
 	if b.RunEnded("s1", time.Now()).Archive {
 		t.Fatal("a kept session is archived at its next run end")
 	}
-	if id, err := b.KeptLive("nope", "x", time.Now()); id != 0 || err != nil {
+	if id, err := b.KeptLive("nope", ArchiveAsk, "x", time.Now()); id != 0 || err != nil {
 		t.Fatal(id, err)
+	}
+}
+
+func TestKeptLiveQuietAfterAnswer(t *testing.T) {
+	b := runningInS1(t)
+	if _, err := b.Ask(1, "s1", Question{Text: "q", Then: ThenArchive}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Answer(1, 0, "a", true, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	n := len(b.Item(1).Thread)
+	if id, err := b.KeptLive("s1", ArchiveAsk, "a new run started", time.Now()); id != 0 || err != nil || len(b.Item(1).Thread) != n {
+		t.Fatalf("id %d err %v thread %+v", id, err, b.Item(1).Thread)
 	}
 }
 

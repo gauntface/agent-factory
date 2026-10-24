@@ -11,8 +11,9 @@ import (
 // archiveItemSession archives an idle item session for reason
 // (backlog.ArchiveDone or backlog.ArchiveAsk) while that reason holds. The
 // archive is filed on the session first, so a restart finishes it. While a
-// client is attached it waits for the next unpaused poll of the session. When
-// the guard refuses, the session stays live and the item gets a note.
+// client is attached, or the session is not idle yet, it waits for a later
+// poll of the session. When the guard refuses, the session stays live and the
+// item gets a note.
 func (m *Manager) archiveItemSession(repoID, sessionID, reason string) {
 	b, err := backlog.Load(repoID)
 	if err != nil {
@@ -29,23 +30,28 @@ func (m *Manager) archiveItemSession(repoID, sessionID, reason string) {
 		return
 	}
 	m.fileOwedArchive(repoID, inst, reason)
-	if m.isPollPaused(repoID, inst.Title, sessionID) {
+	if m.isPollPaused(repoID, inst.Title, sessionID) || inst.GetLiveness() != session.LiveReady {
 		m.backlog.deferArchive(sessionID, reason)
 		return
 	}
 	guard := backlogArchiveGuard(sessionID)
 	if err := guard(inst); err != nil {
-		m.keepItemSessionLive(repoID, inst, err)
+		m.keepItemSessionLive(repoID, inst, reason, err)
 		return
 	}
 	var refused error
 	fenced := func(current *session.Instance) error {
-		refused = guard(current)
+		if refused = guard(current); refused != nil {
+			return refused
+		}
+		if b, err := backlog.Load(repoID); err != nil || !b.ArchiveOwed(sessionID, reason) {
+			refused = errors.New("the archive is no longer owed")
+		}
 		return refused
 	}
 	if err := archiveSessionForLifecycle(m, ArchiveSessionRequest{ID: sessionID, RepoID: repoID}, fenced); err != nil {
 		if refused != nil {
-			m.keepItemSessionLive(repoID, inst, refused)
+			m.keepItemSessionLive(repoID, inst, reason, refused)
 			return
 		}
 		m.warn().Printf("backlog archive (%s) of session %q: %v", reason, inst.Title, err)
@@ -55,14 +61,14 @@ func (m *Manager) archiveItemSession(repoID, sessionID, reason string) {
 }
 
 // keepItemSessionLive settles a refused archive: the session stays, and the
-// item gets a note with why. There is no retry: a change means someone is
-// using the session.
-func (m *Manager) keepItemSessionLive(repoID string, inst *session.Instance, why error) {
+// item gets a note with why, unless the archive is no longer owed (an answer
+// came first). There is no retry: a change means someone is using the session.
+func (m *Manager) keepItemSessionLive(repoID string, inst *session.Instance, reason string, why error) {
 	m.info().Printf("backlog archive: keeping session %q: %v", inst.Title, why)
 	m.settleOwedArchive(repoID, inst)
 	svc := m.backlogService()
 	if _, err := svc.Apply(backlog.ProjectRef{ID: repoID}, func(b *backlog.Backlog) ([]int, error) {
-		id, err := b.KeptLive(inst.ID, why.Error(), svc.Now())
+		id, err := b.KeptLive(inst.ID, reason, why.Error(), svc.Now())
 		if err != nil || id == 0 {
 			return nil, err
 		}
@@ -127,14 +133,18 @@ func backlogArchiveGuard(sessionID string) sessionTeardownGuard {
 	}
 }
 
-// drainBacklogDeferredArchive retries an archive parked while a client was
-// attached, now that the session is polled normally again.
+// drainBacklogDeferredArchive retries a parked archive once the session is
+// polled normally again and idle.
 func (m *Manager) drainBacklogDeferredArchive(repoID string, instance *session.Instance) {
 	if instance.BacklogItem == 0 {
 		return
 	}
 	reason, ok := m.backlog.takeDeferredArchive(instance.ID)
 	if !ok {
+		return
+	}
+	if instance.GetLiveness() != session.LiveReady {
+		m.backlog.deferArchive(instance.ID, reason)
 		return
 	}
 	sessionID := instance.ID

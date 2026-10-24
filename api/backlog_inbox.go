@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/spf13/cobra"
 
@@ -45,16 +46,29 @@ func formatBacklogInbox(inbox []backlog.InboxEntry, now time.Time) string {
 	}
 	var sb strings.Builder
 	for _, e := range inbox {
-		fmt.Fprintf(&sb, "%s  %s  · %s ago\n", backlog.FormatID(e.ID), e.Title, inboxAge(now.Sub(e.Question.At)))
-		fmt.Fprintf(&sb, "  %s\n", e.Question.Text)
+		fmt.Fprintf(&sb, "%s  %s  · %s ago\n", backlog.FormatID(e.ID), terminalSafe(e.Title), inboxAge(now.Sub(e.Question.At)))
+		for _, line := range strings.Split(terminalSafe(e.Question.Text), "\n") {
+			fmt.Fprintf(&sb, "  %s\n", line)
+		}
 		if e.Question.Handoff != "" {
 			sb.WriteString("  Notes from the agent:\n")
-			for _, line := range strings.Split(e.Question.Handoff, "\n") {
+			for _, line := range strings.Split(terminalSafe(e.Question.Handoff), "\n") {
 				fmt.Fprintf(&sb, "    %s\n", line)
 			}
 		}
 	}
 	return sb.String()
+}
+
+// terminalSafe drops control characters other than newline and tab, so agent
+// text cannot send escape sequences to the user's terminal.
+func terminalSafe(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r != '\n' && r != '\t' && unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, strings.ReplaceAll(s, "\r\n", "\n"))
 }
 
 func inboxAge(d time.Duration) string {

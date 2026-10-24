@@ -39,7 +39,7 @@ func (q Question) check() error {
 		return fmt.Errorf("then %q is not one of %s and %s", q.Then, ThenWait, ThenArchive)
 	}
 	if n := len(strings.TrimSpace(q.Handoff)); n > MaxHandoffBytes {
-		return fmt.Errorf("the handoff is %d bytes; the limit is %d", n, MaxHandoffBytes)
+		return fmt.Errorf("the handoff is %d bytes; the limit is 8 KB (%d bytes)", n, MaxHandoffBytes)
 	}
 	return nil
 }
@@ -83,19 +83,19 @@ func (b *Backlog) ArchiveOwed(sessionID, reason string) bool {
 // KeptLiveNote is the note af adds when it does not archive a session.
 func KeptLiveNote(reason string) string { return "Kept the session live: " + reason }
 
-// KeptLive records that af did not archive sessionID because of reason: a
-// note, and the open question's then becomes wait, so a later run end or
-// restart does not try again. It returns the item id, or 0 when sessionID is
-// no item's session.
-func (b *Backlog) KeptLive(sessionID, reason string, now time.Time) (int, error) {
-	it := b.ItemForSession(sessionID)
-	if it == nil {
+// KeptLive records that af did not archive sessionID, owed for reason,
+// because of why: a note, and the open question's then becomes wait, so a
+// later run end or restart does not try again. It returns the item id, or 0
+// when the archive is no longer owed, as after an answer, and nothing changed.
+func (b *Backlog) KeptLive(sessionID, reason, why string, now time.Time) (int, error) {
+	if !b.ArchiveOwed(sessionID, reason) {
 		return 0, nil
 	}
+	it := b.ItemForSession(sessionID)
 	if q := it.archiveQuestion(); q != nil {
 		q.Then = ThenWait
 	}
-	if _, err := b.AddNote(it.ID, AuthorAF, KeptLiveNote(reason), now); err != nil {
+	if _, err := b.AddNote(it.ID, AuthorAF, KeptLiveNote(why), now); err != nil {
 		return 0, err
 	}
 	return it.ID, nil
