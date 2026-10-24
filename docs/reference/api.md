@@ -28,7 +28,7 @@ Request fields are the JSON keys of each route's request body; a `—` means the
 | `POST` | `/v1/ArchiveSession` | `title`, `repo_id`, `id` | Archive a session: tear down tmux and relocate its worktree to the archive dir, keeping the record; refused before mutation when enabled tasks target it. |
 | `POST` | `/v1/RestoreArchived` | `title`, `repo_id`, `id` | Restore an archived session: move its worktree back next to the repo and re-spawn the agent. |
 | `POST` | `/v1/RestoreSession` | `title`, `repo_id`, `id`, `expected_daemon_boot_id`, `force_reap` | Restore an archived, Lost, or Dead session; an optional expected daemon boot ID refuses before admission if the process changed. |
-| `POST` | `/v1/PreviewSession` | `id`, `lines` | Read the last lines (1-40, default 40) of a session's agent tab as plain text, ANSI stripped; read only. |
+| `POST` | `/v1/PreviewSession` | `id`, `lines` | Read the last lines (1-40, default 40) of a session's agent tab, by stable id, as plain text with escapes and control characters removed; read only. |
 | `POST` | `/v1/SendPrompt` | `title`, `repo_id`, `prompt`, `id` | Send a prompt to an existing session's agent. |
 | `POST` | `/v1/ResumeFromLimit` | `title`, `repo_id`, `id` | Resume a usage-limit-blocked session, or explicitly retry an inspected handoff whose mission delivery was ambiguous. |
 | `POST` | `/v1/ConfirmHandoffDelivery` | `title`, `repo_id`, `id` | Retire a pending handoff mission on the operator's attestation that it already landed — settles the replacement fence and startup-unknown flag without resending. |
