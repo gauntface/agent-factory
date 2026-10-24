@@ -245,6 +245,12 @@ so they are documented here. `CreateSession` returns `{ "instance": <session> }`
 `sent-unverified` means the paste and Enter were accepted while a readable pane
 did not render exact prompt content; `could-not-confirm` means the pane observer
 itself was unavailable. Neither status claims delivery.
+`PreviewSession` takes `{ "id": "<session-id>", "lines": <1-40> }` and returns
+`{ "text": "…" }`: the last `lines` lines (default 40) of the session's agent tab
+as plain text, ANSI stripped, trailing blank rows dropped. It is read only and
+uses the same auth as the other session routes; a session with no running agent
+is an error. For other tabs, scrollback, or raw escapes, use
+`af sessions preview`.
 `DeliverPrompt` returns `{ "status": "started" | "sent" }`; `CreateTab`
 returns `{ "id"?: "<stable-tab-id>", "name": "<resolved-tab-name>", "tmux_name"?: "<tmux-session>" }`
 (`id` is the stable tab id minted by the daemon, which an older daemon may omit; `tmux_name` is the tmux session the tab was spawned under, omitted for a
