@@ -26,6 +26,7 @@ Run `af <command> --help` for the same information at the terminal. For a narrat
 - [`af backlog draft`](#af-backlog-draft) — Put a queued or in-review item back to draft
 - [`af backlog drop`](#af-backlog-drop) — Mark an item dropped
 - [`af backlog edit`](#af-backlog-edit) — Change an item's title, body, waits-on, program, or sequential flag
+- [`af backlog inbox`](#af-backlog-inbox) — Print the project's open questions, oldest first
 - [`af backlog list`](#af-backlog-list) — Print the backlog in order, as a tree, with each item's state
 - [`af backlog move`](#af-backlog-move) — Reorder an item; its children move with it
 - [`af backlog note`](#af-backlog-note) — Add a note to an item's thread
@@ -490,6 +491,7 @@ af backlog
 - [`af backlog draft`](#af-backlog-draft) — Put a queued or in-review item back to draft
 - [`af backlog drop`](#af-backlog-drop) — Mark an item dropped
 - [`af backlog edit`](#af-backlog-edit) — Change an item's title, body, waits-on, program, or sequential flag
+- [`af backlog inbox`](#af-backlog-inbox) — Print the project's open questions, oldest first
 - [`af backlog list`](#af-backlog-list) — Print the backlog in order, as a tree, with each item's state
 - [`af backlog move`](#af-backlog-move) — Reorder an item; its children move with it
 - [`af backlog note`](#af-backlog-note) — Add a note to an item's thread
@@ -597,17 +599,23 @@ af backlog archive <id>
 
 From an item session, ask the user a question
 
-Run from inside an item session: add a question to the item's thread and set the session's attention to it. The item shows Needs you until the user answers; the answer arrives in this session. Stop working after you ask.
+Run from inside an item session: add a question to the item's thread and set the session's attention to it. The item shows Needs you until the user answers. An item has one open question at a time.
+
+With --then archive (the default), af archives the session when this turn ends, so end your turn at once. The answer restores the session and arrives in it. With --then wait, the session stays live until the answer arrives.
+
+--handoff-file stores notes for a later run of the item (at most 8 KB), read from a file or from stdin with -.
 
 ```
-af backlog ask --self <text> [flags]
+af backlog ask --self <text> [--then wait|archive] [--handoff-file <path|->] [flags]
 ```
 
 **Flags**
 
 | Flag | Type | Description |
 |------|------|-------------|
+| `--handoff-file` | `string` | A `path` to notes for a later run of the item, or - for stdin |
 | `--self` |  | Ask on the item of the session this runs in |
+| `--then` | `string` | What this session does after you ask: archive (when this turn ends) or wait (default `archive`) |
 
 **Global flags**
 
@@ -749,6 +757,25 @@ af backlog edit <id> [flags]
 | `--sequential` |  | Run this parent's children in order |
 | `--title` | `string` | New title |
 | `--waits-on` | `string` | Comma-separated item `ids` this item waits on; "" clears |
+
+**Global flags**
+
+| Flag | Type | Description |
+|------|------|-------------|
+| `--daemon-url` | `string` | Target a REMOTE daemon at this http:// or ws:// URL instead of the local unix socket (env: AF_DAEMON_URL). The daemon is HTTP-only; terminate TLS at your own proxy if needed. |
+| `--json` |  | Wrap output in the {data,error} JSON envelope (default: bare payload; a text tree for list) |
+| `--repo` | `string` | Path to the project's git repository (default: the current directory's project) |
+| `--token` | `string` | Bearer token for a remote daemon set with --daemon-url (env: AF_DAEMON_TOKEN). Get it with 'af token show' on the daemon host. |
+
+## af backlog inbox
+
+Print the project's open questions, oldest first
+
+Print every open question on every item of the project, oldest first, with the agent's handoff notes when it left any. Items in archived groups are left out. Answer with "af backlog answer <id> <text>". With --json, print the questions as JSON in the {data,error} envelope.
+
+```
+af backlog inbox
+```
 
 **Global flags**
 

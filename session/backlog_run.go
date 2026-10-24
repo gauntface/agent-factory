@@ -34,6 +34,21 @@ func (i *Instance) BacklogRunEndedAt() time.Time {
 	return i.backlogRunEndedAt
 }
 
+// OwedArchive is the item-session archive af owes, or nil.
+func (i *Instance) OwedArchive() *OwedArchiveData {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.owedArchive
+}
+
+// SetOwedArchive files or clears the owed archive in memory; the caller
+// persists the row.
+func (i *Instance) SetOwedArchive(owed *OwedArchiveData) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.owedArchive = owed
+}
+
 // BacklogRunActive reports whether the backlog run on this item session is in
 // flight: armed by a backlog delivery and not yet ended by an idle edge or a
 // teardown.
@@ -44,6 +59,7 @@ func (i *Instance) BacklogRunActive() bool {
 }
 
 // ArmBacklogRun opens a backlog run at the moment the backlog delivers a prompt.
+// A new run drops any archive owed to the one before.
 // It sets the run's prompt boundary and holds the turn gate, so the session's
 // next idle observation ends the run only after the agent has taken the turn.
 // It reports false for a session that is not an item session.
@@ -55,6 +71,7 @@ func (i *Instance) ArmBacklogRun(at time.Time) bool {
 	}
 	i.backlogRunActive = true
 	i.backlogRunEndedAt = time.Time{}
+	i.owedArchive = nil
 	i.taskRunPromptAttemptAt = at
 	i.taskRunTurnObservedAt = time.Time{}
 	i.taskRunIdleEdgeHeld = false

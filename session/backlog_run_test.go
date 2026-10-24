@@ -142,3 +142,23 @@ func TestBacklogRunEndRecordsFenceBaseline(t *testing.T) {
 	require.True(t, inst.ArmBacklogRun(time.Now()))
 	require.True(t, inst.BacklogRunEndedAt().IsZero(), "a new run clears the end time")
 }
+
+func TestOwedArchiveSurvivesRoundTrip(t *testing.T) {
+	inst := backlogRunSession(t)
+	filed := time.Date(2026, 10, 24, 9, 0, 0, 0, time.UTC)
+	inst.SetOwedArchive(&OwedArchiveData{Reason: "ask", FiledAt: filed})
+
+	data := inst.ToInstanceData()
+	data.BackendType = "docker"
+	reloaded, err := FromInstanceData(data.ForStorage())
+	require.NoError(t, err)
+	require.Equal(t, &OwedArchiveData{Reason: "ask", FiledAt: filed}, reloaded.OwedArchive())
+}
+
+func TestOwedArchiveNotWrittenForArchivedRow(t *testing.T) {
+	inst := backlogRunSession(t)
+	inst.SetOwedArchive(&OwedArchiveData{Reason: "ask", FiledAt: time.Now()})
+	require.NoError(t, inst.Transition(BeginArchive()))
+	require.NoError(t, inst.Transition(CommitArchive()))
+	require.Nil(t, inst.ToInstanceData().OwedArchive)
+}

@@ -102,6 +102,10 @@ type PostMessageRequest struct {
 	Text       string `json:"text"`
 	SessionID  string `json:"session_id,omitempty"`
 	QuestionID int    `json:"question_id,omitempty"`
+	// Then and Handoff go with a question: what its session does after asking
+	// ("wait" or "archive"; empty waits), and notes for a later run.
+	Then    string `json:"then,omitempty"`
+	Handoff string `json:"handoff,omitempty"`
 }
 
 type MessageResponse struct {

@@ -2,6 +2,8 @@ package api
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -184,18 +186,51 @@ func TestBacklogAskAndAnswer(t *testing.T) {
 		t.Fatal(err)
 	}
 	backlogSelfSession = func() (*session.InstanceData, error) { return self, nil }
-	for _, text := range []string{"first", "second"} {
-		if _, err := runBacklogCmd(t, "ask", "--self", text); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := runBacklogCmd(t, "ask", "--self", "first"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runBacklogCmd(t, "ask", "--self", "second"); err == nil || err.Error() != "B-1 already has an open question; wait for the answer" {
+		t.Fatal(err)
 	}
 	backlogSelfSession = func() (*session.InstanceData, error) { return nil, errors.New("not in an af session") }
-	out, err = runBacklogCmd(t, "answer", "1", "--question", "4", "to the second")
+	out, err = runBacklogCmd(t, "answer", "1", "--question", "3", "to the first")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a := decodeOut[backlog.Message](t, out); a.Answers != 4 {
+	if a := decodeOut[backlog.Message](t, out); a.Answers != 3 {
 		t.Fatalf("%+v", a)
+	}
+}
+
+func TestBacklogAskThenAndHandoff(t *testing.T) {
+	stubBacklogDaemon(t)
+	withRunningItem(t, &session.InstanceData{ID: "s1", Title: "B-1 work", BacklogItem: 1})
+	if _, err := runBacklogCmd(t, "ask", "--self", "--then", "kill", "q"); err == nil || !strings.Contains(err.Error(), "--then must be wait or archive") {
+		t.Fatal(err)
+	}
+	notes := filepath.Join(t.TempDir(), "notes.md")
+	if err := os.WriteFile(notes, []byte("tried sqlite\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runBacklogCmd(t, "ask", "--self", "--handoff-file", notes, "which db?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q := decodeOut[backlog.Message](t, out); q.Then != backlog.ThenArchive || q.Handoff != "tried sqlite" {
+		t.Fatalf("%+v", q)
+	}
+	self := backlogSelfSession
+	backlogSelfSession = func() (*session.InstanceData, error) { return nil, errors.New("not in an af session") }
+	if _, err := runBacklogCmd(t, "answer", "1", "postgres"); err != nil {
+		t.Fatal(err)
+	}
+	backlogSelfSession = self
+	out, err = runBacklogCmd(t, "ask", "--self", "--then", "wait", "next?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q := decodeOut[backlog.Message](t, out); q.Then != backlog.ThenWait || q.Handoff != "" {
+		t.Fatalf("%+v", q)
 	}
 }
 

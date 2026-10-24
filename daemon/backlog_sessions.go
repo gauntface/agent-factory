@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"errors"
-	"fmt"
 	"path/filepath"
 	"time"
 
@@ -117,7 +116,8 @@ func (m *Manager) noteBacklogRunEnd(repoID string, instance *session.Instance, w
 }
 
 // backlogRunEnded moves a silent run's item to review, and archives the
-// session when the user already marked the item done and on_done is archive.
+// session when the user already marked the item done and on_done is archive,
+// or when the run ended on a question asked with then archive.
 func (m *Manager) backlogRunEnded(repoID, sessionID string) {
 	svc := m.backlogService()
 	var end backlog.RunEnd
@@ -133,92 +133,8 @@ func (m *Manager) backlogRunEnded(repoID, sessionID string) {
 		return
 	}
 	if end.Archive {
-		m.archiveDoneItemSession(repoID, sessionID)
+		m.archiveItemSession(repoID, sessionID, end.Reason)
 	}
-}
-
-// archiveDoneItemSession applies on_done archive to an idle item session whose
-// item the user marked done. While a client is attached the archive waits for
-// the next unpaused poll of the session.
-func (m *Manager) archiveDoneItemSession(repoID, sessionID string) {
-	b, err := backlog.Load(repoID)
-	if err != nil {
-		m.warn().Printf("backlog on_done for session %s: %v", sessionID, err)
-		return
-	}
-	it := b.ItemForSession(sessionID)
-	if it == nil || it.Status != backlog.StatusDone || b.Settings.OnDone != backlog.OnDoneArchive {
-		return
-	}
-	if r := b.LatestRun(it.ID); r == nil || r.SessionID != sessionID {
-		return
-	}
-	s, ok := m.itemSessions(repoID)[sessionID]
-	if !ok {
-		return
-	}
-	if m.isPollPaused(repoID, s.instance.Title, sessionID) {
-		m.backlog.deferArchive(sessionID)
-		return
-	}
-	guard := backlogArchiveGuard(sessionID)
-	if err := guard(s.instance); err != nil {
-		m.info().Printf("backlog on_done: keeping session %q: %v", s.instance.Title, err)
-		return
-	}
-	if err := archiveSessionForLifecycle(m, ArchiveSessionRequest{ID: sessionID, RepoID: repoID}, guard); err != nil {
-		m.warn().Printf("backlog on_done archive of session %q: %v", s.instance.Title, err)
-	}
-}
-
-// backlogArchiveGuard refuses the on_done archive unless the session is still
-// the same idle item session with nothing done in it since its run ended: no
-// new run, no delivery, and no pane change.
-func backlogArchiveGuard(sessionID string) sessionTeardownGuard {
-	return func(current *session.Instance) error {
-		switch {
-		case current == nil || current.ID != sessionID:
-			return fmt.Errorf("session %s was replaced", sessionID)
-		case current.BacklogRunActive():
-			return errors.New("a new run started")
-		case current.GetLiveness() != session.LiveReady:
-			return errors.New("the session is not idle")
-		case current.AdoptionDeliveries() != current.AdoptionDeliveriesAtRunEnd():
-			return errors.New("a prompt reached the session after its run ended")
-		case current.LastPaneChurnAt().After(current.BacklogRunEndedAt()):
-			return errors.New("the session changed after its run ended")
-		}
-		return nil
-	}
-}
-
-// drainBacklogDeferredArchive retries an on_done archive parked while a client
-// was attached, now that the session is polled normally again.
-func (m *Manager) drainBacklogDeferredArchive(repoID string, instance *session.Instance) {
-	if instance.BacklogItem == 0 || !m.backlog.takeDeferredArchive(instance.ID) {
-		return
-	}
-	sessionID := instance.ID
-	m.launchBackgroundMutation(func(<-chan struct{}) {
-		m.archiveDoneItemSession(repoID, sessionID)
-	})
-}
-
-// onBacklogItemDone applies on_done archive when the user marks an item done:
-// now if its session is idle; at the run's idle edge if a run is active.
-func (m *Manager) onBacklogItemDone(repoID string, it backlog.Item) {
-	if it.Status != backlog.StatusDone || len(it.Runs) == 0 {
-		return
-	}
-	r := it.Runs[len(it.Runs)-1]
-	s, ok := m.itemSessions(repoID)[r.SessionID]
-	if r.State != backlog.RunStarted || !ok || s.instance.BacklogRunActive() {
-		return
-	}
-	sessionID := r.SessionID
-	m.launchBackgroundMutation(func(<-chan struct{}) {
-		m.archiveDoneItemSession(repoID, sessionID)
-	})
 }
 
 // daemonProcessStart bounds restart recovery to starts made by an earlier
@@ -300,12 +216,15 @@ func (m *Manager) recoverBacklog(repoID string) bool {
 			return false
 		}
 	}
+	handled := map[string]bool{}
 	for _, sessionID := range ended {
+		handled[sessionID] = true
 		if answering[sessionID] {
 			continue
 		}
 		m.backlogRunEnded(repoID, sessionID)
 	}
+	m.redriveOwedArchives(repoID, sessions, handled)
 	return true
 }
 

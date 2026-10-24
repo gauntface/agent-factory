@@ -28,6 +28,19 @@ func ask(t *testing.T, s *Service, text string) Message {
 	return out.Message
 }
 
+// legacyQuestion adds a second open question to item 1, as v1 allowed.
+func legacyQuestion(t *testing.T, text string) Message {
+	t.Helper()
+	var m Message
+	if _, err := Update(repoID, func(b *Backlog) error {
+		m = *b.Item(1).appendMessage(Message{Kind: KindQuestion, Author: "agent:s1", Text: text}, time.Now())
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
 func TestServiceAsk(t *testing.T) {
 	s, h := newTestService(t)
 	ids := mustAdd(t, s, ItemInput{Key: "p", Title: "P"}, ItemInput{Key: "a", Title: "A", Parent: Ref{Key: "p"}})
@@ -158,7 +171,7 @@ func TestServiceAnswerNamedQuestion(t *testing.T) {
 	mustAdd(t, s, ItemInput{Key: "a", Title: "A"})
 	withRun(t, 1, StatusRunning)
 	first := ask(t, s, "one")
-	second := ask(t, s, "two")
+	second := legacyQuestion(t, "two")
 	h.target = TargetLive
 	if _, err := s.PostMessage(PostMessageRequest{RepoID: repoID, ID: 1, Kind: KindAnswer, Text: "x", QuestionID: 99}); err == nil {
 		t.Error("unknown question accepted")
@@ -227,14 +240,13 @@ func TestAnsweredInSession(t *testing.T) {
 	if got := b.AnsweredInSession("s1", now); got != 0 {
 		t.Fatalf("closed %d with nothing open", got)
 	}
-	if _, err := b.Ask(1, "old", "q", now); err == nil {
+	if _, err := b.Ask(1, "old", Question{Text: "q"}, now); err == nil {
 		t.Fatal("an old run asked")
 	}
-	for _, q := range []string{"q", "r"} {
-		if _, err := b.Ask(1, "s1", q, now); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := b.Ask(1, "s1", Question{Text: "q"}, now); err != nil {
+		t.Fatal(err)
 	}
+	b.Item(1).appendMessage(Message{Kind: KindQuestion, Author: "agent:s1", Text: "r"}, now)
 	if got := b.AnsweredInSession("old", now); got != 0 {
 		t.Fatal("an old run closed the question")
 	}
@@ -283,7 +295,7 @@ func TestAnswerDelivered(t *testing.T) {
 	it, _ := b.Add(NewItem{Title: "A"}, time.Now())
 	it.Status = StatusReview
 	it.Runs = []RunRef{{SessionID: "s1", State: RunStarted}}
-	if _, err := b.Ask(1, "s1", "q", time.Now()); err != nil {
+	if _, err := b.Ask(1, "s1", Question{Text: "q"}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	out, err := b.Answer(1, 0, "a", true, time.Now())
