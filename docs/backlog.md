@@ -147,7 +147,15 @@ af backlog answer 14 "Use the existing session cookie"
 ```
 
 The answer goes to the oldest open question; `--question <n>` picks another one
-(`af backlog show 14` lists them).
+(`af backlog show 14` lists them). `af backlog inbox` lists every open question
+in the project, oldest first.
+
+An item has one open question at a time. By default (`--then archive`) af
+archives the agent's session when its turn ends, so a waiting agent holds no
+pane or process. `--then wait` keeps the session live. With
+`--handoff-file <path>` the agent leaves notes for a later run. If you type in
+the session or a prompt reaches it before af archives it, af keeps it live and
+adds the note "Kept the session live: <reason>".
 
 af adds the answer to the item's thread and sends it to the session. If the
 session is archived, af restores it first. If the session is gone, the answer

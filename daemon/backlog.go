@@ -23,15 +23,16 @@ type backlogState struct {
 	once sync.Once
 	svc  *backlog.Service
 	// mu guards the in-memory bookkeeping below. None of it is durable: a
-	// restart has no starts in flight, and recovery settles their records.
+	// restart has no starts in flight, recovery settles their records, and a
+	// deferred archive is also filed on the session as OwedArchive.
 	mu sync.Mutex
 	// slots counts the item-session creates in flight per project.
 	slots map[string]int
 	// continuing holds the items whose "continue" is being sent.
 	continuing map[string]bool
-	// deferredArchive holds the sessions whose on_done archive waits for an
-	// attached client to leave.
-	deferredArchive map[string]bool
+	// deferredArchive holds the sessions whose archive waits for an attached
+	// client to leave, with the reason af owes it.
+	deferredArchive map[string]string
 	// recovered, recovering and recoveryDone track restart recovery.
 	recovered    map[string]bool
 	recovering   bool
@@ -87,21 +88,21 @@ func (s *backlogState) endContinue(repoID string, id int) {
 	delete(s.continuing, continueKey(repoID, id))
 }
 
-func (s *backlogState) deferArchive(sessionID string) {
+func (s *backlogState) deferArchive(sessionID, reason string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.deferredArchive == nil {
-		s.deferredArchive = map[string]bool{}
+		s.deferredArchive = map[string]string{}
 	}
-	s.deferredArchive[sessionID] = true
+	s.deferredArchive[sessionID] = reason
 }
 
-func (s *backlogState) takeDeferredArchive(sessionID string) bool {
+func (s *backlogState) takeDeferredArchive(sessionID string) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	owed := s.deferredArchive[sessionID]
+	reason, owed := s.deferredArchive[sessionID]
 	delete(s.deferredArchive, sessionID)
-	return owed
+	return reason, owed
 }
 
 func (s *backlogState) beginRecovery() bool {

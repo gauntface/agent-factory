@@ -72,11 +72,17 @@ func (h backlogHost) DeliverAnswer(repoID string, a backlog.PendingAnswer) {
 	}
 }
 
+// backlogAnswerArchiveRetries bounds how often an answer waits out an archive
+// that raced its send.
+const backlogAnswerArchiveRetries = 30
+
 // deliverBacklogAnswer finishes a pending answer. The caller reserved a slot
 // for it; the slot passes to the run marker once it is armed. A restore comes
 // first. The run is armed before any hold, so a held answer shows Working and
 // keeps its slot, and the send takes the per-target lock task deliveries use.
-// A client attached full screen or a usage limit holds the send.
+// A client attached full screen or a usage limit holds the send. An archive
+// that fenced the session before the send is waited out, and the answer then
+// restores the session and is sent again.
 func (m *Manager) deliverBacklogAnswer(stop <-chan struct{}, repoID string, a backlog.PendingAnswer) {
 	reserved := true
 	release := func() {
@@ -86,56 +92,95 @@ func (m *Manager) deliverBacklogAnswer(stop <-chan struct{}, repoID string, a ba
 		}
 	}
 	defer release()
+	for attempt := 0; ; attempt++ {
+		inst, ok := m.armBacklogAnswer(repoID, a)
+		if !ok {
+			return
+		}
+		release()
+		if !m.sendArmedBacklogAnswer(stop, repoID, inst, a) {
+			return
+		}
+		if attempt >= backlogAnswerArchiveRetries || !backlogAnswerWait(stop) {
+			m.backlogAnswerFailed(repoID, a, "the session was being archived")
+			return
+		}
+	}
+}
+
+// armBacklogAnswer restores the answer's session if it needs it and arms its
+// run. On false the failure is recorded.
+func (m *Manager) armBacklogAnswer(repoID string, a backlog.PendingAnswer) (*session.Instance, bool) {
 	s, ok := m.itemSessions(repoID)[a.SessionID]
 	if !ok || s.view.UserKilled || s.view.InFlightOp == session.OpKilling {
 		m.backlogAnswerFailed(repoID, a, "the session is gone")
-		return
+		return nil, false
 	}
 	if backlogNeedsRestore(s) {
 		restored, err := restoreBacklogSession(m, RestoreSessionRequest{ID: a.SessionID, RepoID: repoID})
 		if err != nil {
 			m.backlogAnswerFailed(repoID, a, "af could not restore the session: "+err.Error())
-			return
+			return nil, false
 		}
 		m.publishEvent(agentproto.EventSessionRestored, restored)
 		if s, ok = m.itemSessions(repoID)[a.SessionID]; !ok {
 			m.backlogAnswerFailed(repoID, a, "the session is gone")
-			return
+			return nil, false
 		}
 		m.syncBacklogAttention(repoID, a)
 	}
 	inst := s.instance
 	if inst.TaskRunActive() {
 		m.backlogAnswerFailed(repoID, a, "the session is running a task")
-		return
+		return nil, false
 	}
 	if !inst.ArmBacklogRun(time.Now()) {
 		m.backlogAnswerFailed(repoID, a, "the session is not an item session")
-		return
+		return nil, false
 	}
 	m.persistAndPublishInstance(repoID, inst)
-	release()
+	return inst, true
+}
+
+// sendArmedBacklogAnswer sends the answer, waiting out holds. It reports true
+// when an archive fenced the session first: the run is disarmed and the caller
+// tries again once the archive settles. Every other outcome is recorded.
+func (m *Manager) sendArmedBacklogAnswer(stop <-chan struct{}, repoID string, inst *session.Instance, a backlog.PendingAnswer) bool {
 	for {
 		err := m.sendBacklogAnswer(repoID, inst, a.Prompt)
 		if err == nil {
 			m.backlogAnswerDelivered(repoID, a)
-			return
+			return false
 		}
 		if !errors.Is(err, errBacklogAnswerHeld) {
 			m.disarmBacklogRun(repoID, inst)
+			if m.backlogAnswerRacedArchive(repoID, a.SessionID, err) {
+				return true
+			}
 			m.backlogAnswerFailed(repoID, a, err.Error())
-			return
+			return false
 		}
 		if !backlogAnswerWait(stop) {
 			m.disarmBacklogRun(repoID, inst)
 			m.backlogAnswerFailed(repoID, a, "af stopped while the answer was held")
-			return
+			return false
 		}
 		if _, ok := m.itemSessions(repoID)[a.SessionID]; !ok {
 			m.backlogAnswerFailed(repoID, a, "the session is gone")
-			return
+			return false
 		}
 	}
+}
+
+// backlogAnswerRacedArchive is whether a failed send met an archive of the
+// session: the adoption fence refused it, or the session is archiving or
+// archived now.
+func (m *Manager) backlogAnswerRacedArchive(repoID, sessionID string, err error) bool {
+	if errors.Is(err, session.ErrAdoptionFenced) {
+		return true
+	}
+	s, ok := m.itemSessions(repoID)[sessionID]
+	return ok && (s.view.InFlightOp == session.OpArchiving || s.view.Liveness == session.LiveArchived)
 }
 
 // sendBacklogAnswer sends under the per-target lock, or returns

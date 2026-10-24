@@ -125,6 +125,7 @@ func (i *Instance) toInstanceDataLocked() InstanceData {
 	// re-fire, so dropping the marker here would lose it permanently.
 	if i.liveness != LiveArchived {
 		data.PendingOnComplete = i.owedOnComplete
+		data.OwedArchive = i.owedArchive
 	}
 
 	// Persist each tab so the full local agent+shell tab list survives a restart
@@ -421,6 +422,7 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 	// somehow reached one is dropped rather than armed.
 	if liveness != LiveArchived {
 		instance.owedOnComplete = data.PendingOnComplete
+		instance.owedArchive = data.OwedArchive
 	}
 	worktreeReaped := false
 	restoredRelocationRecovery := false
