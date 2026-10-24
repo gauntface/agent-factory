@@ -220,13 +220,18 @@ func TestItemPrompt(t *testing.T) {
 	for _, want := range []string{
 		"backlog item B-2: Child a/b", "part of B-1: Parent", "/af/proposals/backlog",
 		"`````markdown\nDo it.", "af backlog done --self", "Do not create other af sessions",
+		"af backlog ask --self --handoff-file <file>", "end your turn at once", "af backlog add --parent B-1 ",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("prompt lacks %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(b.ItemPrompt(b.Item(3), ""), "proposal") {
+	top := b.ItemPrompt(b.Item(3), "")
+	if strings.Contains(top, "proposal") {
 		t.Error("no proposal line without a proposal")
+	}
+	if b.Item(3).Parent == 0 && (strings.Contains(top, "--parent") || !strings.Contains(top, "af backlog add ")) {
+		t.Errorf("a top-level item's prompt adds items without --parent:\n%s", top)
 	}
 	if !strings.Contains(ContinuePrompt(it), "B-2") {
 		t.Error("continue prompt names the item")
