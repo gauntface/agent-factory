@@ -1088,6 +1088,7 @@ export class AppShell {
     this.viewTabs = tabs;
     this.viewNav = viewNav;
     tabs.get("backlog")?.append(this.backlogBadge);
+    this.backlogBadge.addEventListener("click", () => this.backlogPane.showInbox());
 
     // The project switcher (redesign PR2): a button showing the current project and a
     // dropdown listing every project with counts. `margin-left:auto` (the wrap) pushes

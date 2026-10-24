@@ -27,6 +27,10 @@ export interface Message {
   answers?: number;
   closed?: string;
   delivery?: string;
+  /** What the asking session does after a question: "wait" or "archive". */
+  then?: string;
+  /** The asking agent's notes for a later run. */
+  handoff?: string;
   at: string;
 }
 
@@ -41,6 +45,8 @@ export interface Item {
   program?: string;
   source?: { proposal: string; key: string } | null;
   pr?: string;
+  paused?: boolean;
+  archived?: boolean;
   runs?: RunRef[];
   thread?: Message[];
   created_at: string;
@@ -213,23 +219,39 @@ export function derivedOf(view: BacklogView, id: number): Derived {
   return view.states[String(id)] ?? { state: "draft" };
 }
 
-/** The item's oldest question that no answer closes and that is not closed.
- *  An answer kept for a new run (delivery "new_run" or "superseded") does not
- *  close it; while that run is starting the item does not need the user. */
-export function openQuestion(it: Item): Message | undefined {
+/** The item's questions that no answer closes and that are not closed, oldest
+ *  first. An answer kept for a new run (delivery "new_run" or "superseded")
+ *  does not close one; while that run is starting the item does not need the
+ *  user. */
+export function openQuestions(it: Item): Message[] {
   const last = it.runs?.[it.runs.length - 1];
-  if (last?.state === "starting" && last.answer) return undefined;
+  if (last?.state === "starting" && last.answer) return [];
   const thread = it.thread ?? [];
   const closes = (m: Message) => m.kind === "answer" && m.answers && m.delivery !== "new_run" && m.delivery !== "superseded";
   const answered = new Set(thread.filter(closes).map((m) => m.answers));
-  return thread.find((m) => m.kind === "question" && !m.closed && !answered.has(m.id));
+  return thread.filter((m) => m.kind === "question" && !m.closed && !answered.has(m.id));
 }
 
-/** Items with an open question, across every given backlog. Parents roll a
- *  child's question up, so counting questions (not states) counts each once. */
+export function openQuestion(it: Item): Message | undefined {
+  return openQuestions(it)[0];
+}
+
+/** id itself or its nearest ancestor that is archived, or 0. */
+export function archivedBy(b: Backlog, id: number): number {
+  const seen = new Set<number>();
+  for (let it = itemByID(b, id); it && !seen.has(it.id); it = it.parent ? itemByID(b, it.parent) : undefined) {
+    if (it.archived) return it.id;
+    seen.add(it.id);
+  }
+  return 0;
+}
+
+/** Items with an open question, across every given backlog, leaving out
+ *  archived groups. Parents roll a child's question up, so counting questions
+ *  (not states) counts each once. */
 export function needsYouCount(views: Iterable<BacklogView>): number {
   let n = 0;
-  for (const v of views) n += v.backlog.items.filter((it) => openQuestion(it)).length;
+  for (const v of views) n += v.backlog.items.filter((it) => openQuestion(it) && !archivedBy(v.backlog, it.id)).length;
   return n;
 }
 
@@ -285,6 +307,8 @@ export interface ListOptions {
   folded: ReadonlySet<number>;
   /** Only items made from this proposal. */
   source?: string | null;
+  /** Archived groups and their items too. */
+  showArchived?: boolean;
 }
 
 function closedState(s: State): boolean {
@@ -326,6 +350,7 @@ export function listRows(view: BacklogView, opts: ListOptions): ListRow[] {
       if (!item) continue;
       const derived = derivedOf(view, id);
       if (!opts.showDone && closedState(derived.state)) continue;
+      if (!opts.showArchived && item.archived) continue;
       if (!matches(id)) continue;
       const hasKids = (kids.get(id) ?? []).length > 0;
       const folded = hasKids && opts.folded.has(id);

@@ -8,6 +8,9 @@
 import { h } from "./dom.js";
 import { icon } from "./icon.js";
 import { BodyEditor } from "./backlog_body.js";
+import { type GroupChange, groupButtons, groupSections } from "./backlog_group_panel.js";
+import { answerEffect, answerEffectText, isGroup } from "./backlog_groups.js";
+import { QuestionBox } from "./backlog_inbox.js";
 import { waitsOnBlock } from "./backlog_cycle.js";
 import type { ItemUpdate } from "./backlog_api.js";
 import {
@@ -35,6 +38,7 @@ export interface PanelActions {
   openSession(id: string): void;
   archiveSession(id: string): void;
   restoreSession(id: string): void;
+  group(id: number, change: GroupChange): void;
 }
 
 const ACTION_STATUS: Record<Exclude<ItemAction, "delete" | "start">, Status> = {
@@ -56,6 +60,7 @@ export interface ChipLink {
 
 export function stateChip(view: BacklogView, id: number, reason = derivedOf(view, id).reason ?? "", link?: ChipLink): HTMLElement {
   const d = derivedOf(view, id);
+  if (reason.startsWith(`${STATE_LABELS[d.state]} · `)) reason = reason.slice(STATE_LABELS[d.state].length + 1);
   const glyph = h("span", { class: "af-backlog-glyph", ariaHidden: "true" }, STATE_GLYPHS[d.state]);
   let chip: HTMLElement;
   if (link) {
@@ -107,11 +112,7 @@ export class ItemPanel {
   private readonly head: HTMLElement;
   private readonly card = h("section", { class: "af-backlog-card", hidden: true });
   private earlierOpen = false;
-  private readonly question: HTMLElement;
-  private readonly questionText = h("span", {});
-  private readonly answer: HTMLTextAreaElement;
-  private readonly sendAnswer: HTMLButtonElement;
-  private questionId = 0;
+  private readonly question: QuestionBox;
   private readonly above: HTMLElement;
   private readonly below: HTMLElement;
   private readonly threadList: HTMLElement;
@@ -148,19 +149,7 @@ export class ItemPanel {
       actions.note(id, text);
     });
     this.head = h("div", { class: "af-backlog-panel-state", tabIndex: -1 });
-    this.answer = h("textarea", { class: "af-backlog-note", rows: 2, placeholder: `Answer ${formatID(id)}…` });
-    this.answer.setAttribute("aria-label", "Answer");
-    this.sendAnswer = button("Send answer", () => this.submitAnswer(), "af-primary");
-    this.answer.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.isComposing) {
-        e.preventDefault();
-        this.submitAnswer();
-      }
-    });
-    this.question = h("div", { class: "af-backlog-question", role: "group", hidden: true },
-      h("div", { class: "af-backlog-question-text" }, icon("circle-question"), this.questionText),
-      h("div", { class: "af-backlog-note-row" }, this.answer, this.sendAnswer));
-    this.question.setAttribute("aria-label", "Open question");
+    this.question = new QuestionBox(id, (qid, text) => actions.answer(id, qid, text));
     this.above = h("div", { class: "af-backlog-panel-rest" });
     this.below = h("div", { class: "af-backlog-panel-rest" });
     this.threadList = h("ol", { class: "af-backlog-thread" });
@@ -171,7 +160,7 @@ export class ItemPanel {
     const top = h("div", { class: "af-backlog-panel-top" },
       h("span", { class: "af-backlog-id" }, formatID(id)), this.title, close);
     this.card.setAttribute("aria-label", "Session");
-    this.el = h("aside", { class: "af-backlog-panel" }, top, this.head, this.card, this.question, this.above, section("Body", this.body.el), this.below,
+    this.el = h("aside", { class: "af-backlog-panel" }, top, this.head, this.card, this.question.el, this.above, section("Body", this.body.el), this.below,
       section("Thread", this.threadList, h("div", { class: "af-backlog-note-row" }, this.note, addNote)));
     this.el.setAttribute("aria-label", `Item ${formatID(id)}`);
     this.el.addEventListener("keydown", (e) => {
@@ -189,17 +178,6 @@ export class ItemPanel {
     return this.view ? itemByID(this.view.backlog, this.id) : undefined;
   }
 
-  private submitAnswer(): void {
-    const text = this.answer.value.trim();
-    const qid = this.questionId;
-    if (!text || !qid || this.sendAnswer.disabled) return;
-    this.sendAnswer.disabled = true;
-    void this.actions.answer(this.id, qid, text).then((ok) => {
-      this.sendAnswer.disabled = false;
-      if (ok && this.questionId === qid && this.answer.value.trim() === text) this.answer.value = "";
-    });
-  }
-
   render(view: BacklogView, sessions: SessionData[], usage: Usage | null = null): void {
     this.view = view;
     this.sessions = sessions;
@@ -211,10 +189,7 @@ export class ItemPanel {
     const restore = this.keepField();
     this.head.replaceChildren(stateChip(view, it.id));
     const q = openQuestion(it);
-    this.question.hidden = !q;
-    if ((q?.id ?? 0) !== this.questionId) this.answer.value = "";
-    this.questionId = q?.id ?? 0;
-    this.questionText.textContent = q ? (q.author === "af" ? `af asks: ${q.text}` : q.text) : "";
+    this.question.set(q, q ? answerEffectText(answerEffect(it, sessions), q) : "");
     const card = this.sessionCard(view, it);
     this.card.hidden = card.length === 0;
     this.card.replaceChildren(...card);
@@ -222,6 +197,7 @@ export class ItemPanel {
     const below: HTMLElement[] = [this.waitsSection(view, it)];
     const children = this.childrenSection(view, it);
     if (children) below.push(children);
+    if (isGroup(view.backlog, it)) below.push(...groupSections(view, it, this.actions.select));
     if (it.source?.proposal) below.push(h("p", { class: "af-backlog-source" }, icon("file-text"), `From proposal ${it.source.proposal}`));
     this.below.replaceChildren(...below);
     this.threadList.replaceChildren(...(it.thread ?? []).map((m) => h("li", { class: `af-backlog-msg af-backlog-msg-${m.kind}` },
@@ -273,6 +249,7 @@ export class ItemPanel {
       b.dataset.action = a;
       row.append(b);
     }
+    if (isParent(view.backlog, it.id)) row.append(...groupButtons(it, isGroup(view.backlog, it), this.actions.group));
     row.append(this.moveMenu(view, it));
     return row;
   }
