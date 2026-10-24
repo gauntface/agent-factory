@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { type FakeDocument, type FakeElement, FakeEvent, installFakeDom } from "./backlog_fakedom.js";
 import { bodyEditorLoader } from "./backlog_body.js";
 import type { BacklogData } from "./backlog_data.js";
-import { type BacklogView, type Item, type RunRef, blocking, latestSessionRun, relatedIDs } from "./backlog_model.js";
+import { type BacklogView, type Item, type RunRef, blocking, latestRun, relatedIDs } from "./backlog_model.js";
 import { BacklogPane, type BacklogHost } from "./backlog_pane.js";
 import { PREVIEW_DELAY_MS } from "./backlog_preview.js";
 import { Liveness, type SessionData } from "./types.js";
@@ -111,7 +111,7 @@ test("model: blocks counts open waiters; related joins waits-on and needed-by", 
   assert.deepEqual(blocking(v.backlog, 1).map((i) => i.id), [2]);
   assert.deepEqual([...relatedIDs(v.backlog, 2)].sort(), [1, 4]);
   assert.deepEqual([...relatedIDs(v.backlog, 4)], [2]);
-  assert.equal(latestSessionRun(item(5, { runs: [run("a"), run("", { state: "starting" })] }))?.session_id, "a");
+  assert.equal(latestRun(item(5, { runs: [run("a"), run("", { state: "starting" })] }))?.state, "starting");
 });
 
 test("the state chip opens the latest run's session and does not select the row", () => {
@@ -242,4 +242,65 @@ test("the card says when the session is archived or gone, and is hidden with no 
   assert.equal(card().hidden, true);
   assert.ok(buttonNamed(el(pane), "Start now"));
   assert.equal(calls.filter((c) => c.method === "PreviewSession").length, 0);
+});
+
+test("the chip and the card follow the same run: a new run that is starting has no link yet", () => {
+  const pane = mount(host());
+  pane.update(data(view([item(1, { status: "running", runs: [run("a"), run("", { state: "starting" })] })], { 1: "starting" })), "/a",
+    [session("a")]);
+  assert.equal(row(pane, 1).querySelector(".af-backlog-chip-link"), null);
+  pane.select(1);
+  const card = el(pane).querySelector(".af-backlog-card")!;
+  assert.match(card.textContent, /Starting…/);
+  assert.equal(card.querySelector(".af-backlog-earlier summary")?.textContent, "Earlier runs (1)");
+});
+
+test("row keys: o opens the session, b picks what it blocks, p opens the PR", () => {
+  const h = host();
+  const pane = mount(h);
+  pane.update(data(view([item(1, { status: "running", runs: [run("s1")], pr: "https://github.com/o/r/pull/1" }),
+    item(2, { waits_on: [1] })], { 1: "working" })), "/a", [session("s1")]);
+  assert.equal(row(pane, 1).getAttribute("aria-keyshortcuts"), "o b p");
+  let prClicks = 0;
+  row(pane, 1).querySelector(".af-backlog-row-pr")!.addEventListener("click", () => { prClicks++; });
+  row(pane, 1).focus();
+  row(pane, 1).dispatchEvent(new FakeEvent("keydown", { key: "o" }));
+  assert.deepEqual(h.opened, ["s1"]);
+  row(pane, 1).dispatchEvent(new FakeEvent("keydown", { key: "p" }));
+  assert.equal(prClicks, 1);
+  row(pane, 1).dispatchEvent(new FakeEvent("keydown", { key: "b" }));
+  assert.deepEqual(lit(pane, "af-backlog-row-picked"), [1, 2]);
+  assert.equal(doc.activeElement, row(pane, 2));
+  const k = new FakeEvent("keydown", { key: "o" });
+  row(pane, 2).dispatchEvent(k);
+  assert.equal(k.defaultPrevented, false);
+  assert.equal(el(pane).querySelector(".af-backlog-panel"), null);
+});
+
+test("focusing a row from the keyboard previews its session after 300 ms", async () => {
+  reply = async (m) => (m === "PreviewSession" ? { text: "hi" } : {});
+  const pane = mount(host());
+  pane.update(data(view([item(1), item(2, { status: "running", runs: [run("s2")] })], { 2: "working" })), "/a", [session("s2")]);
+  row(pane, 1).focus();
+  row(pane, 1).dispatchEvent(new FakeEvent("keydown", { key: "ArrowDown" }));
+  assert.equal(doc.activeElement, row(pane, 2));
+  mock.timers.tick(PREVIEW_DELAY_MS);
+  await settle();
+  const pop = el(pane).querySelector(".af-backlog-preview")!;
+  assert.equal(pop.hidden, false);
+  assert.equal(row(pane, 2).querySelector(".af-backlog-chip-link")?.getAttribute("aria-describedby"), "af-backlog-preview");
+  row(pane, 2).dispatchEvent(new FakeEvent("keydown", { key: "ArrowUp" }));
+  assert.equal(pop.hidden, true);
+});
+
+test("Blocks n unfolds and clears a filter so the picked rows show", () => {
+  const pane = mount(host());
+  pane.update(data(view([item(1), item(3), item(2, { parent: 3, waits_on: [1] })], { 1: "queued", 2: "draft", 3: "draft" })), "/a", []);
+  row(pane, 3).querySelector(".af-backlog-fold")!.click();
+  buttonNamed(el(pane), "Queued")!.click();
+  assert.deepEqual(el(pane).querySelectorAll(".af-backlog-row").map((r) => Number(r.dataset.itemId)), [1]);
+  row(pane, 1).querySelector(".af-backlog-blocks")!.click();
+  assert.deepEqual(el(pane).querySelectorAll(".af-backlog-row").map((r) => Number(r.dataset.itemId)), [1, 3, 2]);
+  assert.equal(doc.activeElement, row(pane, 2));
+  assert.equal(buttonNamed(el(pane), "All")?.getAttribute("aria-pressed"), "true");
 });

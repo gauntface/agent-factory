@@ -146,3 +146,36 @@ test("after a rebuild the open popover follows its session's new chip", async ()
   mock.timers.tick(PREVIEW_DELAY_MS);
   assert.equal(l.pending.length, 1);
 });
+
+test("a kept ask is never superseded, and does not starve a hover ask", async () => {
+  const l = loader();
+  const cache = new PreviewCache(l.load, () => now);
+  void cache.get("x");
+  const panel = cache.get("p", true);
+  const hover1 = cache.get("h1");
+  const hover2 = cache.get("h2");
+  assert.equal(await hover1, null);
+  l.pending[0].resolve("X");
+  await settle();
+  assert.deepEqual(l.pending.map((p) => p.id), ["x", "p"]);
+  l.pending[1].resolve("P");
+  assert.deepEqual(await panel, { text: "P" });
+  await settle();
+  assert.deepEqual(l.pending.map((p) => p.id), ["x", "p", "h2"]);
+  l.pending[2].resolve("H");
+  assert.deepEqual(await hover2, { text: "H" });
+});
+
+test("a waiting ask that is cached by its turn resolves and the queue goes on", async () => {
+  const l = loader();
+  const cache = new PreviewCache(l.load, () => now);
+  void cache.get("a");
+  const a2 = cache.get("a", true);
+  const b = cache.get("b", true);
+  l.pending[0].resolve("A");
+  assert.deepEqual(await a2, { text: "A" });
+  await settle();
+  assert.deepEqual(l.pending.map((p) => p.id), ["a", "b"]);
+  l.pending[1].resolve("B");
+  assert.deepEqual(await b, { text: "B" });
+});

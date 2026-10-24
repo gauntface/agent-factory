@@ -19,12 +19,19 @@ export async function previewSession(id: string, lines: number, token: string): 
   return resp?.text ?? "";
 }
 
-/** Previews by session id. A request asked for while another is out waits for
- *  it; a newer ask replaces a waiting one, which then resolves null. */
+interface Waiting {
+  id: string;
+  keep: boolean;
+  resolve: (p: Preview | null) => void;
+}
+
+/** Previews by session id, one request at a time; the rest wait in order. A
+ *  hover ask replaces a waiting hover ask, which then resolves null. A kept ask
+ *  (the panel's) is never replaced, and does not replace a hover ask either. */
 export class PreviewCache {
   private readonly entries = new Map<string, { preview: Preview; at: number }>();
   private busy = false;
-  private queued: { id: string; resolve: (p: Preview | null) => void } | null = null;
+  private waiting: Waiting[] = [];
 
   constructor(private readonly load: (id: string) => Promise<string>, private readonly now: () => number = Date.now) {}
 
@@ -33,21 +40,24 @@ export class PreviewCache {
     return e && this.now() - e.at < PREVIEW_TTL_MS ? e.preview : undefined;
   }
 
-  get(id: string): Promise<Preview | null> {
+  get(id: string, keep = false): Promise<Preview | null> {
     const hit = this.cached(id);
     if (hit) return Promise.resolve(hit);
-    if (this.busy) {
-      if (this.queued?.id === id) {
-        const q = this.queued;
-        return new Promise((resolve) => {
-          const prev = q.resolve;
-          q.resolve = (p) => { prev(p); resolve(p); };
-        });
+    if (!this.busy) return this.run(id);
+    return new Promise((resolve) => {
+      const same = this.waiting.find((w) => w.id === id);
+      if (same) {
+        const prev = same.resolve;
+        same.resolve = (p) => { prev(p); resolve(p); };
+        same.keep ||= keep;
+        return;
       }
-      this.queued?.resolve(null);
-      return new Promise((resolve) => { this.queued = { id, resolve }; });
-    }
-    return this.run(id);
+      if (!keep) {
+        for (const w of this.waiting.filter((x) => !x.keep)) w.resolve(null);
+        this.waiting = this.waiting.filter((x) => x.keep);
+      }
+      this.waiting.push({ id, keep, resolve });
+    });
   }
 
   private async run(id: string): Promise<Preview> {
@@ -60,10 +70,17 @@ export class PreviewCache {
     }
     this.entries.set(id, { preview, at: this.now() });
     this.busy = false;
-    const q = this.queued;
-    this.queued = null;
-    if (q) void this.get(q.id).then(q.resolve);
+    this.drain();
     return preview;
+  }
+
+  private drain(): void {
+    while (!this.busy && this.waiting.length > 0) {
+      const w = this.waiting.shift()!;
+      const hit = this.cached(w.id);
+      if (hit) w.resolve(hit);
+      else void this.run(w.id).then(w.resolve);
+    }
   }
 }
 
@@ -81,17 +98,21 @@ export class PreviewPopover {
     this.el.id = "af-backlog-preview";
   }
 
-  /** Wires an anchor to show the session's preview on hover or focus. */
-  attach(anchor: HTMLElement, sessionId: string, heading: string): void {
+  /** Wires an anchor to show the session's preview on hover, and on focus of
+   *  focusEl (its row, for keyboard users). */
+  attach(anchor: HTMLElement, sessionId: string, heading: string, focusEl: HTMLElement = anchor): void {
     anchor.dataset.previewSession = sessionId;
     const show = (): void => this.schedule(anchor, sessionId, heading);
     const hide = (): void => {
       if (this.anchor === anchor) this.hide();
     };
     anchor.addEventListener("mouseenter", show);
-    anchor.addEventListener("focus", show);
+    focusEl.addEventListener("focus", show);
     anchor.addEventListener("mouseleave", hide);
-    anchor.addEventListener("blur", hide);
+    // A row removed by a rebuild may blur; rebind() decides for that one.
+    focusEl.addEventListener("blur", () => {
+      if (anchor.isConnected) hide();
+    });
   }
 
   /** After a list rebuild: follows the open preview to its new chip, or hides it. */
@@ -140,8 +161,13 @@ export class PreviewPopover {
     const below = vh === 0 || r.top + r.height < vh * 0.6;
     this.el.style.top = below ? `${r.top + r.height}px` : "auto";
     this.el.style.bottom = below ? "auto" : `${vh - r.top}px`;
-    this.el.style.left = vw === 0 ? `${r.left}px` : "auto";
-    this.el.style.right = vw === 0 ? "auto" : `${Math.max(0, vw - (r.left + r.width))}px`;
+    const left = Math.max(0, r.left);
+    const end = Math.min(vw || Infinity, r.left + r.width);
+    const fromRight = vw > 0 && end > vw / 2;
+    this.el.style.left = fromRight ? "auto" : `${left}px`;
+    this.el.style.right = fromRight ? `${Math.max(0, vw - end)}px` : "auto";
+    const room = fromRight ? Math.max(0, end) : vw > 0 ? vw - left : 0;
+    this.el.style.maxWidth = room > 0 ? `min(calc(var(--af-space-4) * 36), ${room}px)` : "";
     this.el.hidden = false;
     anchor.setAttribute("aria-describedby", this.el.id);
   }

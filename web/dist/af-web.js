@@ -16833,8 +16833,8 @@ function relatedIDs(b, id) {
   out.delete(id);
   return out;
 }
-function latestSessionRun(it) {
-  return [...it.runs ?? []].reverse().find((r) => r.session_id);
+function latestRun(it) {
+  return it.runs?.at(-1);
 }
 var ACTION_LABELS = {
   queue: "Queue",
@@ -17645,7 +17645,7 @@ var ItemPanel = class {
   sessionCard(view, it) {
     const runs = it.runs ?? [];
     const pr = safeHttpUrl(it.pr);
-    const latest = runs.at(-1);
+    const latest = latestRun(it);
     if (!latest && !pr) return [];
     const out = [];
     const s = latest?.session_id ? this.sessions.find((x) => x.id === latest.session_id) : void 0;
@@ -17706,18 +17706,19 @@ var ItemPanel = class {
     if (!isArchived(s)) btns.append(button("Archive", () => this.actions.archiveSession(sid)));
     return btns;
   }
-  /** The read-only preview of the latest run's session. A fetched preview
-   *  re-renders the panel; the cache keeps that from asking again for 5 s. */
+  /** The read-only preview of the latest run's session. Its request is kept,
+   *  so a hover never supersedes it. The answer re-renders the panel; the cache
+   *  keeps that from asking again for 5 s. */
   cardPreview(run, s) {
     const note = (text) => h("p", { class: "af-backlog-reason af-backlog-card-note" }, text);
-    if (!s?.id) return note(run.state === "starting" ? "Starting\u2026" : "Session gone");
+    if (!s?.id) return note(run.state === "starting" ? "Starting\u2026" : run.state === "failed" ? "Run failed to start" : "Session gone");
     if (isArchived(s)) return note("Archived \xB7 Restore to see the session");
     if (!this.previews) return note("No preview");
     const sid = s.id;
     const hit = this.previews.cached(sid);
     if (!hit) {
-      void this.previews.get(sid).then((p) => {
-        if (p && this.view && this.el.isConnected) this.render(this.view, this.sessions, this.usage);
+      void this.previews.get(sid, true).then((p) => {
+        if (this.view && this.el.isConnected) this.render(this.view, this.sessions, this.usage);
       });
       return note("Loading preview\u2026");
     }
@@ -17746,31 +17747,32 @@ var PreviewCache = class {
   }
   entries = /* @__PURE__ */ new Map();
   busy = false;
-  queued = null;
+  waiting = [];
   cached(id) {
     const e = this.entries.get(id);
     return e && this.now() - e.at < PREVIEW_TTL_MS ? e.preview : void 0;
   }
-  get(id) {
+  get(id, keep = false) {
     const hit = this.cached(id);
     if (hit) return Promise.resolve(hit);
-    if (this.busy) {
-      if (this.queued?.id === id) {
-        const q = this.queued;
-        return new Promise((resolve) => {
-          const prev = q.resolve;
-          q.resolve = (p) => {
-            prev(p);
-            resolve(p);
-          };
-        });
+    if (!this.busy) return this.run(id);
+    return new Promise((resolve) => {
+      const same = this.waiting.find((w) => w.id === id);
+      if (same) {
+        const prev = same.resolve;
+        same.resolve = (p) => {
+          prev(p);
+          resolve(p);
+        };
+        same.keep ||= keep;
+        return;
       }
-      this.queued?.resolve(null);
-      return new Promise((resolve) => {
-        this.queued = { id, resolve };
-      });
-    }
-    return this.run(id);
+      if (!keep) {
+        for (const w of this.waiting.filter((x) => !x.keep)) w.resolve(null);
+        this.waiting = this.waiting.filter((x) => x.keep);
+      }
+      this.waiting.push({ id, keep, resolve });
+    });
   }
   async run(id) {
     this.busy = true;
@@ -17782,10 +17784,16 @@ var PreviewCache = class {
     }
     this.entries.set(id, { preview, at: this.now() });
     this.busy = false;
-    const q = this.queued;
-    this.queued = null;
-    if (q) void this.get(q.id).then(q.resolve);
+    this.drain();
     return preview;
+  }
+  drain() {
+    while (!this.busy && this.waiting.length > 0) {
+      const w = this.waiting.shift();
+      const hit = this.cached(w.id);
+      if (hit) w.resolve(hit);
+      else void this.run(w.id).then(w.resolve);
+    }
   }
 };
 var PreviewPopover = class {
@@ -17800,17 +17808,20 @@ var PreviewPopover = class {
   timer = null;
   anchor = null;
   sessionId = "";
-  /** Wires an anchor to show the session's preview on hover or focus. */
-  attach(anchor, sessionId, heading) {
+  /** Wires an anchor to show the session's preview on hover, and on focus of
+   *  focusEl (its row, for keyboard users). */
+  attach(anchor, sessionId, heading, focusEl = anchor) {
     anchor.dataset.previewSession = sessionId;
     const show = () => this.schedule(anchor, sessionId, heading);
     const hide = () => {
       if (this.anchor === anchor) this.hide();
     };
     anchor.addEventListener("mouseenter", show);
-    anchor.addEventListener("focus", show);
+    focusEl.addEventListener("focus", show);
     anchor.addEventListener("mouseleave", hide);
-    anchor.addEventListener("blur", hide);
+    focusEl.addEventListener("blur", () => {
+      if (anchor.isConnected) hide();
+    });
   }
   /** After a list rebuild: follows the open preview to its new chip, or hides it. */
   rebind(root2) {
@@ -17854,8 +17865,13 @@ var PreviewPopover = class {
     const below = vh === 0 || r.top + r.height < vh * 0.6;
     this.el.style.top = below ? `${r.top + r.height}px` : "auto";
     this.el.style.bottom = below ? "auto" : `${vh - r.top}px`;
-    this.el.style.left = vw === 0 ? `${r.left}px` : "auto";
-    this.el.style.right = vw === 0 ? "auto" : `${Math.max(0, vw - (r.left + r.width))}px`;
+    const left = Math.max(0, r.left);
+    const end = Math.min(vw || Infinity, r.left + r.width);
+    const fromRight = vw > 0 && end > vw / 2;
+    this.el.style.left = fromRight ? "auto" : `${left}px`;
+    this.el.style.right = fromRight ? `${Math.max(0, vw - end)}px` : "auto";
+    const room = fromRight ? Math.max(0, end) : vw > 0 ? vw - left : 0;
+    this.el.style.maxWidth = room > 0 ? `min(calc(var(--af-space-4) * 36), ${room}px)` : "";
     this.el.hidden = false;
     anchor.setAttribute("aria-describedby", this.el.id);
   }
@@ -18205,7 +18221,7 @@ var BacklogPane = class {
     const items = this.view()?.backlog.items ?? [];
     const it = this.selected !== null ? items.find((x) => x.id === this.selected) : void 0;
     const chips = items.map((x) => {
-      const sid = latestSessionRun(x)?.session_id;
+      const sid = latestRun(x)?.session_id;
       const s = sid ? sessions.find((y) => y.id === sid) : void 0;
       return s ? [s.id, isArchived(s)] : null;
     });
@@ -18525,9 +18541,11 @@ ${id}`;
       fold,
       h("span", { class: "af-backlog-id" }, formatID(it.id)),
       h("span", { class: "af-backlog-row-title" }, it.title),
-      this.rowChip(v, it, row.reason),
+      this.rowChip(v, it, row.reason, li),
       ...this.rowTail(v, it)
     );
+    const keys = [[".af-backlog-chip-link", "o"], [".af-backlog-blocks", "b"], [".af-backlog-row-pr", "p"]].filter(([sel]) => li.querySelector(sel)).map(([, k]) => k);
+    if (keys.length > 0) li.setAttribute("aria-keyshortcuts", keys.join(" "));
     li.addEventListener("click", () => this.select(it.id));
     li.addEventListener("focus", () => {
       this.setCursor(it.id);
@@ -18548,9 +18566,9 @@ ${id}`;
     return li;
   }
   /** The state chip, as a link to the latest run's session when that session
-   *  is in the session list. */
-  rowChip(v, it, reason) {
-    const run = latestSessionRun(it);
+   *  is in the session list. Hovering it, or focusing its row, previews it. */
+  rowChip(v, it, reason, li) {
+    const run = latestRun(it);
     const sid = run?.session_id ?? "";
     const s = sid ? this.sessions.find((x) => x.id === sid) : void 0;
     if (!run || !s) return stateChip(v, it.id, reason);
@@ -18565,7 +18583,7 @@ ${id}`;
       open: () => this.host.openSession(sid),
       decorate: (el2) => {
         if (archived) el2.title = `${heading} \xB7 Archived`;
-        else this.popover.attach(el2, sid, heading);
+        else this.popover.attach(el2, sid, heading, li);
       }
     });
   }
@@ -18585,9 +18603,7 @@ ${id}`;
       b.setAttribute("aria-label", `${formatID(it.id)} blocks ${blocked.map((x) => formatID(x.id)).join(", ")}`);
       b.addEventListener("click", (e) => {
         e.stopPropagation();
-        this.pinned = on ? null : it.id;
-        this.focusId = on ? it.id : blocked[0].id;
-        this.render();
+        this.pick(v, it.id);
       });
       out.push(b);
     }
@@ -18606,6 +18622,33 @@ ${id}`;
       out.push(a);
     }
     return out;
+  }
+  /** Pins or unpins the rows an item blocks. Pinning unfolds their parents,
+   *  and drops the filters when a filter still hides one, so focus can land. */
+  pick(v, id) {
+    if (this.pinned === id) {
+      this.pinned = null;
+      this.focusId = id;
+      this.render();
+      return;
+    }
+    const blocked = blocking(v.backlog, id);
+    if (blocked.length === 0) return;
+    for (const x of blocked) {
+      const seen = /* @__PURE__ */ new Set();
+      for (let p = x.parent; p && !seen.has(p); p = itemByID(v.backlog, p)?.parent) {
+        seen.add(p);
+        this.folded.delete(p);
+      }
+    }
+    const shown = new Set(listRows(v, { filter: this.filter, showDone: this.showDone, folded: this.folded, source: this.source }).map((r) => r.item.id));
+    if (blocked.some((x) => !shown.has(x.id))) {
+      this.filter = "all";
+      this.source = null;
+    }
+    this.pinned = id;
+    this.focusId = blocked[0].id;
+    this.render();
   }
   setCursor(id) {
     this.cursor = id;
@@ -18649,6 +18692,16 @@ ${id}`;
       case "End":
         next = els[els.length - 1];
         break;
+      case "o":
+      case "b":
+      case "p": {
+        const sel = { o: ".af-backlog-chip-link", b: ".af-backlog-blocks", p: ".af-backlog-row-pr" }[e.key];
+        const target = li.querySelector(sel);
+        if (!target) return;
+        e.preventDefault();
+        target.click();
+        return;
+      }
       case "Escape":
         if (this.pinned === null) return;
         e.preventDefault();

@@ -451,9 +451,9 @@ export function relatedIDs(b: Backlog, id: number): Set<number> {
   return out;
 }
 
-/** The newest run that has a session: the one the state chip links to. */
-export function latestSessionRun(it: Item): RunRef | undefined {
-  return [...(it.runs ?? [])].reverse().find((r) => r.session_id);
+/** The newest run: the one the state chip links to and the session card shows. */
+export function latestRun(it: Item): RunRef | undefined {
+  return it.runs?.at(-1);
 }
 
 export type ItemAction = "queue" | "draft" | "start" | "review" | "done" | "drop" | "reopen" | "delete";

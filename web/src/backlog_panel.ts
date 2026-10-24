@@ -1,9 +1,9 @@
-// The Backlog view's item panel (backlog proposal, ui.md "Item panel"; backlog
-// v2 adds the session card at the top). The
-// title field, the body section and the note box live across renders so a
-// backlog.changed event never eats what the user is typing, or their focus;
-// the parts above and below the body rebuild. The open question's answer box
-// lives across renders for the same reason.
+// The Backlog view's item panel (backlog proposal, ui.md "Item panel"), which
+// backlog v2 starts with a session card. The title field, the body section and
+// the note box live across renders so a backlog.changed event never eats what
+// the user is typing, or their focus; the parts above and below the body
+// rebuild. The open question's answer box lives across renders for the same
+// reason.
 
 import { h } from "./dom.js";
 import { icon } from "./icon.js";
@@ -12,7 +12,7 @@ import { waitsOnBlock } from "./backlog_cycle.js";
 import type { ItemUpdate } from "./backlog_api.js";
 import {
   ACTION_LABELS, type BacklogView, type Item, type ItemAction, type MoveTarget, type RunRef, STATE_GLYPHS, STATE_LABELS, type Status,
-  childrenOf, derivedOf, formatID, isAncestor, isParent, itemActions, itemByID, neededBy, openQuestion, safeHttpUrl,
+  childrenOf, derivedOf, formatID, isAncestor, isParent, itemActions, itemByID, latestRun, neededBy, openQuestion, safeHttpUrl,
 } from "./backlog_model.js";
 import type { PreviewCache } from "./backlog_preview.js";
 import { ROW_KIND_LABELS, isArchived, rowKind } from "./status.js";
@@ -396,7 +396,7 @@ export class ItemPanel {
   private sessionCard(view: BacklogView, it: Item): HTMLElement[] {
     const runs = it.runs ?? [];
     const pr = safeHttpUrl(it.pr);
-    const latest = runs.at(-1);
+    const latest = latestRun(it);
     if (!latest && !pr) return [];
     const out: HTMLElement[] = [];
     const s = latest?.session_id ? this.sessions.find((x) => x.id === latest.session_id) : undefined;
@@ -454,18 +454,19 @@ export class ItemPanel {
     return btns;
   }
 
-  /** The read-only preview of the latest run's session. A fetched preview
-   *  re-renders the panel; the cache keeps that from asking again for 5 s. */
+  /** The read-only preview of the latest run's session. Its request is kept,
+   *  so a hover never supersedes it. The answer re-renders the panel; the cache
+   *  keeps that from asking again for 5 s. */
   private cardPreview(run: RunRef, s: SessionData | undefined): HTMLElement {
     const note = (text: string): HTMLElement => h("p", { class: "af-backlog-reason af-backlog-card-note" }, text);
-    if (!s?.id) return note(run.state === "starting" ? "Starting…" : "Session gone");
+    if (!s?.id) return note(run.state === "starting" ? "Starting…" : run.state === "failed" ? "Run failed to start" : "Session gone");
     if (isArchived(s)) return note("Archived · Restore to see the session");
     if (!this.previews) return note("No preview");
     const sid = s.id;
     const hit = this.previews.cached(sid);
     if (!hit) {
-      void this.previews.get(sid).then((p) => {
-        if (p && this.view && this.el.isConnected) this.render(this.view, this.sessions, this.usage);
+      void this.previews.get(sid, true).then((p) => {
+        if (this.view && this.el.isConnected) this.render(this.view, this.sessions, this.usage);
       });
       return note("Loading preview…");
     }

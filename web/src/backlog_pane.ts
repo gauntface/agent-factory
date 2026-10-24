@@ -11,7 +11,7 @@ import {
 import type { BacklogData } from "./backlog_data.js";
 import {
   type Backlog, type BacklogView, type DropZone, FILTERS, type Filter, type Item, type ListRow, type MoveTarget,
-  applyMove, blocking, derivedOf, dropMove, formatID, itemByID, keyboardMove, latestSessionRun, listRows, relatedIDs, safeHttpUrl,
+  applyMove, blocking, derivedOf, dropMove, formatID, itemByID, keyboardMove, latestRun, listRows, relatedIDs, safeHttpUrl,
   sources, topQueued,
 } from "./backlog_model.js";
 import { ItemPanel, entryField, stateChip } from "./backlog_panel.js";
@@ -150,7 +150,7 @@ export class BacklogPane {
     const items = this.view()?.backlog.items ?? [];
     const it = this.selected !== null ? items.find((x) => x.id === this.selected) : undefined;
     const chips = items.map((x) => {
-      const sid = latestSessionRun(x)?.session_id;
+      const sid = latestRun(x)?.session_id;
       const s = sid ? sessions.find((y) => y.id === sid) : undefined;
       return s ? [s.id, isArchived(s)] : null;
     });
@@ -465,7 +465,10 @@ export class BacklogPane {
       this.toggleFold(it.id, !this.folded.has(it.id));
     });
     li.append(handle, fold, h("span", { class: "af-backlog-id" }, formatID(it.id)),
-      h("span", { class: "af-backlog-row-title" }, it.title), this.rowChip(v, it, row.reason), ...this.rowTail(v, it));
+      h("span", { class: "af-backlog-row-title" }, it.title), this.rowChip(v, it, row.reason, li), ...this.rowTail(v, it));
+    const keys = [[".af-backlog-chip-link", "o"], [".af-backlog-blocks", "b"], [".af-backlog-row-pr", "p"]]
+      .filter(([sel]) => li.querySelector(sel)).map(([, k]) => k);
+    if (keys.length > 0) li.setAttribute("aria-keyshortcuts", keys.join(" "));
     li.addEventListener("click", () => this.select(it.id));
     li.addEventListener("focus", () => {
       this.setCursor(it.id);
@@ -487,9 +490,9 @@ export class BacklogPane {
   }
 
   /** The state chip, as a link to the latest run's session when that session
-   *  is in the session list. */
-  private rowChip(v: BacklogView, it: Item, reason: string): HTMLElement {
-    const run = latestSessionRun(it);
+   *  is in the session list. Hovering it, or focusing its row, previews it. */
+  private rowChip(v: BacklogView, it: Item, reason: string, li: HTMLElement): HTMLElement {
+    const run = latestRun(it);
     const sid = run?.session_id ?? "";
     const s = sid ? this.sessions.find((x) => x.id === sid) : undefined;
     if (!run || !s) return stateChip(v, it.id, reason);
@@ -504,7 +507,7 @@ export class BacklogPane {
       open: () => this.host.openSession(sid),
       decorate: (el) => {
         if (archived) el.title = `${heading} · Archived`;
-        else this.popover.attach(el, sid, heading);
+        else this.popover.attach(el, sid, heading, li);
       },
     });
   }
@@ -521,9 +524,7 @@ export class BacklogPane {
       b.setAttribute("aria-label", `${formatID(it.id)} blocks ${blocked.map((x) => formatID(x.id)).join(", ")}`);
       b.addEventListener("click", (e) => {
         e.stopPropagation();
-        this.pinned = on ? null : it.id;
-        this.focusId = on ? it.id : blocked[0].id;
-        this.render();
+        this.pick(v, it.id);
       });
       out.push(b);
     }
@@ -536,6 +537,35 @@ export class BacklogPane {
       out.push(a);
     }
     return out;
+  }
+
+  /** Pins or unpins the rows an item blocks. Pinning unfolds their parents,
+   *  and drops the filters when a filter still hides one, so focus can land. */
+  private pick(v: BacklogView, id: number): void {
+    if (this.pinned === id) {
+      this.pinned = null;
+      this.focusId = id;
+      this.render();
+      return;
+    }
+    const blocked = blocking(v.backlog, id);
+    if (blocked.length === 0) return;
+    for (const x of blocked) {
+      const seen = new Set<number>();
+      for (let p = x.parent; p && !seen.has(p); p = itemByID(v.backlog, p)?.parent) {
+        seen.add(p);
+        this.folded.delete(p);
+      }
+    }
+    const shown = new Set(listRows(v, { filter: this.filter, showDone: this.showDone, folded: this.folded, source: this.source })
+      .map((r) => r.item.id));
+    if (blocked.some((x) => !shown.has(x.id))) {
+      this.filter = "all";
+      this.source = null;
+    }
+    this.pinned = id;
+    this.focusId = blocked[0].id;
+    this.render();
   }
 
   private setCursor(id: number): void {
@@ -582,6 +612,16 @@ export class BacklogPane {
       case "End":
         next = els[els.length - 1];
         break;
+      case "o":
+      case "b":
+      case "p": {
+        const sel = { o: ".af-backlog-chip-link", b: ".af-backlog-blocks", p: ".af-backlog-row-pr" }[e.key];
+        const target = li.querySelector<HTMLElement>(sel);
+        if (!target) return;
+        e.preventDefault();
+        target.click();
+        return;
+      }
       case "Escape":
         if (this.pinned === null) return;
         e.preventDefault();
