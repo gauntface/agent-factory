@@ -16,7 +16,7 @@ func ContinuePrompt(it *Item) string {
 func (b *Backlog) ItemPrompt(it *Item, proposalDir string) string {
 	var sb strings.Builder
 	b.writeItemHead(&sb, it, proposalDir)
-	writeRules(&sb)
+	b.writeRules(&sb, it)
 	return sb.String()
 }
 
@@ -52,7 +52,7 @@ func (b *Backlog) StartPrompt(it *Item, proposalDir string, prev PrevRun) string
 	sb.WriteString("\nThe user's answer:\n\n")
 	writeFenced(&sb, a.Text)
 	sb.WriteString("\n")
-	writeRules(&sb)
+	b.writeRules(&sb, it)
 	return sb.String()
 }
 
@@ -73,12 +73,17 @@ func (b *Backlog) writeItemHead(sb *strings.Builder, it *Item, proposalDir strin
 	sb.WriteString("\n")
 }
 
-func writeRules(sb *strings.Builder) {
+func (b *Backlog) writeRules(sb *strings.Builder, it *Item) {
 	sb.WriteString("Rules:\n")
 	sb.WriteString("- Work on this session's branch and commit your changes.\n")
 	sb.WriteString("- Open a pull request if this project uses them.\n")
 	sb.WriteString("- When the work is done, run \"af backlog done --self\", with \"--pr <url>\" if you opened a pull request.\n")
-	sb.WriteString("- If you need the user, run \"af backlog ask --self \\\"<question>\\\"\", then stop. The answer arrives in this session.\n")
+	sb.WriteString("- If you need the user, write notes for the next agent to a file, run \"af backlog ask --self --handoff-file <file> \\\"<question>\\\"\", then end your turn at once. af archives this session when the turn ends. The answer restores it, or starts a new session with your notes if this one is gone.\n")
+	if p := b.Item(it.Parent); p != nil {
+		fmt.Fprintf(sb, "- If you find more work, add it as a draft under %s with \"af backlog add --parent %s \\\"<title>\\\"\".\n", FormatID(p.ID), FormatID(p.ID))
+	} else {
+		sb.WriteString("- If you find more work, add it as a draft with \"af backlog add \\\"<title>\\\"\".\n")
+	}
 	sb.WriteString("- Do not create other af sessions.\n")
 }
 
