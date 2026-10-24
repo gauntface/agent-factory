@@ -31,11 +31,11 @@ func (b *Backlog) ArchivedBy(id int) int {
 }
 
 func (b *Backlog) setPaused(it *Item, paused bool) error {
-	if paused == it.Paused {
-		return nil
-	}
 	if !b.IsParent(it.ID) {
 		return fmt.Errorf("%s is not a parent; only parents can be paused", FormatID(it.ID))
+	}
+	if paused == it.Paused {
+		return nil
 	}
 	if !paused && it.Archived {
 		return fmt.Errorf("%s is archived; unarchive it first", FormatID(it.ID))

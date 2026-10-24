@@ -115,6 +115,9 @@ func (b *Backlog) Move(id int, to Move, now time.Time) error {
 		if err := checkCanBeParent(p); err != nil {
 			return err
 		}
+		if g := b.ArchivedBy(parent); g != 0 && b.ArchivedBy(id) != g {
+			return fmt.Errorf("%s is archived; unarchive it first", FormatID(g))
+		}
 	}
 
 	c := b.clone()

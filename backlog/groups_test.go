@@ -137,3 +137,45 @@ func TestArchiveRefusals(t *testing.T) {
 		})
 	}
 }
+
+func TestArchivedGroupRefusesMoveAndAdd(t *testing.T) {
+	b := group(t)
+	if _, err := b.Edit(1, Edit{Archived: ptr(true)}, t0); err != nil {
+		t.Fatal(err)
+	}
+	const want = "B-1 is archived; unarchive it first"
+	if _, err := b.Add(NewItem{Title: "new", Parent: 2}, t0); err == nil || err.Error() != want {
+		t.Fatalf("add into archived: %v", err)
+	}
+	for _, mv := range []Move{{Into: 2}, {Before: 3}, {After: 2}} {
+		if err := b.Move(4, mv, t0); err == nil || err.Error() != want {
+			t.Fatalf("move %+v into archived: %v", mv, err)
+		}
+	}
+	if b.Item(4).Parent != 0 || len(b.Items) != 4 {
+		t.Fatal("refused move or add changed the backlog")
+	}
+	if err := b.Move(3, Move{Top: true}, t0); err != nil {
+		t.Fatalf("reorder inside archived group: %v", err)
+	}
+}
+
+func TestUnpauseLeafRefused(t *testing.T) {
+	b := group(t)
+	_, err := b.Edit(3, Edit{Paused: ptr(false)}, t0)
+	if err == nil || err.Error() != "B-3 is not a parent; only parents can be paused" {
+		t.Fatalf("unpause leaf: %v", err)
+	}
+}
+
+func TestRunNowSkipsPaused(t *testing.T) {
+	b := group(t)
+	b.Item(1).Paused = true
+	if pick, _ := b.RunNow(b.DeriveAll(nil), 0, 5); !reflect.DeepEqual(pick, []int{4}) {
+		t.Fatalf("RunNow = %v, want [4]", pick)
+	}
+	b.Item(4).Status = StatusDraft
+	if pick, reason := b.RunNow(b.DeriveAll(nil), 0, 5); len(pick) != 0 || !strings.HasPrefix(reason, "nothing queued") {
+		t.Fatalf("RunNow = %v %q, want nothing", pick, reason)
+	}
+}

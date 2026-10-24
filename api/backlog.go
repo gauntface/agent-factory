@@ -253,7 +253,7 @@ func formatBacklogTree(entries []backlogEntry) string {
 		switch {
 		case e.Archived:
 			state += " · archived"
-		case e.Paused:
+		case e.Paused && len(e.Children) > 0:
 			state += " · paused"
 		}
 		fmt.Fprintf(&sb, "%s%s  %s  · %s\n", strings.Repeat("  ", d), backlog.FormatID(e.ID), e.Title, state)

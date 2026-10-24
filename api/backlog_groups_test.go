@@ -59,6 +59,26 @@ func TestBacklogGroups(t *testing.T) {
 	}
 }
 
+func TestBacklogListPausedMarkerOnlyOnParents(t *testing.T) {
+	stubBacklogDaemon(t)
+	if _, err := runBacklogCmd(t, "add", "leaf"); err != nil {
+		t.Fatal(err)
+	}
+	p, err := backlogProject()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := backlog.Update(p.repoID, func(b *backlog.Backlog) error {
+		b.Item(1).Paused = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if out, _ := runBacklogCmd(t, "list"); out != "B-1  leaf  · Draft\n" {
+		t.Fatalf("list:\n%s", out)
+	}
+}
+
 func TestBacklogGroupsRefusedFromItemSession(t *testing.T) {
 	methods := stubBacklogDaemon(t)
 	withRunningItem(t, &session.InstanceData{ID: "s1", Title: "item", BacklogItem: 1})
