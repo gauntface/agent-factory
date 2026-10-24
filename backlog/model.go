@@ -84,6 +84,8 @@ type Item struct {
 	External   string    `json:"external,omitempty"`
 	Runs       []RunRef  `json:"runs,omitempty"`
 	Thread     []Message `json:"thread,omitempty"`
+	Paused     bool      `json:"paused,omitempty"`
+	Archived   bool      `json:"archived,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }
@@ -131,6 +133,10 @@ type Message struct {
 	// put back if the delivery fails.
 	Delivery   string `json:"delivery,omitempty"`
 	PrevStatus Status `json:"prev_status,omitempty"`
+	// Then is what a question's session does after asking: "wait" or
+	// "archive". Handoff is the asking agent's notes for a later run.
+	Then    string `json:"then,omitempty"`
+	Handoff string `json:"handoff,omitempty"`
 }
 
 type Settings struct {

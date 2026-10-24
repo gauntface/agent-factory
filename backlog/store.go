@@ -15,7 +15,7 @@ import (
 const (
 	BacklogFileName      = "backlog.json"
 	BudgetFileName       = "budget.json"
-	BacklogSchemaVersion = 1
+	BacklogSchemaVersion = 2
 	BudgetSchemaVersion  = 2
 )
 
@@ -127,6 +127,9 @@ var backlogStore = store[Backlog]{
 	empty:    New,
 	finish:   (*Backlog).normalize,
 	setStamp: func(b *Backlog, v int) { b.SchemaVersion = v },
+	// Version 2 only adds fields, so its migrator only stamps. The bump stops
+	// an older af from saving the file and dropping them.
+	migrate: map[int]config.SchemaMigrator{1: stampVersion(2)},
 }
 
 var budgetStore = store[Budget]{
