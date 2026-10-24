@@ -246,12 +246,14 @@ export function archivedBy(b: Backlog, id: number): number {
   return 0;
 }
 
-/** Items with an open question, across every given backlog, leaving out
- *  archived groups. Parents roll a child's question up, so counting questions
+/** Open questions across every given backlog, leaving out archived groups:
+ *  the Inbox count. Parents roll a child's question up, so counting questions
  *  (not states) counts each once. */
 export function needsYouCount(views: Iterable<BacklogView>): number {
   let n = 0;
-  for (const v of views) n += v.backlog.items.filter((it) => openQuestion(it) && !archivedBy(v.backlog, it.id)).length;
+  for (const v of views) {
+    for (const it of v.backlog.items) if (!archivedBy(v.backlog, it.id)) n += openQuestions(it).length;
+  }
   return n;
 }
 

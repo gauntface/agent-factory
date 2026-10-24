@@ -7,11 +7,12 @@ import type { BacklogData } from "./backlog_data.js";
 import { answerEffect, groupDependencies, groupHistory, inbox } from "./backlog_groups.js";
 import { type BacklogView, type Item, type Message, type RunRef, needsYouCount } from "./backlog_model.js";
 import { BacklogPane, type BacklogHost } from "./backlog_pane.js";
-import { Liveness, type SessionData } from "./types.js";
+import { InFlightOp, Liveness, type SessionData } from "./types.js";
 
 let dom: ReturnType<typeof installFakeDom>;
 let doc: FakeDocument;
 let calls: { method: string; body: Record<string, unknown> }[];
+let refuse: string | null;
 const realFetch = globalThis.fetch;
 const realLoad = bodyEditorLoader.load;
 const NOW = Date.parse("2000-01-03T10:00:00Z");
@@ -20,8 +21,10 @@ beforeEach(() => {
   dom = installFakeDom();
   doc = dom.doc;
   calls = [];
+  refuse = null;
   (globalThis as { fetch: unknown }).fetch = async (url: string, init: RequestInit) => {
     calls.push({ method: url.replace("/v1/", ""), body: JSON.parse(String(init.body)) as Record<string, unknown> });
+    if (refuse !== null) return new Response(JSON.stringify({ data: null, error: { message: refuse } }), { status: 400 });
     return new Response(JSON.stringify({ data: {}, error: null }), { status: 200 });
   };
   bodyEditorLoader.load = async () => ({
@@ -51,8 +54,8 @@ function item(id: number, over: Partial<Item> = {}): Item {
   return { id, title: `item ${id}`, status: "draft", created_at: "", updated_at: "", runs: [], waits_on: [], thread: [], ...over };
 }
 
-function run(sid: string): RunRef {
-  return { session_id: sid, title: `run ${sid}`, state: "started", prev_status: "queued", started_by: "runner", started_at: ago(60) };
+function run(sid: string, over: Partial<RunRef> = {}): RunRef {
+  return { session_id: sid, title: `run ${sid}`, state: "started", prev_status: "queued", started_by: "runner", started_at: ago(60), ...over };
 }
 
 function question(id: number, min: number, over: Partial<Message> = {}): Message {
@@ -87,8 +90,8 @@ function host(): BacklogHost & { notes: string[] } {
   return h;
 }
 
-function mount(): BacklogPane {
-  const pane = new BacklogPane(host());
+function mount(h: BacklogHost = host()): BacklogPane {
+  const pane = new BacklogPane(h);
   doc.body.append(pane.el as unknown as FakeElement);
   return pane;
 }
@@ -109,7 +112,7 @@ test("inbox: every open question oldest first, archived groups left out", () => 
     item(4, { parent: 3, status: "running", thread: [question(1, 60)] }),
   ]);
   assert.deepEqual(inbox(v).map((e) => [e.item.id, e.question.id]), [[1, 2], [2, 1], [1, 1]]);
-  assert.equal(needsYouCount([v]), 2);
+  assert.equal(needsYouCount([v]), 3);
 });
 
 test("an answer restores an archived session, starts a new run when it is gone", () => {
@@ -117,6 +120,17 @@ test("an answer restores an archived session, starts a new run when it is gone",
   assert.equal(answerEffect(it, [session("s1")]), "live");
   assert.equal(answerEffect(it, [session("s1", { liveness: Liveness.Archived })]), "restore");
   assert.equal(answerEffect(it, []), "new_run");
+});
+
+test("an answer starts a new run unless a started run's session is listed and not being killed", () => {
+  const live = [session("s1")];
+  assert.equal(answerEffect(item(1), live), "new_run");
+  assert.equal(answerEffect(item(1, { runs: [run("s1", { state: "failed" })] }), live), "new_run");
+  assert.equal(answerEffect(item(1, { runs: [run("s1"), run("", { state: "starting" })] }), live), "new_run");
+  const it = item(1, { runs: [run("s1")] });
+  assert.equal(answerEffect(it, [session("s1", { user_killed: true })]), "new_run");
+  assert.equal(answerEffect(it, [session("s1", { in_flight_op: InFlightOp.Killing })]), "new_run");
+  assert.equal(answerEffect(it, [session("s1", { in_flight_op: InFlightOp.Archiving })]), "live");
 });
 
 test("group dependencies name links inside and out; history is closed items, newest first", () => {
@@ -214,6 +228,17 @@ test("the group panel pauses, archives, and lists dependencies and history", asy
   buttonNamed(panel, "Unarchive")!.click();
   await settle();
   assert.deepEqual(calls.at(-1), { method: "UpdateBacklogItem", body: { repo_path: "/a", id: 1, archived: false } });
+});
+
+test("a daemon refusal of an archive reaches notify", async () => {
+  const h = host();
+  const pane = mount(h);
+  pane.update(data(view([item(3), item(5, { parent: 3, status: "running" })], { 5: "working" })), "/a", []);
+  pane.select(3);
+  refuse = "B-3 has a running item (B-5); stop it before you archive B-3";
+  buttonNamed(el(pane).querySelector(".af-backlog-panel")!, "Archive")!.click();
+  await settle();
+  assert.deepEqual(h.notes, ["B-3 has a running item (B-5); stop it before you archive B-3"]);
 });
 
 test("a child parent pauses but does not archive", () => {

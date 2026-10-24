@@ -6,7 +6,7 @@ import {
   archivedBy, derivedOf, isAncestor, isParent, itemByID, latestRun, openQuestions,
 } from "./backlog_model.js";
 import { isArchived, rowKind } from "./status.js";
-import type { SessionData } from "./types.js";
+import { InFlightOp, type SessionData } from "./types.js";
 
 export function isGroup(b: Backlog, it: Item): boolean {
   return !it.parent && isParent(b, it.id);
@@ -31,23 +31,26 @@ export function inbox(view: BacklogView): InboxEntry[] {
 
 export type AnswerEffect = "live" | "restore" | "new_run";
 
-/** What an answer to the item's question does, from its latest run's session:
- *  a session not in the list is gone, so the answer starts a new run. */
+/** What an answer to the item's question does, as the daemon decides it
+ *  (backlog/service_messages.go Post): only a started run whose session is
+ *  listed, not killed by the user and not being killed gets the answer;
+ *  otherwise the answer starts a new run. */
 export function answerEffect(it: Item, sessions: readonly SessionData[]): AnswerEffect {
-  const sid = latestRun(it)?.session_id;
-  const s = sid ? sessions.find((x) => x.id === sid) : undefined;
-  if (!s) return "new_run";
+  const run = latestRun(it);
+  if (run?.state !== "started" || !run.session_id) return "new_run";
+  const s = sessions.find((x) => x.id === run.session_id);
+  if (!s || s.user_killed === true || (s.in_flight_op ?? InFlightOp.None) === InFlightOp.Killing) return "new_run";
   if (isArchived(s)) return "restore";
   const kind = rowKind(s);
   return kind === "lost" || kind === "dead" ? "restore" : "live";
 }
 
-export function answerEffectText(effect: AnswerEffect, q: Message): string {
+export function answerEffectText(effect: AnswerEffect): string {
   switch (effect) {
     case "restore":
       return "Restores the session";
     case "new_run":
-      return q.handoff ? "Starts a new run with the previous agent's notes" : "Starts a new run";
+      return "Starts a new run with the previous agent's notes";
     default:
       return "Goes to the session";
   }

@@ -109,7 +109,7 @@ export class InboxList {
         open.addEventListener("click", () => this.actions.select(item.id));
         card.head.replaceChildren(open, h("span", { class: "af-backlog-reason" }, age));
       }
-      card.box.set(question, answerEffectText(answerEffect(item, sessions), question));
+      card.box.set(question, answerEffectText(answerEffect(item, sessions)));
       next.set(key, card);
     }
     this.cards = next;

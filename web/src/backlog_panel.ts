@@ -189,7 +189,7 @@ export class ItemPanel {
     const restore = this.keepField();
     this.head.replaceChildren(stateChip(view, it.id));
     const q = openQuestion(it);
-    this.question.set(q, q ? answerEffectText(answerEffect(it, sessions), q) : "");
+    this.question.set(q, q ? answerEffectText(answerEffect(it, sessions)) : "");
     const card = this.sessionCard(view, it);
     this.card.hidden = card.length === 0;
     this.card.replaceChildren(...card);

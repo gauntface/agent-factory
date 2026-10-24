@@ -16683,7 +16683,9 @@ function archivedBy(b, id) {
 }
 function needsYouCount(views) {
   let n = 0;
-  for (const v of views) n += v.backlog.items.filter((it) => openQuestion(it) && !archivedBy(v.backlog, it.id)).length;
+  for (const v of views) {
+    for (const it of v.backlog.items) if (!archivedBy(v.backlog, it.id)) n += openQuestions(it).length;
+  }
   return n;
 }
 function needsYouByRoot(views) {
@@ -17140,19 +17142,20 @@ function inbox(view) {
   return out.sort((a, b) => at(a) - at(b));
 }
 function answerEffect(it, sessions) {
-  const sid = latestRun(it)?.session_id;
-  const s = sid ? sessions.find((x) => x.id === sid) : void 0;
-  if (!s) return "new_run";
+  const run = latestRun(it);
+  if (run?.state !== "started" || !run.session_id) return "new_run";
+  const s = sessions.find((x) => x.id === run.session_id);
+  if (!s || s.user_killed === true || (s.in_flight_op ?? InFlightOp.None) === InFlightOp.Killing) return "new_run";
   if (isArchived(s)) return "restore";
   const kind = rowKind(s);
   return kind === "lost" || kind === "dead" ? "restore" : "live";
 }
-function answerEffectText(effect, q) {
+function answerEffectText(effect) {
   switch (effect) {
     case "restore":
       return "Restores the session";
     case "new_run":
-      return q.handoff ? "Starts a new run with the previous agent's notes" : "Starts a new run";
+      return "Starts a new run with the previous agent's notes";
     default:
       return "Goes to the session";
   }
@@ -17322,7 +17325,7 @@ ${age}`;
         open.addEventListener("click", () => this.actions.select(item.id));
         card.head.replaceChildren(open, h("span", { class: "af-backlog-reason" }, age));
       }
-      card.box.set(question, answerEffectText(answerEffect(item, sessions), question));
+      card.box.set(question, answerEffectText(answerEffect(item, sessions)));
       next.set(key, card);
     }
     this.cards = next;
@@ -17636,7 +17639,7 @@ var ItemPanel = class {
     const restore = this.keepField();
     this.head.replaceChildren(stateChip(view, it.id));
     const q = openQuestion(it);
-    this.question.set(q, q ? answerEffectText(answerEffect(it, sessions), q) : "");
+    this.question.set(q, q ? answerEffectText(answerEffect(it, sessions)) : "");
     const card = this.sessionCard(view, it);
     this.card.hidden = card.length === 0;
     this.card.replaceChildren(...card);
@@ -19339,7 +19342,9 @@ var AppShell = class {
     this.viewTabs = tabs;
     this.viewNav = viewNav;
     tabs.get("backlog")?.append(this.backlogBadge);
-    this.backlogBadge.addEventListener("click", () => this.backlogPane.showInbox());
+    tabs.get("backlog")?.addEventListener("click", () => {
+      if (!this.backlogBadge.hidden) this.backlogPane.showInbox();
+    });
     this.projectSwitchName = h("span", { class: "af-project-switch-name" }, "\u2014");
     const switchGlyph = icon("folder-git", "af-project-glyph");
     const switchCaret = icon("chevron-down", "af-project-caret");
@@ -19792,7 +19797,10 @@ var AppShell = class {
         this.needsYouChanged = true;
       }
     }
-    setNeedsYouBadge(this.backlogBadge, state.selectedProject ? this.needsYou.get(state.selectedProject) ?? 0 : 0);
+    const questions = state.selectedProject ? this.needsYou.get(state.selectedProject) ?? 0 : 0;
+    setNeedsYouBadge(this.backlogBadge, questions);
+    const backlogTab = this.viewTabs.get("backlog");
+    if (backlogTab) backlogTab.title = questions > 0 ? `Backlog \xB7 ${questions === 1 ? "1 question" : `${questions} questions`} \xB7 Opens the inbox` : "";
     if (state.backlog) this.backlogPane.update(state.backlog, state.selectedProject, state.sessions);
     this.configPane.update(state.config, state.configPath, state.configStatus, state.accounts, state.themeChoice);
     const sessionsChanged = this.lastSessions !== state.sessions;
