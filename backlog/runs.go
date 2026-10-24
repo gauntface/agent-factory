@@ -57,6 +57,9 @@ func (b *Backlog) BeginStart(id int, by string, facts Facts, now time.Time) (Sta
 		by = StartedByUser
 	}
 	run := RunRef{State: RunStarting, PrevStatus: it.Status, StartedBy: by, StartedAt: now}
+	if a := it.KeptAnswer(); a != nil {
+		run.Answer = a.ID
+	}
 	it.Status = StatusRunning
 	it.Runs = append(it.Runs, run)
 	it.UpdatedAt = now
@@ -137,6 +140,7 @@ func (b *Backlog) FinishStart(id int, startedAt time.Time, sessionID, title, bra
 	it.UpdatedAt = now
 	if startErr == nil {
 		run.SessionID, run.Title, run.Branch, run.State = sessionID, title, branch, RunStarted
+		it.answerSent(run.Answer)
 		return nil
 	}
 	run.State, run.EndedAt = RunFailed, now
@@ -146,8 +150,25 @@ func (b *Backlog) FinishStart(id int, startedAt time.Time, sessionID, title, bra
 			it.Status = run.PrevStatus
 		}
 	}
-	_, err = b.AddNote(id, AuthorAF, "The session could not start: "+startErr.Error(), now)
+	note := "The session could not start: " + startErr.Error()
+	if a := it.message(run.Answer); a != nil && a.Delivery == DeliveryNewRun {
+		note += fmt.Sprintf(". Your answer is kept; \"af backlog start %d\" sends it to a new session with the previous agent's notes", id)
+	}
+	_, err = b.AddNote(id, AuthorAF, note, now)
 	return err
+}
+
+// answerSent closes the question of kept answer answerID: a new session
+// started with it.
+func (it *Item) answerSent(answerID int) {
+	a := it.message(answerID)
+	if a == nil || a.Kind != KindAnswer || a.Delivery != DeliveryNewRun {
+		return
+	}
+	a.Delivery = DeliveryDelivered
+	if q := it.message(a.Answers); q != nil && q.Closed == "" {
+		q.Closed = ClosedAnswered
+	}
 }
 
 // ItemSession is one session the daemon knows was started for an item.

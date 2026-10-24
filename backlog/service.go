@@ -47,6 +47,9 @@ type Host interface {
 
 // AnswerRunRequest is an answer that starts a new run.
 type AnswerRunRequest struct {
+	// RepoPath is the project root the request named, or "" when it named the
+	// project by id.
+	RepoPath   string
 	ID         int
 	QuestionID int
 	Text       string

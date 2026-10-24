@@ -60,6 +60,10 @@ func (m *Manager) StartBacklogItem(req backlog.StartRequest, by string) (backlog
 	if err != nil {
 		return backlog.RunRef{}, err
 	}
+	var prev backlog.PrevRun
+	if b.LatestRun(req.ID).Answer != 0 {
+		prev = m.prevBacklogRun(ref.ID, root, b.Item(req.ID))
+	}
 	var create CreateSessionRequest
 	m.backlog.reserve(ref.ID)
 	_, err = svc.Apply(ref, func(b *backlog.Backlog) ([]int, error) {
@@ -72,7 +76,8 @@ func (m *Manager) StartBacklogItem(req backlog.StartRequest, by string) (backlog
 		}
 		plan = p
 		it := b.Item(req.ID)
-		create, err = backlogCreateRequest(it, root, b.ItemPrompt(it, proposalDir(ref.ID, it)))
+		prev.PR = it.PR
+		create, err = backlogCreateRequest(it, root, b.StartPrompt(it, proposalDir(ref.ID, it), prev))
 		return []int{req.ID}, err
 	})
 	if err != nil {

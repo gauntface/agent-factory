@@ -16,31 +16,32 @@ func (h backlogHost) StartAnswerRun(repoID string, req backlog.AnswerRunRequest)
 }
 
 // startAnswerRun answers a question whose session is gone with a new run of
-// the item. The answer and the starting run are written together; the session
-// is created on a tracked goroutine, like any start.
+// the item. The kept answer and the starting run are written together; the
+// session is created on a tracked goroutine, like any start, and the question
+// closes when it starts.
 func (m *Manager) startAnswerRun(ref backlog.ProjectRef, req backlog.AnswerRunRequest) (backlog.Message, error) {
 	svc := m.backlogService()
 	b, err := backlog.Load(ref.ID)
 	if err != nil {
 		return backlog.Message{}, err
 	}
-	prevSession, prev := "", backlog.PrevRun{}
-	if last := b.LatestRun(req.ID); last != nil {
-		prevSession, prev.Branch = last.SessionID, last.Branch
-		if s, ok := m.itemSessions(ref.ID)[last.SessionID]; ok && prev.Branch == "" {
-			prev.Branch = s.instance.GetBranch()
-		}
+	it := b.Item(req.ID)
+	if it == nil {
+		return backlog.Message{}, &backlog.NotFoundError{ID: req.ID}
 	}
+	var last backlog.RunRef
+	if r := b.LatestRun(req.ID); r != nil {
+		last = *r
+	}
+	prevItem := *it
 	if _, err := b.BeginAnswerRun(req.ID, req.QuestionID, req.Text, svc.Now()); err != nil {
 		return backlog.Message{}, err
 	}
-	root, err := backlogProjectRoot(ref.ID, "")
+	root, err := backlogProjectRoot(ref.ID, req.RepoPath)
 	if err != nil {
 		return backlog.Message{}, err
 	}
-	if prev.Branch != "" {
-		prev.SHA, prev.Checked = remoteBranchSHA(root, prev.Branch)
-	}
+	prev := m.prevBacklogRun(ref.ID, root, &prevItem)
 
 	var (
 		create CreateSessionRequest
@@ -48,7 +49,7 @@ func (m *Manager) startAnswerRun(ref backlog.ProjectRef, req backlog.AnswerRunRe
 	)
 	m.backlog.reserve(ref.ID)
 	_, err = svc.Apply(ref, func(b *backlog.Backlog) ([]int, error) {
-		if last := b.LatestRun(req.ID); last != nil && last.SessionID != prevSession {
+		if r := b.LatestRun(req.ID); r != nil && (r.SessionID != last.SessionID || !r.StartedAt.Equal(last.StartedAt)) {
 			return nil, fmt.Errorf("%s changed while answering; retry", backlog.FormatID(req.ID))
 		}
 		var err error
@@ -57,8 +58,7 @@ func (m *Manager) startAnswerRun(ref backlog.ProjectRef, req backlog.AnswerRunRe
 		}
 		it := b.Item(req.ID)
 		prev.PR = it.PR
-		prompt := b.AnswerRunPrompt(it, proposalDir(ref.ID, it), prev, out.Question, out.Answered.Answer.Text)
-		create, err = backlogCreateRequest(it, root, prompt)
+		create, err = backlogCreateRequest(it, root, b.StartPrompt(it, proposalDir(ref.ID, it), prev))
 		return []int{req.ID}, err
 	})
 	if err != nil {
@@ -66,7 +66,29 @@ func (m *Manager) startAnswerRun(ref backlog.ProjectRef, req backlog.AnswerRunRe
 		return backlog.Message{}, err
 	}
 	m.launchBacklogCreate(ref, req.ID, out.Plan.Run.StartedAt, create)
-	return out.Answered.Answer, nil
+	return out.Answer, nil
+}
+
+// prevBacklogRun is what af knows about the item's latest run that had a
+// session: its branch, from the run or else the session record, and that
+// branch's last commit on origin.
+func (m *Manager) prevBacklogRun(repoID, root string, it *backlog.Item) backlog.PrevRun {
+	var prev backlog.PrevRun
+	for i := len(it.Runs) - 1; i >= 0; i-- {
+		r := it.Runs[i]
+		if r.SessionID == "" {
+			continue
+		}
+		prev.Branch = r.Branch
+		if s, ok := m.itemSessions(repoID)[r.SessionID]; ok && prev.Branch == "" {
+			prev.Branch = s.instance.GetBranch()
+		}
+		break
+	}
+	if prev.Branch != "" {
+		prev.SHA, prev.Checked = remoteBranchSHA(root, prev.Branch)
+	}
+	return prev
 }
 
 const remoteBranchTimeout = 5 * time.Second
@@ -78,7 +100,9 @@ var remoteBranchSHA = func(root, branch string) (sha string, ok bool) {
 	defer cancel()
 	ref := "refs/heads/" + branch
 	cmd := exec.CommandContext(ctx, "git", "-C", root, "ls-remote", "origin", ref)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	// The daemon has no terminal: a credential or host-key prompt must fail
+	// rather than wait out the timeout.
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=ssh -oBatchMode=yes")
 	cmd.WaitDelay = time.Second
 	stdout, err := cmd.Output()
 	if err != nil {

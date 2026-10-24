@@ -555,7 +555,7 @@ af backlog add <title> | add --file <path or -> [flags]
 
 Answer an item's open question
 
-Answer the item's oldest open question, or the one --question names. af adds the answer to the thread and sends it to the item's session, restoring the session first if it is archived, and waiting while a client is attached to it. If the session is gone, af starts a new session for the item with the previous agent's notes and the answer.
+Answer the item's oldest open question, or the one --question names. af adds the answer to the thread and sends it to the item's session, restoring the session first if it is archived, and waiting while a client is attached to it. If the session is gone, af starts a new session for the item with the previous agent's notes and the answer; the question closes when that session starts. A done or dropped item must be reopened first.
 
 ```
 af backlog answer <id> [--question <n>] <text> [flags]

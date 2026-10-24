@@ -16663,8 +16663,11 @@ function derivedOf(view, id) {
   return view.states[String(id)] ?? { state: "draft" };
 }
 function openQuestion(it) {
+  const last = it.runs?.[it.runs.length - 1];
+  if (last?.state === "starting" && last.answer) return void 0;
   const thread = it.thread ?? [];
-  const answered = new Set(thread.filter((m) => m.kind === "answer" && m.answers).map((m) => m.answers));
+  const closes = (m) => m.kind === "answer" && m.answers && m.delivery !== "new_run" && m.delivery !== "superseded";
+  const answered = new Set(thread.filter(closes).map((m) => m.answers));
   return thread.find((m) => m.kind === "question" && !m.closed && !answered.has(m.id));
 }
 function needsYouCount(views) {

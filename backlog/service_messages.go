@@ -98,8 +98,11 @@ func (s *Service) answer(p *project, req PostMessageRequest) (*MessageResponse, 
 			target = s.host.AnswerTarget(p.id, sessionID)
 		}
 	}
-	if target == TargetGone && it.Status.Open() {
-		msg, err := s.host.StartAnswerRun(p.id, AnswerRunRequest{ID: req.ID, QuestionID: req.QuestionID, Text: req.Text})
+	if target == TargetGone && !it.Status.Open() {
+		return nil, fmt.Errorf("%s is %s; reopen it to start a new run with your answer", FormatID(req.ID), it.Status)
+	}
+	if target == TargetGone {
+		msg, err := s.host.StartAnswerRun(p.id, AnswerRunRequest{RepoPath: req.RepoPath, ID: req.ID, QuestionID: req.QuestionID, Text: req.Text})
 		if err != nil {
 			return nil, p.named(err)
 		}
@@ -109,11 +112,8 @@ func (s *Service) answer(p *project, req PostMessageRequest) (*MessageResponse, 
 	var pending PendingAnswer
 	b, err = s.update(p, func(b *Backlog) ([]int, error) {
 		var err error
-		if out, err = b.Answer(req.ID, req.QuestionID, req.Text, target != TargetGone, s.now()); err != nil {
+		if out, err = b.Answer(req.ID, req.QuestionID, req.Text, true, s.now()); err != nil {
 			return nil, err
-		}
-		if target == TargetGone {
-			return []int{req.ID}, nil
 		}
 		if out.SessionID != sessionID {
 			return nil, fmt.Errorf("%s changed while answering; retry", FormatID(req.ID))
@@ -130,9 +130,6 @@ func (s *Service) answer(p *project, req PostMessageRequest) (*MessageResponse, 
 	})
 	if err != nil {
 		return nil, err
-	}
-	if target == TargetGone {
-		return &MessageResponse{Message: out.Answer}, nil
 	}
 	s.host.DeliverAnswer(p.id, pending)
 	return &MessageResponse{Message: out.Answer}, nil

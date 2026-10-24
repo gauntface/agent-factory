@@ -28,26 +28,41 @@ func WithHandoff(prompt, handoff string) string {
 // AnswerRun is what BeginAnswerRun did.
 type AnswerRun struct {
 	Plan     StartPlan
-	Answered Answered
+	Answer   Message
 	Question Message
 }
 
-// BeginAnswerRun answers a question whose session is gone and sets the item
-// running with a new starting run, started by the user, that gets the answer.
-// The question closes now. On error b is unchanged.
+// BeginAnswerRun keeps the answer to a question whose session is gone and
+// sets the item running with a new starting run, started by the user, whose
+// first prompt carries it. The question stays open until the run starts; see
+// FinishStart. A kept answer to the same question is superseded. On error b is
+// unchanged.
 func (b *Backlog) BeginAnswerRun(id, questionID int, text string, now time.Time) (AnswerRun, error) {
 	c := b.clone()
+	it, err := c.get(id)
+	if err != nil {
+		return AnswerRun{}, err
+	}
+	if text = strings.TrimSpace(text); text == "" {
+		return AnswerRun{}, errors.New("an answer needs text")
+	}
+	qp, err := it.questionToAnswer(questionID)
+	if err != nil {
+		return AnswerRun{}, err
+	}
+	q := *qp
+	for i := range it.Thread {
+		if m := &it.Thread[i]; m.Kind == KindAnswer && m.Answers == q.ID && m.Delivery == DeliveryNewRun {
+			m.Delivery = DeliverySuperseded
+		}
+	}
+	answer := *it.appendMessage(Message{Kind: KindAnswer, Author: AuthorUser, Text: text, Answers: q.ID, Delivery: DeliveryNewRun}, now)
 	plan, err := c.BeginStart(id, StartedByUser, nil, now)
 	if err != nil {
 		return AnswerRun{}, err
 	}
-	out, err := c.Answer(id, questionID, text, false, now)
-	if err != nil {
-		return AnswerRun{}, err
-	}
-	q := c.Item(id).message(out.Answer.Answers)
 	*b = *c
-	return AnswerRun{Plan: plan, Answered: out, Question: *q}, nil
+	return AnswerRun{Plan: plan, Answer: answer, Question: q}, nil
 }
 
 func noOpenQuestion(id int) error {
@@ -122,20 +137,9 @@ func (b *Backlog) Answer(id, questionID int, text string, deliver bool, now time
 	if text == "" {
 		return Answered{}, errors.New("an answer needs text")
 	}
-	q := it.OpenQuestion()
-	if questionID != 0 {
-		q = nil
-		for i := range it.Thread {
-			if m := &it.Thread[i]; m.ID == questionID && m.Kind == KindQuestion && it.questionOpen(m.ID) {
-				q = m
-			}
-		}
-		if q == nil {
-			return Answered{}, fmt.Errorf("%s has no open question %d — run \"af backlog show %d\" to see its thread", FormatID(id), questionID, id)
-		}
-	}
-	if q == nil {
-		return Answered{}, noOpenQuestion(id)
+	q, err := it.questionToAnswer(questionID)
+	if err != nil {
+		return Answered{}, err
 	}
 	q.Closed = ClosedAnswered
 	answer := Message{Kind: KindAnswer, Author: AuthorUser, Text: text, Answers: q.ID}
@@ -154,9 +158,26 @@ func (b *Backlog) Answer(id, questionID int, text string, deliver bool, now time
 	return out, nil
 }
 
+// questionToAnswer is open question questionID, or the oldest open question
+// when questionID is 0.
+func (it *Item) questionToAnswer(questionID int) (*Message, error) {
+	if questionID == 0 {
+		if q := it.OpenQuestion(); q != nil {
+			return q, nil
+		}
+		return nil, noOpenQuestion(it.ID)
+	}
+	for i := range it.Thread {
+		if m := &it.Thread[i]; m.ID == questionID && m.Kind == KindQuestion && it.questionOpen(m.ID) {
+			return m, nil
+		}
+	}
+	return nil, fmt.Errorf("%s has no open question %d — run \"af backlog show %d\" to see its thread", FormatID(it.ID), questionID, it.ID)
+}
+
 func (it *Item) questionOpen(id int) bool {
 	for _, m := range it.Thread {
-		if m.Kind == KindAnswer && m.Answers == id {
+		if m.closesQuestion() && m.Answers == id {
 			return false
 		}
 	}
