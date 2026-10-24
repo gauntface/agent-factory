@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"sync"
@@ -14,13 +15,20 @@ import (
 // askedItem starts item 1, ends its run, and has its agent ask a question.
 func askedItem(t *testing.T) (*Manager, string, *session.Instance) {
 	t.Helper()
-	m, repoID, inst := startedItem(t)
+	m, repoID, _, inst := askedItemAt(t)
+	return m, repoID, inst
+}
+
+// askedItemAt is askedItem that also returns the project root.
+func askedItemAt(t *testing.T) (*Manager, string, string, *session.Instance) {
+	t.Helper()
+	m, repoID, repoPath, inst := startedItemAt(t)
 	inst.DisarmBacklogRun()
 	if _, err := m.backlogService().PostMessage(backlog.PostMessageRequest{RepoID: repoID, ID: 1,
 		Kind: backlog.KindQuestion, Text: "Which db?", SessionID: inst.ID}); err != nil {
 		t.Fatal(err)
 	}
-	return m, repoID, inst
+	return m, repoID, repoPath, inst
 }
 
 type sentPrompts struct {
@@ -69,6 +77,17 @@ func stubAnswerWait(t *testing.T) (held chan struct{}, resume chan bool) {
 func answer(t *testing.T, m *Manager, repoID, text string) backlog.Message {
 	t.Helper()
 	out, err := m.backlogService().PostMessage(backlog.PostMessageRequest{RepoID: repoID, ID: 1, Kind: backlog.KindAnswer, Text: text})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out.Message
+}
+
+// answerAt answers item 1 naming the project by its path, as the CLI and web
+// do; the test project is not registered.
+func answerAt(t *testing.T, m *Manager, repoPath, text string) backlog.Message {
+	t.Helper()
+	out, err := m.backlogService().PostMessage(backlog.PostMessageRequest{RepoPath: repoPath, ID: 1, Kind: backlog.KindAnswer, Text: text})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,21 +234,129 @@ func TestBacklogAnswerRestoreFails(t *testing.T) {
 	}
 }
 
-func TestBacklogAnswerGoneSession(t *testing.T) {
-	m, repoID, _ := askedItem(t)
+func TestBacklogAnswerGoneSessionStartsRun(t *testing.T) {
+	m, repoID, repoPath, _ := askedItemAt(t)
+	if _, err := backlog.Update(repoID, func(b *backlog.Backlog) error {
+		it := b.Item(1)
+		it.Runs[0].SessionID, it.Runs[0].Branch = "gone", "af/old"
+		it.PR = "https://example.test/pr/7"
+		it.Thread[0].Handoff = "Half of the schema is done."
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	prevSHA := remoteBranchSHA
+	remoteBranchSHA = func(_, branch string) (string, bool) {
+		if branch != "af/old" {
+			t.Errorf("branch %q", branch)
+		}
+		return "abc123", true
+	}
+	t.Cleanup(func() { remoteBranchSHA = prevSHA })
+	var prompt string
+	prevCreate := createBacklogSession
+	createBacklogSession = func(m *Manager, ctx context.Context, req CreateSessionRequest) (session.InstanceData, error) {
+		prompt = req.Prompt
+		return prevCreate(m, ctx, req)
+	}
+	t.Cleanup(func() { createBacklogSession = prevCreate })
+
+	msg := answerAt(t, m, repoPath, "Postgres")
+	m.backgroundMutationWG.Wait()
+	if msg.Kind != backlog.KindAnswer || msg.Text != "Postgres" {
+		t.Fatalf("answer %+v", msg)
+	}
+	it := loadItem(t, repoID, 1)
+	if len(it.Runs) != 2 || it.Runs[1].State != backlog.RunStarted || it.Runs[1].StartedBy != backlog.StartedByUser {
+		t.Fatalf("runs %+v", it.Runs)
+	}
+	if it.OpenQuestion() != nil || it.Thread[0].Closed != backlog.ClosedAnswered || it.Status != backlog.StatusRunning {
+		t.Fatalf("item %+v", it)
+	}
+	for _, want := range []string{"Build it.", "Previous branch: af/old", "abc123", "https://example.test/pr/7",
+		"Half of the schema is done.", "Which db?", "Postgres"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt has no %q:\n%s", want, prompt)
+		}
+	}
+	if m.backlogSlotsUsed(repoID) != 1 {
+		t.Fatal("the new run holds no slot")
+	}
+}
+
+func TestBacklogAnswerGoneSessionFailedStartKeepsAnswer(t *testing.T) {
+	m, repoID, repoPath, _ := askedItemAt(t)
 	if _, err := backlog.Update(repoID, func(b *backlog.Backlog) error {
 		b.Item(1).Runs[0].SessionID = "gone"
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := m.backlogService().PostMessage(backlog.PostMessageRequest{RepoID: repoID, ID: 1, Kind: backlog.KindAnswer, Text: "x"})
-	if err == nil || !strings.HasPrefix(err.Error(), "the session for B-1 is gone") {
+	prevSHA := remoteBranchSHA
+	remoteBranchSHA = func(string, string) (string, bool) { return "", false }
+	t.Cleanup(func() { remoteBranchSHA = prevSHA })
+	prevCreate := createBacklogSession
+	createBacklogSession = func(*Manager, context.Context, CreateSessionRequest) (session.InstanceData, error) {
+		return session.InstanceData{}, errors.New("no worktree")
+	}
+	answerAt(t, m, repoPath, "Postgres")
+	m.backgroundMutationWG.Wait()
+	it := loadItem(t, repoID, 1)
+	if it.OpenQuestion() == nil || it.KeptAnswer() == nil || it.Runs[1].State != backlog.RunFailed {
+		t.Fatalf("a failed start lost the answer: %+v", it)
+	}
+	if note := lastNote(it).Text; !strings.Contains(note, "no worktree") || !strings.Contains(note, `"af backlog start 1"`) {
+		t.Fatal(note)
+	}
+	if m.backlogSlotsUsed(repoID) != 0 {
+		t.Fatal("slot leaked")
+	}
+
+	var prompt string
+	createBacklogSession = func(m *Manager, ctx context.Context, req CreateSessionRequest) (session.InstanceData, error) {
+		prompt = req.Prompt
+		return prevCreate(m, ctx, req)
+	}
+	t.Cleanup(func() { createBacklogSession = prevCreate })
+	if _, err := m.StartBacklogItem(backlog.StartRequest{RepoPath: repoPath, ID: 1}, backlog.StartedByUser); err != nil {
 		t.Fatal(err)
 	}
-	it := loadItem(t, repoID, 1)
-	if last := lastNote(it); last.Kind != backlog.KindAnswer {
-		t.Fatalf("answer not kept: %+v", it.Thread)
+	m.backgroundMutationWG.Wait()
+	it = loadItem(t, repoID, 1)
+	if !strings.Contains(prompt, "Postgres") || !strings.Contains(prompt, "Which db?") || it.OpenQuestion() != nil {
+		t.Fatalf("start after a failed one: item %+v prompt %q", it, prompt)
+	}
+}
+
+func TestBacklogAnswerRestoredWithoutConversationGetsHandoff(t *testing.T) {
+	m, repoID, inst := askedItem(t)
+	if inst.AgentConversation().HasID() {
+		t.Fatal("precondition: no conversation id")
+	}
+	if _, err := backlog.Update(repoID, func(b *backlog.Backlog) error {
+		b.Item(1).Thread[0].Handoff = "Schema is in db/."
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sent := stubBacklogSend(t, m, repoID)
+	prevNeeds := backlogNeedsRestore
+	backlogNeedsRestore = func(itemSession) bool { return true }
+	t.Cleanup(func() { backlogNeedsRestore = prevNeeds })
+	prev := restoreBacklogSession
+	restoreBacklogSession = func(*Manager, RestoreSessionRequest) (session.InstanceData, error) {
+		return inst.ToInstanceData(), nil
+	}
+	t.Cleanup(func() { restoreBacklogSession = prev })
+
+	answer(t, m, repoID, "Postgres")
+	m.backgroundMutationWG.Wait()
+	if sent.count() != 1 {
+		t.Fatalf("sent %d", sent.count())
+	}
+	p := sent.reqs[0].Prompt
+	if !strings.HasPrefix(p, "The user answered your question on B-1: Postgres") || !strings.Contains(p, "Schema is in db/.") {
+		t.Fatalf("prompt %q", p)
 	}
 }
 

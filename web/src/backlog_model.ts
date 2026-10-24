@@ -15,6 +15,8 @@ export interface RunRef {
   prev_status: Status;
   started_by: string;
   started_at: string;
+  /** The kept answer this run's first prompt carries. */
+  answer?: number;
 }
 
 export interface Message {
@@ -24,6 +26,7 @@ export interface Message {
   text: string;
   answers?: number;
   closed?: string;
+  delivery?: string;
   at: string;
 }
 
@@ -210,10 +213,15 @@ export function derivedOf(view: BacklogView, id: number): Derived {
   return view.states[String(id)] ?? { state: "draft" };
 }
 
-/** The item's oldest question that no answer names and that is not closed. */
+/** The item's oldest question that no answer closes and that is not closed.
+ *  An answer kept for a new run (delivery "new_run" or "superseded") does not
+ *  close it; while that run is starting the item does not need the user. */
 export function openQuestion(it: Item): Message | undefined {
+  const last = it.runs?.[it.runs.length - 1];
+  if (last?.state === "starting" && last.answer) return undefined;
   const thread = it.thread ?? [];
-  const answered = new Set(thread.filter((m) => m.kind === "answer" && m.answers).map((m) => m.answers));
+  const closes = (m: Message) => m.kind === "answer" && m.answers && m.delivery !== "new_run" && m.delivery !== "superseded";
+  const answered = new Set(thread.filter(closes).map((m) => m.answers));
   return thread.find((m) => m.kind === "question" && !m.closed && !answered.has(m.id));
 }
 

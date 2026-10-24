@@ -36,9 +36,23 @@ type Host interface {
 	// background, restoring the session first when it is not running, and
 	// records the outcome on the answer.
 	DeliverAnswer(repoID string, a PendingAnswer)
+	// StartAnswerRun answers an open question whose session is gone: it starts
+	// a new run of the item whose first prompt carries the answer and the
+	// asking agent's handoff. It returns the answer.
+	StartAnswerRun(repoID string, req AnswerRunRequest) (Message, error)
 	// Gate reports the project's runner gate that is closed now, from a recent
 	// meter pass; the zero Gate when all are open.
 	Gate(repoID string) Gate
+}
+
+// AnswerRunRequest is an answer that starts a new run.
+type AnswerRunRequest struct {
+	// RepoPath is the project root the request named, or "" when it named the
+	// project by id.
+	RepoPath   string
+	ID         int
+	QuestionID int
+	Text       string
 }
 
 // AnswerTarget is where an answer can go.

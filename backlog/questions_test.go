@@ -1,6 +1,7 @@
 package backlog
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -142,27 +143,217 @@ func TestServiceAnswerResumesReviewAndRestores(t *testing.T) {
 	}
 }
 
-func TestServiceAnswerGoneKeepsAnswer(t *testing.T) {
+func TestServiceAnswerGoneStartsRun(t *testing.T) {
 	s, h := newTestService(t)
 	mustAdd(t, s, ItemInput{Key: "a", Title: "A"})
 	withRun(t, 1, StatusRunning)
 	ask(t, s, "q")
 	h.target = TargetGone
-	_, err := s.PostMessage(PostMessageRequest{RepoID: repoID, ID: 1, Kind: KindAnswer, Text: "a"})
-	want := `the session for B-1 is gone; start it again with "af backlog start 1" — your answer is kept in the thread`
-	if err == nil || err.Error() != want {
+	out, err := s.PostMessage(PostMessageRequest{RepoID: repoID, ID: 1, Kind: KindAnswer, Text: " a "})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(h.delivered) != 0 {
-		t.Fatalf("%+v", h.delivered)
+	if out.Message.Kind != KindAnswer || out.Message.Text != "a" || out.Message.Delivery != DeliveryNewRun {
+		t.Fatalf("%+v", out.Message)
+	}
+	if len(h.delivered) != 0 || len(h.answerRuns) != 1 || h.answerRuns[0] != (AnswerRunRequest{ID: 1, Text: " a "}) {
+		t.Fatalf("delivered %+v runs %+v", h.delivered, h.answerRuns)
 	}
 	b, _ := Load(repoID)
 	it := b.Item(1)
-	if len(it.Thread) != 2 || it.Thread[1].Kind != KindAnswer || it.OpenQuestion() != nil {
+	if it.OpenQuestion() == nil || len(it.Runs) != 2 {
+		t.Fatalf("the question closed before the run started: %+v", it)
+	}
+	r := it.Runs[1]
+	if r.State != RunStarting || r.StartedBy != StartedByUser || r.Answer != out.Message.ID || it.Status != StatusRunning {
+		t.Fatalf("run %+v status %s", r, it.Status)
+	}
+	if d := b.Derive(1, nil); d.State != StateStarting || !d.HoldsSlot {
+		t.Fatalf("derived %+v", d)
+	}
+	if _, err := s.PostMessage(PostMessageRequest{RepoID: repoID, ID: 1, Kind: KindAnswer, Text: "b"}); err == nil ||
+		!strings.Contains(err.Error(), "is starting a new session") {
+		t.Fatalf("second answer while starting: %v", err)
+	}
+	if err := b.FinishStart(1, r.StartedAt, "s2", "B-1 A", "af/b-1", nil, t0); err != nil {
+		t.Fatal(err)
+	}
+	if it.OpenQuestion() != nil || it.Thread[0].Closed != ClosedAnswered || it.Thread[1].Delivery != DeliveryDelivered {
 		t.Fatalf("%+v", it.Thread)
 	}
-	if it.Status != StatusRunning {
-		t.Fatal(it.Status)
+}
+
+func TestServiceAnswerGoneOnClosedItemRefuses(t *testing.T) {
+	s, h := newTestService(t)
+	mustAdd(t, s, ItemInput{Key: "a", Title: "A"})
+	withRun(t, 1, StatusRunning)
+	ask(t, s, "q")
+	if _, err := Update(repoID, func(b *Backlog) error {
+		b.Item(1).Status = StatusDone
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h.target = TargetGone
+	_, err := s.PostMessage(PostMessageRequest{RepoID: repoID, ID: 1, Kind: KindAnswer, Text: "a"})
+	if err == nil || err.Error() != "B-1 is done; reopen it to start a new run with your answer" {
+		t.Fatal(err)
+	}
+	b, _ := Load(repoID)
+	if it := b.Item(1); len(it.Thread) != 1 || len(it.Runs) != 1 || len(h.answerRuns) != 0 {
+		t.Fatalf("%+v", it)
+	}
+}
+
+func TestBeginAnswerRunLeavesBacklogOnError(t *testing.T) {
+	s, _ := newTestService(t)
+	mustAdd(t, s, ItemInput{Key: "a", Title: "A"})
+	withRun(t, 1, StatusReview)
+	b, _ := Load(repoID)
+	if _, err := b.BeginAnswerRun(1, 0, "a", t0); err == nil || !strings.Contains(err.Error(), "no open question") {
+		t.Fatal(err)
+	}
+	if it := b.Item(1); len(it.Runs) != 1 || it.Status != StatusReview || len(it.Thread) != 0 {
+		t.Fatalf("%+v", it)
+	}
+}
+
+// goneAnswer has item 1 in review with a question whose session is gone, then
+// answers it with a new starting run.
+func goneAnswer(t *testing.T) (*Backlog, AnswerRun) {
+	t.Helper()
+	s, _ := newTestService(t)
+	mustAdd(t, s, ItemInput{Key: "a", Title: "A"})
+	withRun(t, 1, StatusRunning)
+	ask(t, s, "Which db?")
+	b, _ := Load(repoID)
+	b.Item(1).Status = StatusReview
+	out, err := b.BeginAnswerRun(1, 0, "Postgres", t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b, out
+}
+
+func TestAnswerRunFailedStartKeepsAnswer(t *testing.T) {
+	b, out := goneAnswer(t)
+	if err := b.FinishStart(1, out.Plan.Run.StartedAt, "", "", "", errors.New("no worktree"), t0); err != nil {
+		t.Fatal(err)
+	}
+	it := b.Item(1)
+	if q := it.OpenQuestion(); q == nil || q.ID != out.Question.ID || it.KeptAnswer().ID != out.Answer.ID || it.Status != StatusReview {
+		t.Fatalf("%+v", it)
+	}
+	note := it.Thread[len(it.Thread)-1]
+	if !strings.Contains(note.Text, "no worktree") || !strings.Contains(note.Text, `"af backlog start 1"`) {
+		t.Fatal(note.Text)
+	}
+	if d := b.Derive(1, nil); d.State != StateNeedsYou {
+		t.Fatalf("derived %+v", d)
+	}
+
+	plan, err := b.BeginStart(1, StartedByUser, nil, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Run.Answer != out.Answer.ID || !strings.Contains(b.StartPrompt(it, "", PrevRun{}), "Postgres") {
+		t.Fatalf("a later start does not carry the kept answer: %+v", plan.Run)
+	}
+	if err := b.FinishStart(1, plan.Run.StartedAt, "", "", "", errors.New("again"), t0); err != nil {
+		t.Fatal(err)
+	}
+
+	again, err := b.BeginAnswerRun(1, 0, "MySQL", t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	it = b.Item(1)
+	if it.message(out.Answer.ID).Delivery != DeliverySuperseded || again.Plan.Run.Answer != again.Answer.ID {
+		t.Fatalf("%+v", it.Thread)
+	}
+	if p := b.StartPrompt(it, "", PrevRun{}); !strings.Contains(p, "MySQL") || strings.Contains(p, "Postgres") {
+		t.Fatal(p)
+	}
+}
+
+func TestRecoverStartsAppliesKeptAnswer(t *testing.T) {
+	b, out := goneAnswer(t)
+	after := out.Plan.Run.StartedAt.Add(time.Minute)
+	b.RecoverStarts(nil, after, after)
+	if it := b.Item(1); it.OpenQuestion() == nil || it.KeptAnswer() == nil || !strings.Contains(it.Thread[len(it.Thread)-1].Text, "af backlog start 1") {
+		t.Fatalf("a crashed start lost the answer: %+v", it)
+	}
+
+	b, out = goneAnswer(t)
+	b.RecoverStarts([]ItemSession{{ID: "s2", Title: "B-1 A", Branch: "af/b-1", Item: 1, CreatedAt: after}}, after, after)
+	it := b.Item(1)
+	if it.OpenQuestion() != nil || it.message(out.Answer.ID).Delivery != DeliveryDelivered || it.Runs[1].Branch != "af/b-1" {
+		t.Fatalf("%+v", it)
+	}
+}
+
+func TestStartPrompt(t *testing.T) {
+	b := New()
+	b.Items = []Item{{ID: 4, Title: "Parent"}, {ID: 5, Title: "Child", Parent: 4, Body: "Do it.",
+		Thread: []Message{
+			{ID: 1, Kind: KindQuestion, Text: "Which db?", Handoff: "Tried:\n```\nsqlite\n```"},
+			{ID: 2, Kind: KindQuestion, Text: "Other question"},
+			{ID: 3, Kind: KindAnswer, Text: "Postgres", Answers: 1, Delivery: DeliveryNewRun},
+		},
+		Runs: []RunRef{{State: RunStarting, Answer: 3}}}}
+	it := b.Item(5)
+	got := b.StartPrompt(it, "", PrevRun{Branch: "af/b-5", SHA: "abc123", Checked: true, PR: "https://x/pr/1"})
+	for _, want := range []string{"Do it.", "- Previous branch: af/b-5\n", "- Last commit of that branch on origin: abc123\n",
+		"- Pull request: https://x/pr/1\n", "````markdown\nTried:\n```\nsqlite\n```\n````\n",
+		"```markdown\nWhich db?\n```\n", "The user's answer:\n\n```markdown\nPostgres\n```\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("no %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Other question") {
+		t.Error("an unanswered question is in the prompt")
+	}
+	if i := strings.Index(got, "Rules:\n"); i < strings.Index(got, "Postgres") || !strings.HasSuffix(got, "- Do not create other af sessions.\n") {
+		t.Errorf("rules are not last:\n%s", got)
+	}
+	if !strings.Contains(b.StartPrompt(it, "", PrevRun{Branch: "af/b-5", Checked: true}), "origin does not have that branch") {
+		t.Error("missing branch not said")
+	}
+	it.Thread[0].Handoff = ""
+	if bare := b.StartPrompt(it, "", PrevRun{Branch: "af/b-5"}); strings.Contains(bare, "origin") || strings.Contains(bare, "Notes from the previous agent") {
+		t.Errorf("unchecked origin or empty handoff shown:\n%s", bare)
+	}
+	it.Runs[0].Answer = 0
+	if got := b.StartPrompt(it, "", PrevRun{}); got != b.ItemPrompt(it, "") {
+		t.Errorf("a run without an answer gets more than the item prompt:\n%s", got)
+	}
+}
+
+func TestWithHandoff(t *testing.T) {
+	if got := WithHandoff("p", "  "); got != "p" {
+		t.Fatal(got)
+	}
+	got := WithHandoff("p", "notes")
+	if !strings.HasPrefix(got, "p\n\n") || !strings.HasSuffix(got, "```markdown\nnotes\n```\n") {
+		t.Fatal(got)
+	}
+}
+
+func TestPendingAnswersCarryHandoff(t *testing.T) {
+	s, h := newTestService(t)
+	mustAdd(t, s, ItemInput{Key: "a", Title: "A"})
+	withRun(t, 1, StatusRunning)
+	if _, err := s.PostMessage(PostMessageRequest{RepoID: repoID, ID: 1, Kind: KindQuestion, Text: "q", SessionID: "s1",
+		Handoff: "notes"}); err != nil {
+		t.Fatal(err)
+	}
+	h.target = TargetRestore
+	if _, err := s.PostMessage(PostMessageRequest{RepoID: repoID, ID: 1, Kind: KindAnswer, Text: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := Load(repoID)
+	if p := b.PendingAnswers(); len(p) != 1 || p[0].Handoff != "notes" || h.delivered[0].Handoff != "notes" {
+		t.Fatalf("pending %+v delivered %+v", p, h.delivered)
 	}
 }
 

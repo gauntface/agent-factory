@@ -197,7 +197,7 @@ func (m *Manager) recoverBacklog(repoID string) bool {
 	sessions := m.itemSessions(repoID)
 	var list []backlog.ItemSession
 	for id, s := range sessions {
-		list = append(list, backlog.ItemSession{ID: id, Title: s.instance.Title, Item: s.instance.BacklogItem, CreatedAt: s.instance.CreatedAt})
+		list = append(list, backlog.ItemSession{ID: id, Title: s.instance.Title, Branch: s.instance.GetBranch(), Item: s.instance.BacklogItem, CreatedAt: s.instance.CreatedAt})
 	}
 	answering := m.redeliverBacklogAnswers(repoID, b)
 	ended := idleRunEnds(b, sessions)

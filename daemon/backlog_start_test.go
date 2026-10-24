@@ -117,13 +117,20 @@ func TestStartBacklogItemFailedCreate(t *testing.T) {
 
 func startedItem(t *testing.T) (*Manager, string, *session.Instance) {
 	t.Helper()
+	m, repoID, _, inst := startedItemAt(t)
+	return m, repoID, inst
+}
+
+// startedItemAt is startedItem that also returns the project root.
+func startedItemAt(t *testing.T) (*Manager, string, string, *session.Instance) {
+	t.Helper()
 	m, repoID, repoPath := backlogTestManager(t)
 	if _, err := m.StartBacklogItem(backlog.StartRequest{RepoPath: repoPath, ID: 1}, backlog.StartedByUser); err != nil {
 		t.Fatal(err)
 	}
 	m.backgroundMutationWG.Wait()
 	it := loadItem(t, repoID, 1)
-	return m, repoID, m.itemSessions(repoID)[it.Runs[0].SessionID].instance
+	return m, repoID, repoPath, m.itemSessions(repoID)[it.Runs[0].SessionID].instance
 }
 
 func TestBacklogRunEndedMovesToReview(t *testing.T) {

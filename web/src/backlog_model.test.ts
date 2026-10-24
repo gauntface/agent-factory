@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   type Backlog, type BacklogView, type Item, type ListOptions, type State,
-  applyMove, dropMove, itemActions, keyboardMove, listRows, needsYouByRoot, needsYouCount, needsYouLabel, neededBy, parseBacklogView, safeHttpUrl,
+  applyMove, dropMove, itemActions, keyboardMove, listRows, needsYouByRoot, needsYouCount, needsYouLabel, neededBy, openQuestion, parseBacklogView, safeHttpUrl,
   sessionItems, sources, topQueued,
 } from "./backlog_model.js";
 import { waitsOnBlock } from "./backlog_cycle.js";
@@ -87,6 +87,16 @@ test("needsYouCount counts open questions once across projects", () => {
   const b = backlog(item(1, { thread: [{ id: 1, kind: "question", author: "af", text: "q", closed: "done", at: "" }] }),
     item(2, { thread: [{ id: 1, kind: "question", author: "af", text: "q", at: "" }] }));
   assert.equal(needsYouCount([view(a), view(b)]), 2);
+});
+
+test("openQuestion stays open with an answer kept for a new run, but not while that run starts", () => {
+  const q = { id: 1, kind: "question", author: "agent:x", text: "q", at: "" };
+  const kept = { id: 2, kind: "answer", author: "user", text: "a", answers: 1, delivery: "new_run", at: "" };
+  const run = { session_id: "", title: "", state: "failed", prev_status: "review" as const, started_by: "user", started_at: "", answer: 2 };
+  assert.equal(openQuestion(item(1, { thread: [q, kept], runs: [run] }))?.id, 1);
+  assert.equal(openQuestion(item(1, { thread: [q, { ...kept, delivery: "superseded" }] }))?.id, 1);
+  assert.equal(openQuestion(item(1, { thread: [q, kept], runs: [{ ...run, state: "starting" }] })), undefined);
+  assert.equal(openQuestion(item(1, { thread: [q, { ...kept, delivery: "delivered" }] })), undefined);
 });
 
 test("needsYouByRoot keys each project's count and drops projects with none", () => {

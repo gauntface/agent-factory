@@ -22,7 +22,9 @@ type testHost struct {
 	attention map[string]string
 	target    AnswerTarget
 	delivered []PendingAnswer
-	usage     planusage.Usage
+	// answerRuns are the answers that started a new run.
+	answerRuns []AnswerRunRequest
+	usage      planusage.Usage
 }
 
 func (h *testHost) SetAttention(_, sessionID, reason string) {
@@ -34,6 +36,17 @@ func (h *testHost) SetAttention(_, sessionID, reason string) {
 func (h *testHost) AnswerTarget(string, string) AnswerTarget { return h.target }
 func (h *testHost) DeliverAnswer(_ string, a PendingAnswer) {
 	h.delivered = append(h.delivered, a)
+}
+
+func (h *testHost) StartAnswerRun(repo string, req AnswerRunRequest) (Message, error) {
+	h.answerRuns = append(h.answerRuns, req)
+	var m Message
+	_, err := Update(repo, func(b *Backlog) error {
+		out, err := b.BeginAnswerRun(req.ID, req.QuestionID, req.Text, time.Now())
+		m = out.Answer
+		return err
+	})
+	return m, err
 }
 
 func (h *testHost) Facts(string) Facts          { return h.facts }

@@ -158,9 +158,17 @@ the session or a prompt reaches it before af archives it, af keeps it live and
 adds the note "Kept the session live: <reason>".
 
 af adds the answer to the item's thread and sends it to the session. If the
-session is archived, af restores it first. If the session is gone, the answer
-stays in the thread; start the item again with `af backlog start 14`. If you
-answer in the terminal instead, af closes the question as "Answered in session".
+session is archived, af restores it first; if the restored session cannot
+resume its agent conversation, the answer also carries the agent's handoff
+notes. If the session is gone (killed), af starts a new session for the item.
+Its first prompt is the item's work description, the previous branch, that
+branch's last commit on `origin` if it is there, the PR link, the handoff
+notes, the question and your answer, then the usual rules. The question closes
+when that session starts. If the session cannot start, af keeps your answer
+and adds a note; `af backlog start 14`, or a new answer, sends it to the next
+session. A done or dropped item refuses the answer; reopen it first with
+`af backlog reopen 14`. If you answer in the terminal instead, af closes the
+question as "Answered in session".
 
 ### 5. Review
 

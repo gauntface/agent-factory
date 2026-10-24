@@ -12,10 +12,57 @@ func AnswerPrompt(it *Item, text string) string {
 	return fmt.Sprintf("The user answered your question on %s: %s", FormatID(it.ID), text)
 }
 
-// GoneError is returned when an answer cannot reach the item's session. The
-// answer is still written to the thread.
-func GoneError(id int) error {
-	return fmt.Errorf("the session for %s is gone; start it again with \"af backlog start %d\" — your answer is kept in the thread", FormatID(id), id)
+// WithHandoff adds the asking agent's handoff to an answer prompt, for a
+// restored session that came back without its agent conversation.
+func WithHandoff(prompt, handoff string) string {
+	if handoff = strings.TrimSpace(handoff); handoff == "" {
+		return prompt
+	}
+	var sb strings.Builder
+	sb.WriteString(prompt)
+	sb.WriteString("\n\nThis session restarted without its earlier conversation. These are the notes you wrote when you asked:\n\n")
+	writeFenced(&sb, handoff)
+	return sb.String()
+}
+
+// AnswerRun is what BeginAnswerRun did.
+type AnswerRun struct {
+	Plan     StartPlan
+	Answer   Message
+	Question Message
+}
+
+// BeginAnswerRun keeps the answer to a question whose session is gone and
+// sets the item running with a new starting run, started by the user, whose
+// first prompt carries it. The question stays open until the run starts; see
+// FinishStart. A kept answer to the same question is superseded. On error b is
+// unchanged.
+func (b *Backlog) BeginAnswerRun(id, questionID int, text string, now time.Time) (AnswerRun, error) {
+	c := b.clone()
+	it, err := c.get(id)
+	if err != nil {
+		return AnswerRun{}, err
+	}
+	if text = strings.TrimSpace(text); text == "" {
+		return AnswerRun{}, errors.New("an answer needs text")
+	}
+	qp, err := it.questionToAnswer(questionID)
+	if err != nil {
+		return AnswerRun{}, err
+	}
+	q := *qp
+	for i := range it.Thread {
+		if m := &it.Thread[i]; m.Kind == KindAnswer && m.Answers == q.ID && m.Delivery == DeliveryNewRun {
+			m.Delivery = DeliverySuperseded
+		}
+	}
+	answer := *it.appendMessage(Message{Kind: KindAnswer, Author: AuthorUser, Text: text, Answers: q.ID, Delivery: DeliveryNewRun}, now)
+	plan, err := c.BeginStart(id, StartedByUser, nil, now)
+	if err != nil {
+		return AnswerRun{}, err
+	}
+	*b = *c
+	return AnswerRun{Plan: plan, Answer: answer, Question: q}, nil
 }
 
 func noOpenQuestion(id int) error {
@@ -90,20 +137,9 @@ func (b *Backlog) Answer(id, questionID int, text string, deliver bool, now time
 	if text == "" {
 		return Answered{}, errors.New("an answer needs text")
 	}
-	q := it.OpenQuestion()
-	if questionID != 0 {
-		q = nil
-		for i := range it.Thread {
-			if m := &it.Thread[i]; m.ID == questionID && m.Kind == KindQuestion && it.questionOpen(m.ID) {
-				q = m
-			}
-		}
-		if q == nil {
-			return Answered{}, fmt.Errorf("%s has no open question %d — run \"af backlog show %d\" to see its thread", FormatID(id), questionID, id)
-		}
-	}
-	if q == nil {
-		return Answered{}, noOpenQuestion(id)
+	q, err := it.questionToAnswer(questionID)
+	if err != nil {
+		return Answered{}, err
 	}
 	q.Closed = ClosedAnswered
 	answer := Message{Kind: KindAnswer, Author: AuthorUser, Text: text, Answers: q.ID}
@@ -122,9 +158,26 @@ func (b *Backlog) Answer(id, questionID int, text string, deliver bool, now time
 	return out, nil
 }
 
+// questionToAnswer is open question questionID, or the oldest open question
+// when questionID is 0.
+func (it *Item) questionToAnswer(questionID int) (*Message, error) {
+	if questionID == 0 {
+		if q := it.OpenQuestion(); q != nil {
+			return q, nil
+		}
+		return nil, noOpenQuestion(it.ID)
+	}
+	for i := range it.Thread {
+		if m := &it.Thread[i]; m.ID == questionID && m.Kind == KindQuestion && it.questionOpen(m.ID) {
+			return m, nil
+		}
+	}
+	return nil, fmt.Errorf("%s has no open question %d — run \"af backlog show %d\" to see its thread", FormatID(it.ID), questionID, it.ID)
+}
+
 func (it *Item) questionOpen(id int) bool {
 	for _, m := range it.Thread {
-		if m.Kind == KindAnswer && m.Answers == id {
+		if m.closesQuestion() && m.Answers == id {
 			return false
 		}
 	}
@@ -134,6 +187,14 @@ func (it *Item) questionOpen(id int) bool {
 		}
 	}
 	return false
+}
+
+// handoff is the handoff of question questionID, or "".
+func (it *Item) handoff(questionID int) string {
+	if q := it.message(questionID); q != nil && q.Kind == KindQuestion {
+		return q.Handoff
+	}
+	return ""
 }
 
 func (it *Item) message(id int) *Message {
@@ -186,6 +247,9 @@ type PendingAnswer struct {
 	AnswerID  int
 	SessionID string
 	Prompt    string
+	// Handoff is the asking agent's handoff, for a session that comes back
+	// without its conversation.
+	Handoff string
 }
 
 // PendingAnswers lists the answers still pending delivery, oldest first per
@@ -199,7 +263,7 @@ func (b *Backlog) PendingAnswers() []PendingAnswer {
 			if m.Kind != KindAnswer || m.Delivery != DeliveryPending {
 				continue
 			}
-			p := PendingAnswer{ID: it.ID, AnswerID: m.ID, Prompt: AnswerPrompt(it, m.Text)}
+			p := PendingAnswer{ID: it.ID, AnswerID: m.ID, Prompt: AnswerPrompt(it, m.Text), Handoff: it.handoff(m.Answers)}
 			if last != nil {
 				p.SessionID = last.SessionID
 			}

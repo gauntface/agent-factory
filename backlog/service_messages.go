@@ -98,15 +98,22 @@ func (s *Service) answer(p *project, req PostMessageRequest) (*MessageResponse, 
 			target = s.host.AnswerTarget(p.id, sessionID)
 		}
 	}
+	if target == TargetGone && !it.Status.Open() {
+		return nil, fmt.Errorf("%s is %s; reopen it to start a new run with your answer", FormatID(req.ID), it.Status)
+	}
+	if target == TargetGone {
+		msg, err := s.host.StartAnswerRun(p.id, AnswerRunRequest{RepoPath: req.RepoPath, ID: req.ID, QuestionID: req.QuestionID, Text: req.Text})
+		if err != nil {
+			return nil, p.named(err)
+		}
+		return &MessageResponse{Message: msg}, nil
+	}
 	var out Answered
 	var pending PendingAnswer
 	b, err = s.update(p, func(b *Backlog) ([]int, error) {
 		var err error
-		if out, err = b.Answer(req.ID, req.QuestionID, req.Text, target != TargetGone, s.now()); err != nil {
+		if out, err = b.Answer(req.ID, req.QuestionID, req.Text, true, s.now()); err != nil {
 			return nil, err
-		}
-		if target == TargetGone {
-			return []int{req.ID}, nil
 		}
 		if out.SessionID != sessionID {
 			return nil, fmt.Errorf("%s changed while answering; retry", FormatID(req.ID))
@@ -116,15 +123,13 @@ func (s *Service) answer(p *project, req PostMessageRequest) (*MessageResponse, 
 			next = out.Next.Text
 		}
 		s.host.SetAttention(p.id, sessionID, next)
+		it := b.Item(req.ID)
 		pending = PendingAnswer{ID: req.ID, AnswerID: out.Answer.ID, SessionID: sessionID,
-			Prompt: AnswerPrompt(b.Item(req.ID), out.Answer.Text)}
+			Prompt: AnswerPrompt(it, out.Answer.Text), Handoff: it.handoff(out.Answer.Answers)}
 		return []int{req.ID}, nil
 	})
 	if err != nil {
 		return nil, err
-	}
-	if target == TargetGone {
-		return nil, GoneError(req.ID)
 	}
 	s.host.DeliverAnswer(p.id, pending)
 	return &MessageResponse{Message: out.Answer}, nil
