@@ -99,6 +99,7 @@ type RunRef struct {
 	SessionID  string           `json:"session_id"`
 	Title      string           `json:"title"`
 	State      string           `json:"state"`
+	Branch     string           `json:"branch,omitempty"`
 	PrevStatus Status           `json:"prev_status"`
 	StartedBy  string           `json:"started_by"`
 	StartedAt  time.Time        `json:"started_at"`

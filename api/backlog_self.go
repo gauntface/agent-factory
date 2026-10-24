@@ -283,7 +283,7 @@ var backlogAnswerCmd = &cobra.Command{
 	Long: "Answer the item's oldest open question, or the one --question names. af adds the " +
 		"answer to the thread and sends it to the item's session, restoring the session first " +
 		"if it is archived, and waiting while a client is attached to it. If the session is " +
-		"gone, the answer stays in the thread.",
+		"gone, af starts a new session for the item with the previous agent's notes and the answer.",
 	Args: cobra.MinimumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runBacklog(func() (any, error) {

@@ -118,9 +118,9 @@ func (b *Backlog) LatestSessions() map[string]int {
 }
 
 // FinishStart settles the starting run of id that began at startedAt: started
-// in sessionID, or, when startErr is set, failed with the status put back and
+// in sessionID on branch, or, when startErr is set, failed with the status put back and
 // a note with the error.
-func (b *Backlog) FinishStart(id int, startedAt time.Time, sessionID, title string, startErr error, now time.Time) error {
+func (b *Backlog) FinishStart(id int, startedAt time.Time, sessionID, title, branch string, startErr error, now time.Time) error {
 	it, err := b.get(id)
 	if err != nil {
 		return err
@@ -136,7 +136,7 @@ func (b *Backlog) FinishStart(id int, startedAt time.Time, sessionID, title stri
 	}
 	it.UpdatedAt = now
 	if startErr == nil {
-		run.SessionID, run.Title, run.State = sessionID, title, RunStarted
+		run.SessionID, run.Title, run.Branch, run.State = sessionID, title, branch, RunStarted
 		return nil
 	}
 	run.State, run.EndedAt = RunFailed, now
@@ -154,6 +154,7 @@ func (b *Backlog) FinishStart(id int, startedAt time.Time, sessionID, title stri
 type ItemSession struct {
 	ID        string
 	Title     string
+	Branch    string
 	Item      int
 	CreatedAt time.Time
 }
@@ -192,9 +193,9 @@ func (b *Backlog) RecoverStarts(sessions []ItemSession, before, now time.Time) [
 			}
 			if match != nil {
 				taken[match.ID] = true
-				_ = b.FinishStart(it.ID, r.StartedAt, match.ID, match.Title, nil, now)
+				_ = b.FinishStart(it.ID, r.StartedAt, match.ID, match.Title, match.Branch, nil, now)
 			} else {
-				_ = b.FinishStart(it.ID, r.StartedAt, "", "", errors.New("af restarted before the session was created"), now)
+				_ = b.FinishStart(it.ID, r.StartedAt, "", "", "", errors.New("af restarted before the session was created"), now)
 			}
 			changed = append(changed, it.ID)
 		}

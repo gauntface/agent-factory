@@ -91,14 +91,14 @@ func TestBeginStartLiveSession(t *testing.T) {
 func TestFinishStart(t *testing.T) {
 	b := runsBacklog(t)
 	plan, _ := b.BeginStart(2, StartedByUser, nil, t0)
-	if err := b.FinishStart(2, plan.Run.StartedAt, "s1", "B-2 Child a b", nil, t0); err != nil {
+	if err := b.FinishStart(2, plan.Run.StartedAt, "s1", "B-2 Child a b", "af/b-2", nil, t0); err != nil {
 		t.Fatal(err)
 	}
 	r := b.Item(2).Runs[0]
-	if r.State != RunStarted || r.SessionID != "s1" || r.Title != "B-2 Child a b" {
+	if r.State != RunStarted || r.SessionID != "s1" || r.Title != "B-2 Child a b" || r.Branch != "af/b-2" {
 		t.Fatalf("run %+v", r)
 	}
-	if err := b.FinishStart(2, plan.Run.StartedAt, "s1", "", nil, t0); err == nil {
+	if err := b.FinishStart(2, plan.Run.StartedAt, "s1", "", "", nil, t0); err == nil {
 		t.Fatal("finished a run that is not starting")
 	}
 }
@@ -107,7 +107,7 @@ func TestFinishStartFailure(t *testing.T) {
 	b := runsBacklog(t)
 	b.Item(3).Status = StatusQueued
 	plan, _ := b.BeginStart(3, StartedByRunner, nil, t0)
-	if err := b.FinishStart(3, plan.Run.StartedAt, "", "", errors.New("boom"), t0); err != nil {
+	if err := b.FinishStart(3, plan.Run.StartedAt, "", "", "", errors.New("boom"), t0); err != nil {
 		t.Fatal(err)
 	}
 	it := b.Item(3)

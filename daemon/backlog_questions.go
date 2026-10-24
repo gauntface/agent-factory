@@ -93,12 +93,14 @@ func (m *Manager) deliverBacklogAnswer(stop <-chan struct{}, repoID string, a ba
 	}
 	defer release()
 	for attempt := 0; ; attempt++ {
-		inst, ok := m.armBacklogAnswer(repoID, a)
+		inst, prompt, ok := m.armBacklogAnswer(repoID, a)
 		if !ok {
 			return
 		}
 		release()
-		if !m.sendArmedBacklogAnswer(stop, repoID, inst, a) {
+		send := a
+		send.Prompt = prompt
+		if !m.sendArmedBacklogAnswer(stop, repoID, inst, send) {
 			return
 		}
 		if attempt >= backlogAnswerArchiveRetries || !backlogAnswerWait(stop) {
@@ -109,37 +111,43 @@ func (m *Manager) deliverBacklogAnswer(stop <-chan struct{}, repoID string, a ba
 }
 
 // armBacklogAnswer restores the answer's session if it needs it and arms its
-// run. On false the failure is recorded.
-func (m *Manager) armBacklogAnswer(repoID string, a backlog.PendingAnswer) (*session.Instance, bool) {
+// run. It returns the prompt to send: a session restored without an agent
+// conversation to resume also gets the asking agent's handoff. On false the
+// failure is recorded.
+func (m *Manager) armBacklogAnswer(repoID string, a backlog.PendingAnswer) (*session.Instance, string, bool) {
 	s, ok := m.itemSessions(repoID)[a.SessionID]
 	if !ok || s.view.UserKilled || s.view.InFlightOp == session.OpKilling {
 		m.backlogAnswerFailed(repoID, a, "the session is gone")
-		return nil, false
+		return nil, "", false
 	}
+	prompt := a.Prompt
 	if backlogNeedsRestore(s) {
+		if !s.instance.AgentConversation().HasID() {
+			prompt = backlog.WithHandoff(prompt, a.Handoff)
+		}
 		restored, err := restoreBacklogSession(m, RestoreSessionRequest{ID: a.SessionID, RepoID: repoID})
 		if err != nil {
 			m.backlogAnswerFailed(repoID, a, "af could not restore the session: "+err.Error())
-			return nil, false
+			return nil, "", false
 		}
 		m.publishEvent(agentproto.EventSessionRestored, restored)
 		if s, ok = m.itemSessions(repoID)[a.SessionID]; !ok {
 			m.backlogAnswerFailed(repoID, a, "the session is gone")
-			return nil, false
+			return nil, "", false
 		}
 		m.syncBacklogAttention(repoID, a)
 	}
 	inst := s.instance
 	if inst.TaskRunActive() {
 		m.backlogAnswerFailed(repoID, a, "the session is running a task")
-		return nil, false
+		return nil, "", false
 	}
 	if !inst.ArmBacklogRun(time.Now()) {
 		m.backlogAnswerFailed(repoID, a, "the session is not an item session")
-		return nil, false
+		return nil, "", false
 	}
 	m.persistAndPublishInstance(repoID, inst)
-	return inst, true
+	return inst, prompt, true
 }
 
 // sendArmedBacklogAnswer sends the answer, waiting out holds. It reports true

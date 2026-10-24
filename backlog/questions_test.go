@@ -142,27 +142,120 @@ func TestServiceAnswerResumesReviewAndRestores(t *testing.T) {
 	}
 }
 
-func TestServiceAnswerGoneKeepsAnswer(t *testing.T) {
+func TestServiceAnswerGoneStartsRun(t *testing.T) {
 	s, h := newTestService(t)
 	mustAdd(t, s, ItemInput{Key: "a", Title: "A"})
 	withRun(t, 1, StatusRunning)
 	ask(t, s, "q")
 	h.target = TargetGone
-	_, err := s.PostMessage(PostMessageRequest{RepoID: repoID, ID: 1, Kind: KindAnswer, Text: "a"})
-	want := `the session for B-1 is gone; start it again with "af backlog start 1" — your answer is kept in the thread`
-	if err == nil || err.Error() != want {
+	out, err := s.PostMessage(PostMessageRequest{RepoID: repoID, ID: 1, Kind: KindAnswer, Text: " a "})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(h.delivered) != 0 {
-		t.Fatalf("%+v", h.delivered)
+	if out.Message.Kind != KindAnswer || out.Message.Text != "a" {
+		t.Fatalf("%+v", out.Message)
+	}
+	if len(h.delivered) != 0 || len(h.answerRuns) != 1 || h.answerRuns[0] != (AnswerRunRequest{ID: 1, Text: " a "}) {
+		t.Fatalf("delivered %+v runs %+v", h.delivered, h.answerRuns)
 	}
 	b, _ := Load(repoID)
 	it := b.Item(1)
-	if len(it.Thread) != 2 || it.Thread[1].Kind != KindAnswer || it.OpenQuestion() != nil {
-		t.Fatalf("%+v", it.Thread)
+	if it.OpenQuestion() != nil || it.Thread[0].Closed != ClosedAnswered || len(it.Runs) != 2 {
+		t.Fatalf("%+v", it)
 	}
-	if it.Status != StatusRunning {
-		t.Fatal(it.Status)
+	if r := it.Runs[1]; r.State != RunStarting || r.StartedBy != StartedByUser || it.Status != StatusRunning {
+		t.Fatalf("run %+v status %s", r, it.Status)
+	}
+}
+
+func TestServiceAnswerGoneOnClosedItemKeepsAnswer(t *testing.T) {
+	s, h := newTestService(t)
+	mustAdd(t, s, ItemInput{Key: "a", Title: "A"})
+	withRun(t, 1, StatusRunning)
+	ask(t, s, "q")
+	if _, err := Update(repoID, func(b *Backlog) error {
+		b.Item(1).Status = StatusDone
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h.target = TargetGone
+	if _, err := s.PostMessage(PostMessageRequest{RepoID: repoID, ID: 1, Kind: KindAnswer, Text: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.answerRuns) != 0 {
+		t.Fatalf("%+v", h.answerRuns)
+	}
+	b, _ := Load(repoID)
+	it := b.Item(1)
+	if len(it.Thread) != 2 || it.Thread[1].Kind != KindAnswer || len(it.Runs) != 1 || it.Status != StatusDone {
+		t.Fatalf("%+v", it)
+	}
+}
+
+func TestBeginAnswerRunLeavesBacklogOnError(t *testing.T) {
+	s, _ := newTestService(t)
+	mustAdd(t, s, ItemInput{Key: "a", Title: "A"})
+	withRun(t, 1, StatusReview)
+	b, _ := Load(repoID)
+	if _, err := b.BeginAnswerRun(1, 0, "a", t0); err == nil || !strings.Contains(err.Error(), "no open question") {
+		t.Fatal(err)
+	}
+	if it := b.Item(1); len(it.Runs) != 1 || it.Status != StatusReview || len(it.Thread) != 0 {
+		t.Fatalf("%+v", it)
+	}
+}
+
+func TestAnswerRunPrompt(t *testing.T) {
+	b := New()
+	b.Items = []Item{{ID: 4, Title: "Parent"}, {ID: 5, Title: "Child", Parent: 4, Body: "Do it."}}
+	it := b.Item(5)
+	q := Message{Kind: KindQuestion, Text: "Which db?", Handoff: "Tried:\n```\nsqlite\n```"}
+	got := b.AnswerRunPrompt(it, "", PrevRun{Branch: "af/b-5", SHA: "abc123", Checked: true, PR: "https://x/pr/1"}, q, "Postgres")
+	if !strings.HasPrefix(got, b.ItemPrompt(it, "")) {
+		t.Fatalf("no item prompt first:\n%s", got)
+	}
+	for _, want := range []string{"- Previous branch: af/b-5\n", "- Last commit of that branch on origin: abc123\n",
+		"- Pull request: https://x/pr/1\n", "````markdown\nTried:\n```\nsqlite\n```\n````\n",
+		"```markdown\nWhich db?\n```\n", "The user's answer:\n\n```markdown\nPostgres\n```\n"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("no %q in:\n%s", want, got)
+		}
+	}
+	if !strings.Contains(b.AnswerRunPrompt(it, "", PrevRun{Branch: "af/b-5", Checked: true}, q, "a"), "origin does not have that branch") {
+		t.Error("missing branch not said")
+	}
+	bare := b.AnswerRunPrompt(it, "", PrevRun{Branch: "af/b-5"}, Message{Text: "q"}, "a")
+	if strings.Contains(bare, "origin") || strings.Contains(bare, "Notes from the previous agent") {
+		t.Errorf("unchecked origin or empty handoff shown:\n%s", bare)
+	}
+}
+
+func TestWithHandoff(t *testing.T) {
+	if got := WithHandoff("p", "  "); got != "p" {
+		t.Fatal(got)
+	}
+	got := WithHandoff("p", "notes")
+	if !strings.HasPrefix(got, "p\n\n") || !strings.HasSuffix(got, "```markdown\nnotes\n```\n") {
+		t.Fatal(got)
+	}
+}
+
+func TestPendingAnswersCarryHandoff(t *testing.T) {
+	s, h := newTestService(t)
+	mustAdd(t, s, ItemInput{Key: "a", Title: "A"})
+	withRun(t, 1, StatusRunning)
+	if _, err := s.PostMessage(PostMessageRequest{RepoID: repoID, ID: 1, Kind: KindQuestion, Text: "q", SessionID: "s1",
+		Handoff: "notes"}); err != nil {
+		t.Fatal(err)
+	}
+	h.target = TargetRestore
+	if _, err := s.PostMessage(PostMessageRequest{RepoID: repoID, ID: 1, Kind: KindAnswer, Text: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := Load(repoID)
+	if p := b.PendingAnswers(); len(p) != 1 || p[0].Handoff != "notes" || h.delivered[0].Handoff != "notes" {
+		t.Fatalf("pending %+v delivered %+v", p, h.delivered)
 	}
 }
 

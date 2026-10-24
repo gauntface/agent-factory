@@ -98,6 +98,13 @@ func (s *Service) answer(p *project, req PostMessageRequest) (*MessageResponse, 
 			target = s.host.AnswerTarget(p.id, sessionID)
 		}
 	}
+	if target == TargetGone && it.Status.Open() {
+		msg, err := s.host.StartAnswerRun(p.id, AnswerRunRequest{ID: req.ID, QuestionID: req.QuestionID, Text: req.Text})
+		if err != nil {
+			return nil, p.named(err)
+		}
+		return &MessageResponse{Message: msg}, nil
+	}
 	var out Answered
 	var pending PendingAnswer
 	b, err = s.update(p, func(b *Backlog) ([]int, error) {
@@ -116,15 +123,16 @@ func (s *Service) answer(p *project, req PostMessageRequest) (*MessageResponse, 
 			next = out.Next.Text
 		}
 		s.host.SetAttention(p.id, sessionID, next)
+		it := b.Item(req.ID)
 		pending = PendingAnswer{ID: req.ID, AnswerID: out.Answer.ID, SessionID: sessionID,
-			Prompt: AnswerPrompt(b.Item(req.ID), out.Answer.Text)}
+			Prompt: AnswerPrompt(it, out.Answer.Text), Handoff: it.handoff(out.Answer.Answers)}
 		return []int{req.ID}, nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	if target == TargetGone {
-		return nil, GoneError(req.ID)
+		return &MessageResponse{Message: out.Answer}, nil
 	}
 	s.host.DeliverAnswer(p.id, pending)
 	return &MessageResponse{Message: out.Answer}, nil

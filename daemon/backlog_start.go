@@ -56,16 +56,10 @@ func (m *Manager) StartBacklogItem(req backlog.StartRequest, by string) (backlog
 	if plan.Continue != "" {
 		return m.continueBacklogItem(ref, req.ID, by, plan.Continue)
 	}
-	root := req.RepoPath
-	if root == "" {
-		if root, err = registeredProjectRootForRepoID(ref.ID); err != nil {
-			return backlog.RunRef{}, err
-		}
-		if root == "" {
-			return backlog.RunRef{}, fmt.Errorf("project %s is not registered; open it in af first", ref.ID)
-		}
+	root, err := backlogProjectRoot(ref.ID, req.RepoPath)
+	if err != nil {
+		return backlog.RunRef{}, err
 	}
-
 	var create CreateSessionRequest
 	m.backlog.reserve(ref.ID)
 	_, err = svc.Apply(ref, func(b *backlog.Backlog) ([]int, error) {
@@ -78,25 +72,51 @@ func (m *Manager) StartBacklogItem(req backlog.StartRequest, by string) (backlog
 		}
 		plan = p
 		it := b.Item(req.ID)
-		if it.Program != "" {
-			if err := validateCreateProgram(it.Program); err != nil {
-				return nil, err
-			}
-		}
-		create = CreateSessionRequest{
-			TitleBase:   backlog.SessionTitleBase(it),
-			RepoPath:    root,
-			Program:     it.Program,
-			Prompt:      b.ItemPrompt(it, proposalDir(ref.ID, it)),
-			Backend:     string(session.BackendLocal),
-			BacklogItem: it.ID,
-		}
-		return []int{req.ID}, nil
+		create, err = backlogCreateRequest(it, root, b.ItemPrompt(it, proposalDir(ref.ID, it)))
+		return []int{req.ID}, err
 	})
 	if err != nil {
 		m.backlog.release(ref.ID)
 		return backlog.RunRef{}, svc.Named(ref, err)
 	}
+	m.launchBacklogCreate(ref, req.ID, plan.Run.StartedAt, create)
+	return plan.Run, nil
+}
+
+func backlogProjectRoot(repoID, repoPath string) (string, error) {
+	if repoPath != "" {
+		return repoPath, nil
+	}
+	root, err := registeredProjectRootForRepoID(repoID)
+	if err != nil {
+		return "", err
+	}
+	if root == "" {
+		return "", fmt.Errorf("project %s is not registered; open it in af first", repoID)
+	}
+	return root, nil
+}
+
+func backlogCreateRequest(it *backlog.Item, root, prompt string) (CreateSessionRequest, error) {
+	if it.Program != "" {
+		if err := validateCreateProgram(it.Program); err != nil {
+			return CreateSessionRequest{}, err
+		}
+	}
+	return CreateSessionRequest{
+		TitleBase:   backlog.SessionTitleBase(it),
+		RepoPath:    root,
+		Program:     it.Program,
+		Prompt:      prompt,
+		Backend:     string(session.BackendLocal),
+		BacklogItem: it.ID,
+	}, nil
+}
+
+// launchBacklogCreate creates the session of the starting run of id that
+// began at startedAt, on a tracked goroutine. The caller reserved a slot; the
+// create's outcome releases it.
+func (m *Manager) launchBacklogCreate(ref backlog.ProjectRef, id int, startedAt time.Time, create CreateSessionRequest) {
 	launched := m.launchBackgroundMutation(func(stop <-chan struct{}) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -108,12 +128,11 @@ func (m *Manager) StartBacklogItem(req backlog.StartRequest, by string) (backlog
 			}
 		}()
 		data, err := createBacklogSession(m, ctx, create)
-		m.finishBacklogStart(ref, req.ID, plan.Run.StartedAt, data, err, stop)
+		m.finishBacklogStart(ref, id, startedAt, data, err, stop)
 	})
 	if !launched {
-		m.finishBacklogStart(ref, req.ID, plan.Run.StartedAt, session.InstanceData{}, errors.New("af is shutting down"), nil)
+		m.finishBacklogStart(ref, id, startedAt, session.InstanceData{}, errors.New("af is shutting down"), nil)
 	}
-	return plan.Run, nil
 }
 
 func proposalDir(repoID string, it *backlog.Item) string {
@@ -140,7 +159,7 @@ func (m *Manager) finishBacklogStart(ref backlog.ProjectRef, id int, startedAt t
 	delay := finishStartBackoff
 	for {
 		_, err := svc.Apply(ref, func(b *backlog.Backlog) ([]int, error) {
-			return []int{id}, b.FinishStart(id, startedAt, data.ID, data.Title, createErr, svc.Now())
+			return []int{id}, b.FinishStart(id, startedAt, data.ID, data.Title, data.Branch, createErr, svc.Now())
 		})
 		if err == nil {
 			return
