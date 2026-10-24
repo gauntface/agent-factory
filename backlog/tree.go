@@ -101,6 +101,9 @@ func (b *Backlog) Move(id int, to Move, now time.Time) error {
 		anchor = to.Into
 		parent = to.Into
 	}
+	if it.Archived && parent != 0 {
+		return fmt.Errorf("%s is archived; unarchive it before you move it into a parent", FormatID(id))
+	}
 	if anchor == id || (anchor != 0 && b.IsAncestor(id, anchor)) {
 		return fmt.Errorf("%s cannot move relative to itself or an item inside it", FormatID(id))
 	}
@@ -283,6 +286,8 @@ type Edit struct {
 	Program    *string
 	WaitsOn    *[]int
 	Sequential *bool
+	Paused     *bool
+	Archived   *bool
 }
 
 func (b *Backlog) Edit(id int, e Edit, now time.Time) (*Item, error) {
@@ -311,6 +316,9 @@ func (b *Backlog) Edit(id int, e Edit, now time.Time) (*Item, error) {
 		if err := c.setWaits(id, *e.WaitsOn); err != nil {
 			return nil, err
 		}
+	}
+	if err := c.applyGroup(it, e); err != nil {
+		return nil, err
 	}
 	it.UpdatedAt = now
 	if err := c.checkCycles(); err != nil {
