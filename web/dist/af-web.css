@@ -4366,6 +4366,12 @@ textarea[class] {
   font-size: var(--af-type-caption);
   color: var(--af-ink-muted);
 }
+.af-backlog-row .af-backlog-blocks,
+.af-backlog-row .af-backlog-chip-link {
+  min-height: 0;
+  font-size: var(--af-type-caption);
+  line-height: 1.5;
+}
 
 /* src/tokens.css */
 [data-af-theme=light] {

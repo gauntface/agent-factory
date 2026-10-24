@@ -4845,3 +4845,9 @@ button[class], input[class], select[class], textarea[class] { font-size: var(--a
 }
 
 .af-backlog-earlier > summary { cursor: pointer; font-size: var(--af-type-caption); color: var(--af-ink-muted); }
+
+.af-backlog-row .af-backlog-blocks, .af-backlog-row .af-backlog-chip-link {
+  min-height: 0;
+  font-size: var(--af-type-caption);
+  line-height: 1.5;
+}
