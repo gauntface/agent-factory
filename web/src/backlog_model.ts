@@ -247,6 +247,7 @@ export interface SessionItem {
   root: string;
   id: number;
   title: string;
+  state: State;
 }
 
 /** The proposals the backlog's items came from, in first-seen order. */
@@ -261,7 +262,7 @@ export function sessionItems(views: ReadonlyMap<string, BacklogView>): Map<strin
   for (const [root, v] of views) {
     for (const it of v.backlog.items) {
       for (const run of it.runs ?? []) {
-        if (run.session_id) out.set(run.session_id, { root, id: it.id, title: it.title });
+        if (run.session_id) out.set(run.session_id, { root, id: it.id, title: it.title, state: derivedOf(v, it.id).state });
       }
     }
   }
@@ -435,6 +436,24 @@ export function applyMove(b: Backlog, id: number, to: MoveTarget): Backlog | nul
 /** Items that wait on id. */
 export function neededBy(b: Backlog, id: number): Item[] {
   return b.items.filter((it) => (it.waits_on ?? []).includes(id));
+}
+
+/** Open items that wait on id: the row's "blocks n". */
+export function blocking(b: Backlog, id: number): Item[] {
+  return neededBy(b, id).filter((it) => it.status !== "done" && it.status !== "dropped");
+}
+
+/** The items id waits on and the items that wait on it. */
+export function relatedIDs(b: Backlog, id: number): Set<number> {
+  const out = new Set<number>((itemByID(b, id)?.waits_on ?? []).filter((w) => itemByID(b, w)));
+  for (const it of neededBy(b, id)) out.add(it.id);
+  out.delete(id);
+  return out;
+}
+
+/** The newest run that has a session: the one the state chip links to. */
+export function latestSessionRun(it: Item): RunRef | undefined {
+  return [...(it.runs ?? [])].reverse().find((r) => r.session_id);
 }
 
 export type ItemAction = "queue" | "draft" | "start" | "review" | "done" | "drop" | "reopen" | "delete";

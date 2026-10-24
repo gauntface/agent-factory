@@ -47,7 +47,8 @@ beforeEach(() => {
   mock.timers.enable({ apis: ["setTimeout", "Date"], now: NOW });
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await settle();
   mock.timers.reset();
   dom.restore();
   (globalThis as { fetch: unknown }).fetch = realFetch;
