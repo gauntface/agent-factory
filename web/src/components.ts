@@ -135,7 +135,7 @@ export function sessionFirstComposition(moves: [HTMLElement, HTMLElement][]) {
 }
 
 /** One stable title/tab row; patching it never reparents a terminal. */
-export function terminalChrome(opts: { title: string; copyLink(): void; handoff(): void; retry(): void; markDelivered(): void; clearAttention(): void; newTab(kind: "shell" | "vscode"): void; closePane?(): void }) {
+export function terminalChrome(opts: { title: string; copyLink(): void; handoff(): void; retry(): void; markDelivered(): void; clearAttention(): void; newTab(kind: "shell" | "vscode"): void; closePane?(): void; fontSizeStep?(delta: number): void }) {
   const menu = actionsDisclosure("More session actions");
   menu.trigger.replaceChildren(icon("ellipsis"));
   menu.trigger.title = "More session actions";
@@ -180,8 +180,14 @@ export function terminalChrome(opts: { title: string; copyLink(): void; handoff(
   const closePane = action("Hide pane", "af-phone-pane-close", () => opts.closePane?.());
   closePane.hidden = true;
   menu.panel.append(tabUnavailable, copy, handoff, deliver, actions, closePane);
+  const fontDecrease = action("A−", "af-term-zoom", () => opts.fontSizeStep?.(-1));
+  fontDecrease.title = "Decrease terminal text size";
+  fontDecrease.setAttribute("aria-label", "Decrease terminal text size");
+  const fontIncrease = action("A+", "af-term-zoom", () => opts.fontSizeStep?.(1));
+  fontIncrease.title = "Increase terminal text size";
+  fontIncrease.setAttribute("aria-label", "Increase terminal text size");
   const attention = attentionChip(opts.clearAttention);
-  const head = h("div", { class: "af-term-head" }, titleBox, tabs, newTabs, attention.el, retry, menu.el);
+  const head = h("div", { class: "af-term-head" }, titleBox, tabs, newTabs, fontDecrease, fontIncrease, attention.el, retry, menu.el);
   return { head, title, tabs, attention, retry, deliver, handoff, closePane, actions, newTabs, newTerminal, newVSCode, docsShortcuts, tabUnavailable, menu, dispose: menu.dispose };
 }
 

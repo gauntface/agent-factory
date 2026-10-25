@@ -219,10 +219,14 @@ type InstanceData struct {
 	// LimitResetAt is the parsed usage-limit reset time (#1146), display-only:
 	// written (and carried in the daemon snapshot to the read-only TUI) only for a
 	// LiveLimitReached row so the sidebar [limit] badge can show "resets <t>" and
-	// survive a restart, and so PR3's auto-resume scheduler can read it. omitempty
-	// drops it for every normal session; additive + rollforward, mirroring the
-	// Liveness precedent.
-	LimitResetAt time.Time `json:"limit_reset_at,omitempty"`
+	// survive a restart, and so PR3's auto-resume scheduler can read it. omitzero
+	// drops it for every normal session (and for a limit row whose banner carried
+	// no parseable reset time): omitempty never omits a struct, and a zero
+	// time.Time would otherwise serialize as "0001-01-01T00:00:00Z" on every row,
+	// inventing a reset date the web would render (#4506 review, mirroring the
+	// TabExitData.At precedent); additive + rollforward, mirroring the Liveness
+	// precedent.
+	LimitResetAt time.Time `json:"limit_reset_at,omitzero"`
 	// LimitAgent is the provider namespace for LimitAccount. It is always a
 	// tmux.SupportedPrograms enum or empty; account labels are agent-scoped, so a
 	// pending cross-agent replacement must retain both values.
@@ -240,7 +244,16 @@ type InstanceData struct {
 	CreatedAt                time.Time                     `json:"created_at"`
 	// UpdatedAt is the last session state mutation, preserved across saves and loads.
 	UpdatedAt time.Time `json:"updated_at"`
-	Prompt    string    `json:"prompt,omitempty"`
+	// ArchivedAt is when this session's archive committed — the durable anchor
+	// `af sessions prune --older-than` measures from (#5136). It is a separate
+	// field rather than UpdatedAt reused, because a record can keep mutating
+	// after it is shelved (prune itself is one such mutation). omitempty +
+	// additive: rows archived before this field existed carry no value and the
+	// prune cutoff falls back to UpdatedAt, which only ever moves FORWARD —
+	// never to a time before the real archive — so the fallback can only make a
+	// legacy row look younger and therefore under-delete, never over-delete.
+	ArchivedAt time.Time `json:"archived_at,omitzero"`
+	Prompt     string    `json:"prompt,omitempty"`
 	// PendingHandoffMission is a rendered takeover brief whose incoming runtime
 	// has been established but whose delivery has not been durably confirmed.
 	// Unlike Prompt, it is cleared only after the exact mission lands (or is
@@ -393,6 +406,30 @@ type InstanceData struct {
 	// retention boundary.
 	RuntimeCleanup *RuntimeCleanupData `json:"runtime_cleanup,omitempty"`
 	runtimeCleanup *RuntimeCleanupData
+	// KilledWithoutLiveRuntime is the inert-at-kill admission marker for a
+	// sandbox kill tombstone (docker/ssh/hook/remote) whose commit found no live
+	// off-box runtime to reap: the kill ran against an inert rebuild (nil
+	// runtimeTeardown), so the tombstone carries no RuntimeCleanup handle on
+	// purpose — "nothing on-box to reap", the sandbox analog of the local
+	// branch's worktreeReaped admission (#2691).
+	//
+	// A current-binary inert-at-kill tombstone and a legacy pre-#2265 tombstone
+	// are indistinguishable on disk without this marker: both persist a nil
+	// RuntimeCleanup, and the load path could not tell "the kill owed nothing"
+	// from "the binary could not store the handle it owed". The distinction is
+	// therefore WRITTEN at commit time — toInstanceDataLocked sets the private
+	// marker below when a sandbox backend owes no teardown — and READ at load
+	// time by FromInstanceData, which admits the marker the way worktreeReaped
+	// does and lets the pending record delete proceed instead of installing a
+	// permanent fail-closed teardown no retry, re-kill, or restart can clear.
+	//
+	// Additive + omitempty + rollforward on the same precedent as UserKilled: a
+	// record written before this field simply has no marker and fails closed,
+	// which is the safe legacy direction (a wedge an older binary already
+	// cannot unwedge). Published only for UserKilled tombstones by ForStorage,
+	// so it never reaches an ordinary snapshot or disk row.
+	KilledWithoutLiveRuntime bool `json:"killed_without_live_runtime,omitempty"`
+	killedWithoutLiveRuntime *bool
 	// archivePushCompleted is process-local evidence that the push belonging to
 	// the CURRENT OpArchiving generation returned successfully. Branch cannot be
 	// that evidence: restore deliberately preserves the previous archive branch.
@@ -456,8 +493,22 @@ func (d InstanceData) RestoreArchiveRollbackFence() InstanceData {
 // live daemon snapshot. Disk fallback callers must not expose the complete
 // report or the compatibility-only ownership flags merely because the daemon is
 // unavailable.
+//
+// It replays FromInstanceData's full fence-restoration order — archive, then
+// relocation recovery, then handoff and account-swap — so the rollback-safe
+// ownership projection ForStorage writes for any row carrying an unresolved
+// worktree relocation recovery cannot survive into the disk-fallback client
+// view. A recovery row whose safety metadata is missing or undecodable is
+// corrupt; ForClientRead cannot drop the row, so it leaves the ForStorage
+// projection in place and the row reads as the conservative unknown-ownership
+// verdict rather than fabricating confidence — the same fail-closed direction
+// every other reader takes (the loader refuses such a row outright).
 func (d InstanceData) ForClientRead() InstanceData {
 	d = d.RestoreArchiveRollbackFence()
+	restored, err := d.RestoreRelocationRecoveryOriginals()
+	if err == nil {
+		d = restored
+	}
 	d = d.RestoreHandoffRollbackFence()
 	d = d.RestoreAccountSwapRollbackFence()
 	d = d.restoreMissingHandoffMissionEvidence()
@@ -597,116 +648,41 @@ func (d InstanceData) ForStorage() InstanceData {
 		// identity here would only preserve unused credentials until row deletion.
 		d.RuntimeCleanupStateUnknown = false
 		d.RuntimeCleanup = nil
+		d.KilledWithoutLiveRuntime = false
 	case !d.UserKilled && !d.RuntimeCleanupStateUnknown:
 		// Cleanup credentials/identities have no reason to live in ordinary session
 		// records. Kill intent and an unknown teardown outcome are the two durable
 		// retention boundaries.
 		d.RuntimeCleanup = nil
-	case d.runtimeCleanup != nil:
-		d.RuntimeCleanup = d.runtimeCleanup.clone()
+		d.KilledWithoutLiveRuntime = false
+	default:
+		// A kill tombstone or an unknown-cleanup retention row. Publish the staged
+		// cleanup handle only when one was staged on a fresh snapshot; a reloaded
+		// row carries only the public field, and the nil-private guard preserves it
+		// exactly as the previous three-way switch did.
+		if d.runtimeCleanup != nil {
+			d.RuntimeCleanup = d.runtimeCleanup.clone()
+		}
+		// The inert-at-kill marker rides only a UserKilled tombstone. An
+		// unknown-cleanup row never carries it: its unknown cleanup is armed only
+		// when a teardown handle exists, so there is no "nothing owed" shape to
+		// admit. Publish a freshly-staged marker; otherwise preserve a marker
+		// reloaded from disk (the private field is lost on JSON unmarshal) so the
+		// next load still reads it.
+		switch {
+		case d.killedWithoutLiveRuntime != nil:
+			d.KilledWithoutLiveRuntime = *d.killedWithoutLiveRuntime
+		case !d.UserKilled:
+			d.KilledWithoutLiveRuntime = false
+		}
 	}
 	// Never let the private staging pointer escape a storage projection. Loaded
 	// tombstones have only RuntimeCleanup set and therefore preserve it above.
 	d.runtimeCleanup = nil
+	d.killedWithoutLiveRuntime = nil
 	d.archiveReportSource = nil
 	d.archiveReportPending = false
 	return d
-}
-
-// TabData is the serializable form of a session.Tab. The full list is persisted
-// (and restored by exact TmuxName) so every tab — agent and shell alike —
-// reconnects to its tmux session across an af/daemon restart (#930). The field
-// is omitempty + additive, mirroring the BranchCreatedByUs back-compat
-// precedent: instances.json written before #930 PR 2 simply has no Tabs, and
-// FromInstanceData synthesizes [agent, shell] from the legacy TmuxName/Program.
-// TabKindAllowance is the projected verdict for one creatable tab kind.
-type TabKindAllowance struct {
-	// Kind is the `--kind` spelling, the same vocabulary the CLI validates against
-	// (session.TabKindNameList), so a client switches on the name the user types.
-	Kind string `json:"kind"`
-	// Allowed is RefuseTabKind returning nil for this kind on this session.
-	Allowed bool `json:"allowed"`
-	// Reason is the daemon's refusal text, empty when allowed. Rendered verbatim by
-	// clients; it names the requirement that is actually unmet (#3053).
-	Reason string `json:"reason,omitempty"`
-}
-
-type TabData struct {
-	// ID is the tab's stable identity (#1738), minted at creation and never
-	// reused. It is the collision-proof key the PTY stream (?tab_id=) and the web
-	// DnD/pane bindings address the tab by, so a reorder/close can't misroute.
-	// omitempty + additive, mirroring the InstanceData.ID / BranchCreatedByUs
-	// rollforward precedent: a record written before #1738 has no id, and
-	// restoreLocalTabs backfills a fresh one on load.
-	ID   string `json:"id,omitempty"`
-	Name string `json:"name"`
-	// The wire names it as `kind_name`, the word `tab_kinds[].kind` uses too.
-	Kind     TabKind `json:"kind"`
-	Command  string  `json:"command,omitempty"`
-	TmuxName string  `json:"tmux_name,omitempty"`
-	// URL is the target of a TabKindWeb tab (the iframe/proxy address); empty for
-	// every other kind. Surfaced in the snapshot so the web UI can iframe it and
-	// so `af sessions get` shows the target.
-	URL string `json:"url,omitempty"`
-	// Proposal is the slug a docs tab edits; empty for every other kind.
-	Proposal string `json:"proposal,omitempty"`
-	// PushMode is a docs tab's push mode, "auto" or "manual"; empty means auto.
-	PushMode string `json:"push_mode,omitempty"`
-	// WebProxied is derived at JSON encoding with IsLoopbackWebTarget, the
-	// daemon proxy's predicate. A pointer preserves explicit false for web tabs;
-	// non-web tabs omit it. Stored/input values never override the derivation.
-	WebProxied *bool `json:"web_proxied,omitempty"`
-	// Conversation is the provider-specific conversation id for this tab, when
-	// the underlying agent exposes a durable resume id. Omitted for legacy rows
-	// and providers where af can only resume "latest".
-	Conversation *AgentConversationData `json:"conversation,omitempty"`
-	// Handoffs is the tab's append-only agent-swap ledger (#2013), oldest first.
-	// omitempty + additive on the same rollforward precedent as ID and
-	// Conversation: a record written before #2013 has none, which is
-	// indistinguishable from a session that was never handed off — and those two
-	// deserve the same treatment, so nothing has to be backfilled.
-	Handoffs []AgentHandoff `json:"handoffs,omitempty"`
-	// Exit records how a process tab's command ended (#4479): the pane was seen
-	// dead, not merely missing, or af stopped it and says why. nil for tabs af
-	// never saw finish — the load path maps that to "still in flight", never to
-	// "re-run me".
-	Exit *TabExitData `json:"exit,omitempty"`
-	// AccountScope is the account af launched this tab's pane under (#4506
-	// review). A sibling whose recorded scope is not the session's account is
-	// stopped once at load, because its pane may run on another identity. Empty
-	// for a pane launched on the ambient identity, and for rows written before
-	// this field existed.
-	AccountScope string `json:"account_scope,omitempty"`
-}
-
-// TabExitData is the wire form of Tab.Exit: only the fields a reader needs to
-// render or reason about a finished command.
-type TabExitData struct {
-	Status      int  `json:"status,omitempty"`
-	StatusKnown bool `json:"status_known,omitempty"`
-	// At is omitted, not zero-valued, when tmux reported no death time:
-	// omitempty never omits a struct, and "0001-01-01T00:00:00Z" would present
-	// an invented completion time to every reader (#4506 review).
-	At time.Time `json:"at,omitzero"`
-	// StoppedBy is set when af stopped the command rather than it exiting:
-	// "account-scope" or "account-swap" (#4506 review).
-	StoppedBy string `json:"stopped_by,omitempty"`
-}
-
-// TabCleanupData is one durable cleanup handle for a closed tab whose tmux
-// teardown was never confirmed. It deliberately carries only what a retry needs
-// — no Kind, Command, or URL — so it cannot be mistaken for, or restored as, a
-// TabData: a tombstone that could round-trip into a tab would resurrect exactly
-// the closed tab #2669 exists to keep buried.
-type TabCleanupData struct {
-	// TabID is the closed tab's stable id (#1738). Ids are never reused, so it
-	// names the exact close this handle belongs to and keeps the retry's logs and
-	// deduplication honest across restarts.
-	TabID string `json:"tab_id,omitempty"`
-	// TmuxName is the cleanup handle proper: the EXACT tmux session name the retry
-	// must kill, and the token a later spawn must not re-derive. An entry with no
-	// name would be untargetable, so CloseTab never records one.
-	TmuxName string `json:"tmux_name"`
 }
 
 // Storage handles saving and loading instances using the state interface.

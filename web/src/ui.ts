@@ -325,6 +325,10 @@ export interface Actions {
   layoutChanged(): void;
   /** Close the focused split pane; the session itself remains open. */
   closePane?(): void;
+  /** Steps the shared terminal font size for this viewport's device class
+   *  (#5500): ±1 selects the direction; the step size, clamp, and the debounced
+   *  config write all live in terminal-font.ts. */
+  stepTerminalFontSize(delta: number): void;
   /** Switches to a tab AND attaches its terminal (a tab-bar click, mirroring how a
    *  session-row click attaches). */
   openTab(index: number): void;
@@ -2218,6 +2222,7 @@ export class AppShell {
       markDelivered: () => this.actions.markDelivered(),
       clearAttention: () => this.actions.clearAttention(),
       closePane: () => this.actions.closePane?.(),
+      fontSizeStep: (delta) => this.actions.stepTerminalFontSize(delta),
     });
     this.terminalChrome = chrome;
     this.headTitle = chrome.title;
