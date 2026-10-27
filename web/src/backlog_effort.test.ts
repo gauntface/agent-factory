@@ -212,6 +212,11 @@ test("the Inbox shows an effort session's done note with its pull request", asyn
   assert.match(card.textContent ?? "", /marked this done/);
   assert.equal(card.querySelector("a")?.href, "https://example.test/pr/1");
   assert.equal(el(pane).querySelector(".af-backlog-empty")?.hidden, true);
+  const dismiss = card.querySelectorAll("button").find((b) => b.textContent === "Dismiss")!;
+  dismiss.click();
+  await settle();
+  assert.equal(dismiss.disabled, true);
+  assert.deepEqual(calls.find((c) => c.method === "DismissBacklogNote")?.body, { repo_path: "/a", id: 2, note_id: 1 });
 });
 
 async function startUnlisted(h: ReturnType<typeof host>): Promise<{ pane: BacklogPane; d: BacklogData }> {

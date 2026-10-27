@@ -17148,6 +17148,9 @@ async function addNote(root2, id, text, token2) {
   const resp = await af("PostBacklogMessage", { repo_path: root2, id, kind: "note", text }, token2);
   return resp.message;
 }
+async function dismissNote(root2, id, noteId, token2) {
+  await af("DismissBacklogNote", { repo_path: root2, id, note_id: noteId }, token2);
+}
 async function openOrchestrator(root2, id, token2) {
   const resp = await af("OpenBacklogOrchestrator", { repo_path: root2, id }, token2);
   return { session_id: resp?.session_id ?? "", title: resp?.title ?? "", change: resp?.change ?? "" };
@@ -17611,7 +17614,7 @@ ${age}`;
     if (want.length !== have.length || want.some((li, i) => li !== have[i])) this.list.replaceChildren(...want);
     this.empty.hidden = want.length > 0;
   }
-  /** A read-only note card. Its signature lets an unchanged note keep its node. */
+  /** A note card. Its signature lets an unchanged note keep its node. */
   note(item, note) {
     const label = `${formatID(item.id)} ${item.title}`;
     const sig = `note
@@ -17626,12 +17629,23 @@ ${item.pr ?? ""}`;
     open.addEventListener("click", () => this.actions.select(item.id));
     const pr = safeHttpUrl(item.pr);
     const text = h("p", { class: "af-backlog-inbox-note-text" }, note.text);
+    const dismiss = h("button", { type: "button" }, "Dismiss");
+    dismiss.setAttribute("aria-label", `Dismiss note on ${formatID(item.id)}`);
+    dismiss.addEventListener("click", () => {
+      dismiss.disabled = true;
+      this.actions.dismiss(item.id, note.id);
+    });
     const li = h(
       "li",
       { class: "af-backlog-inbox-card af-backlog-inbox-note" },
       h("div", { class: "af-backlog-inbox-head" }, open, h("span", { class: "af-backlog-reason" }, `Noted ${formatTime(note.at)}`)),
       text,
-      ...pr ? [h("a", { class: "af-backlog-row-pr", href: pr, target: "_blank", rel: "noopener noreferrer" }, "Pull request", icon("external-link"))] : []
+      h(
+        "div",
+        { class: "af-backlog-inbox-note-actions" },
+        ...pr ? [h("a", { class: "af-backlog-row-pr", href: pr, target: "_blank", rel: "noopener noreferrer" }, "Pull request", icon("external-link"))] : [],
+        dismiss
+      )
     );
     li.dataset.sig = sig;
     return li;
@@ -18651,6 +18665,10 @@ var BacklogPane = class {
     this.effort = new EffortSessions(host, () => this.render());
     this.inboxList = new InboxList({
       answer: (id, qid, text) => this.answer(this.root ?? "", id, qid, text),
+      dismiss: (id, noteId) => {
+        const root2 = this.root ?? "";
+        this.write((t) => dismissNote(root2, id, noteId, t));
+      },
       select: (id) => this.select(id)
     });
     this.newGroup = entryField("New group\u2026", "New group title", (title) => this.mutate((t) => addItem(this.root ?? "", { title }, t)));

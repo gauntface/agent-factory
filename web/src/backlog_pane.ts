@@ -7,7 +7,7 @@
 
 import { errorText } from "./api.js";
 import {
-  addItem, addNote, answerQuestion, deleteItem, moveItem, runNext, setBudget, setItemStatus, setSettings, startItem, updateItem,
+  addItem, addNote, answerQuestion, deleteItem, dismissNote, moveItem, runNext, setBudget, setItemStatus, setSettings, startItem, updateItem,
 } from "./backlog_api.js";
 import type { BacklogData } from "./backlog_data.js";
 import {
@@ -150,6 +150,10 @@ export class BacklogPane {
     this.effort = new EffortSessions(host, () => this.render());
     this.inboxList = new InboxList({
       answer: (id, qid, text) => this.answer(this.root ?? "", id, qid, text),
+      dismiss: (id, noteId) => {
+        const root = this.root ?? "";
+        this.write((t) => dismissNote(root, id, noteId, t));
+      },
       select: (id) => this.select(id),
     });
     this.newGroup = entryField("New group…", "New group title", (title) => this.mutate((t) => addItem(this.root ?? "", { title }, t)));

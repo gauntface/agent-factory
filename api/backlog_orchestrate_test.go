@@ -238,4 +238,19 @@ func TestBacklogEscalateAndOrchestratorDone(t *testing.T) {
 		!strings.Contains(out, backlog.OrchestratorDoneNote("")) {
 		t.Fatalf("no done note: %q %v", out, err)
 	}
+	if _, err := runBacklogCmd(t, "dismiss", "B-2", "x"); err == nil || !strings.Contains(err.Error(), "invalid note id") {
+		t.Fatal(err)
+	}
+	if _, err := runBacklogCmd(t, "dismiss", "B-2", "2"); err == nil || !strings.Contains(err.Error(), "not a note in the Inbox") {
+		t.Fatal(err)
+	}
+	if _, err := runBacklogCmd(t, "dismiss", "B-2", "3"); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runBacklogCmd(t, "inbox"); err != nil || out != "No questions\n" {
+		t.Fatalf("dismissed note in the inbox: %q %v", out, err)
+	}
+	if b, _ = backlog.Load(p.repoID); len(b.Item(2).Thread) != 3 {
+		t.Fatalf("thread %+v", b.Item(2).Thread)
+	}
 }
