@@ -20759,11 +20759,25 @@ var AppShell = class {
       this.actions.switchProject(p.root);
     };
     item.addEventListener("click", (e) => {
-      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) {
+        e.stopPropagation();
+        return;
+      }
       activate(e);
     });
+    let spaceArmed = false;
     item.addEventListener("keydown", (e) => {
-      if (e.key === " ") activate(e);
+      if (e.key !== " " || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      e.preventDefault();
+      if (!e.repeat) spaceArmed = true;
+    });
+    item.addEventListener("keyup", (e) => {
+      if (e.key !== " " || !spaceArmed) return;
+      spaceArmed = false;
+      activate(e);
+    });
+    item.addEventListener("blur", () => {
+      spaceArmed = false;
     });
     return item;
   }

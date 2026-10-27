@@ -2035,14 +2035,29 @@ export class AppShell {
     // Ctrl/Cmd/Shift-click keep the browser's new tab/window. Alt-click is NOT
     // let through: browsers treat it as "download link", which would save the page.
     item.addEventListener("click", (e) => {
-      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) {
+        // Let the browser open the tab, but keep the phone panel open behind it.
+        e.stopPropagation();
+        return;
+      }
       activate(e);
     });
     // A button activated on Space and a listbox option is chosen with it; an anchor
-    // only answers Enter, so restore Space here.
+    // only answers Enter, so restore Space here. Like a button, act on release:
+    // acting on press lets held-key repeats land on the switcher button that takes
+    // focus after the menu closes, and reopen the menu.
+    let spaceArmed = false;
     item.addEventListener("keydown", (e) => {
-      if (e.key === " ") activate(e);
+      if (e.key !== " " || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      e.preventDefault(); // no page scroll
+      if (!e.repeat) spaceArmed = true;
     });
+    item.addEventListener("keyup", (e) => {
+      if (e.key !== " " || !spaceArmed) return;
+      spaceArmed = false;
+      activate(e);
+    });
+    item.addEventListener("blur", () => { spaceArmed = false; });
     return item;
   }
 
