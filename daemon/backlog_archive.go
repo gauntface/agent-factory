@@ -8,19 +8,20 @@ import (
 	"github.com/sachiniyer/agent-factory/session"
 )
 
-// archiveItemSession archives an idle item session for reason
-// (backlog.ArchiveDone or backlog.ArchiveAsk) while that reason holds. The
+// archiveBacklogSession archives an idle item session for reason
+// (backlog.ArchiveDone or backlog.ArchiveAsk), or an idle orchestrator for
+// backlog.ArchiveOrchIdle, while that reason holds. The
 // archive is filed on the session first, so a restart finishes it. While a
 // client is attached, or the session is not idle yet, it waits for a later
 // poll of the session. When the guard refuses, the session stays live and the
 // item gets a note.
-func (m *Manager) archiveItemSession(repoID, sessionID, reason string) {
+func (m *Manager) archiveBacklogSession(repoID, sessionID, reason string) {
 	b, err := backlog.Load(repoID)
 	if err != nil {
 		m.warn().Printf("backlog archive (%s) of session %s: %v", reason, sessionID, err)
 		return
 	}
-	s, ok := m.itemSessions(repoID)[sessionID]
+	s, ok := m.projectSession(repoID, sessionID)
 	if !ok {
 		return
 	}
@@ -36,7 +37,7 @@ func (m *Manager) archiveItemSession(repoID, sessionID, reason string) {
 	}
 	guard := backlogArchiveGuard(sessionID)
 	if err := guard(inst); err != nil {
-		m.keepItemSessionLive(repoID, inst, reason, err)
+		m.keepBacklogSessionLive(repoID, inst, reason, err)
 		return
 	}
 	var refused error
@@ -51,7 +52,7 @@ func (m *Manager) archiveItemSession(repoID, sessionID, reason string) {
 	}
 	if err := archiveSessionForLifecycle(m, ArchiveSessionRequest{ID: sessionID, RepoID: repoID}, fenced); err != nil {
 		if refused != nil {
-			m.keepItemSessionLive(repoID, inst, reason, refused)
+			m.keepBacklogSessionLive(repoID, inst, reason, refused)
 			return
 		}
 		m.warn().Printf("backlog archive (%s) of session %q: %v", reason, inst.Title, err)
@@ -60,10 +61,10 @@ func (m *Manager) archiveItemSession(repoID, sessionID, reason string) {
 	inst.SetOwedArchive(nil)
 }
 
-// keepItemSessionLive settles a refused archive: the session stays, and the
+// keepBacklogSessionLive settles a refused archive: the session stays, and the
 // item gets a note with why, unless the archive is no longer owed (an answer
 // came first). There is no retry: a change means someone is using the session.
-func (m *Manager) keepItemSessionLive(repoID string, inst *session.Instance, reason string, why error) {
+func (m *Manager) keepBacklogSessionLive(repoID string, inst *session.Instance, reason string, why error) {
 	m.info().Printf("backlog archive: keeping session %q: %v", inst.Title, why)
 	m.settleOwedArchive(repoID, inst)
 	svc := m.backlogService()
@@ -136,9 +137,6 @@ func backlogArchiveGuard(sessionID string) sessionTeardownGuard {
 // drainBacklogDeferredArchive retries a parked archive once the session is
 // polled normally again and idle.
 func (m *Manager) drainBacklogDeferredArchive(repoID string, instance *session.Instance) {
-	if instance.BacklogItem == 0 {
-		return
-	}
 	reason, ok := m.backlog.takeDeferredArchive(instance.ID)
 	if !ok {
 		return
@@ -149,7 +147,7 @@ func (m *Manager) drainBacklogDeferredArchive(repoID string, instance *session.I
 	}
 	sessionID := instance.ID
 	m.launchBackgroundMutation(func(<-chan struct{}) {
-		m.archiveItemSession(repoID, sessionID, reason)
+		m.archiveBacklogSession(repoID, sessionID, reason)
 	})
 }
 
@@ -166,7 +164,7 @@ func (m *Manager) onBacklogItemDone(repoID string, it backlog.Item) {
 	}
 	sessionID := r.SessionID
 	m.launchBackgroundMutation(func(<-chan struct{}) {
-		m.archiveItemSession(repoID, sessionID, backlog.ArchiveDone)
+		m.archiveBacklogSession(repoID, sessionID, backlog.ArchiveDone)
 	})
 }
 
@@ -178,7 +176,24 @@ func (m *Manager) redriveOwedArchives(repoID string, sessions map[string]itemSes
 			continue
 		}
 		if owed := s.instance.OwedArchive(); owed != nil {
-			m.archiveItemSession(repoID, id, owed.Reason)
+			m.archiveBacklogSession(repoID, id, owed.Reason)
+		}
+	}
+}
+
+// redriveOrchestratorArchives finishes the idle archives of orchestrators an
+// earlier daemon filed and did not settle.
+func (m *Manager) redriveOrchestratorArchives(repoID string, b *backlog.Backlog) {
+	for _, it := range b.Items {
+		if it.Orchestrator == nil {
+			continue
+		}
+		s, ok := m.projectSession(repoID, it.Orchestrator.SessionID)
+		if !ok || s.instance.BacklogItem != 0 {
+			continue
+		}
+		if owed := s.instance.OwedArchive(); owed != nil {
+			m.archiveBacklogSession(repoID, s.instance.ID, owed.Reason)
 		}
 	}
 }
