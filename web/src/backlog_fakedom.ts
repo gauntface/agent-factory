@@ -137,6 +137,7 @@ export class FakeElement extends FakeNode {
   hidden = false;
   type = "";
   title = "";
+  id = "";
   placeholder = "";
   href = "";
   target = "";
