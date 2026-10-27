@@ -149,6 +149,9 @@ func (b *Backlog) Move(id int, to Move, now time.Time) error {
 	if err := c.checkCycles(); err != nil {
 		return err
 	}
+	if err := c.checkOrchestrators(); err != nil {
+		return err
+	}
 	*b = *c
 	return nil
 }
