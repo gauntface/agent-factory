@@ -17,6 +17,7 @@ import {
 } from "./backlog_model.js";
 import { groupCounts, metaLine, overview, pausedNotice, positions, progress, segments } from "./backlog_cards.js";
 import { PAUSED_GLYPH, groupButtons } from "./backlog_group_panel.js";
+import { EffortSessions, routedTag } from "./backlog_effort.js";
 import { inbox } from "./backlog_groups.js";
 import { InboxList } from "./backlog_inbox.js";
 import { ItemPanel, entryField, stateChip } from "./backlog_panel.js";
@@ -100,6 +101,7 @@ export class BacklogPane {
   private showArchived = false;
   private inboxOn = false;
   private readonly inboxList: InboxList;
+  private readonly effort: EffortSessions;
   private readonly folded = new Set<number>();
   // A reorder shown before the daemon has it. It stays until data from a refresh
   // started after the move committed arrives; gen is Infinity until then.
@@ -145,6 +147,7 @@ export class BacklogPane {
       return token === null ? Promise.reject(new Error("not signed in")) : previewSession(id, PREVIEW_LINES, token);
     });
     this.popover = new PreviewPopover(this.previews);
+    this.effort = new EffortSessions(host, () => this.render());
     this.inboxList = new InboxList({
       answer: (id, qid, text) => this.answer(this.root ?? "", id, qid, text),
       select: (id) => this.select(id),
@@ -165,6 +168,7 @@ export class BacklogPane {
   }
 
   update(data: BacklogData, root: string | null, sessions: SessionData[]): void {
+    this.effort.sessionsChanged(sessions);
     if (data === this.data && root === this.root) {
       if (sessions === this.sessions) return;
       const before = this.runSig(this.sessions);
@@ -608,21 +612,22 @@ export class BacklogPane {
       const tags = n > 0 ? [h("span", { class: "af-backlog-tag af-backlog-state-needs_you" }, needsYouLabel(n))] : [];
       return [title, h("span", { class: "af-backlog-id" }, formatID(it.id)),
         h("span", { class: "af-backlog-group-end" }, this.rowChip(v, it, derivedOf(v, it.id).reason ?? "", li), ...tags,
-          ...this.groupTags(it), ...this.rowTail(v, it), ...this.headActions(it))];
+          ...this.groupTags(it), ...this.rowTail(v, it), ...this.headActions(v, it))];
     }
-    const tail = [this.rowChip(v, it, row.reason, li), ...this.groupTags(it), ...this.rowTail(v, it)];
+    const tail = [this.rowChip(v, it, row.reason, li), ...routedTag(v, it), ...this.groupTags(it), ...this.rowTail(v, it)];
     if (!spot) return [h("span", { class: "af-backlog-id" }, formatID(it.id)), title, ...tail];
     li.classList.add("af-backlog-group-row");
     return [h("span", { class: "af-backlog-pos" }, `#${spot.pos.get(it.id) ?? ""}`),
       h("span", { class: "af-backlog-row-main" }, title, metaLine(v, it, spot.pos)), h("span", { class: "af-backlog-group-end" }, ...tail)];
   }
 
-  /** Pause or Unpause, or Unarchive, and the group panel. Archive stays in the
-   *  panel. */
-  private headActions(it: Item): HTMLElement[] {
+  /** The effort session button, Pause or Unpause, or Unarchive, and the group
+   *  panel. Archive stays in the panel. An archived group with no effort
+   *  session offers none. */
+  private headActions(v: BacklogView, it: Item): HTMLElement[] {
     const root = this.root ?? "";
-    const out: HTMLElement[] = groupButtons(it, false,
-      (id, c) => this.write((t) => updateItem(root, id, c, t)));
+    const out: HTMLElement[] = it.archived && !it.orchestrator ? [] : [this.effort.button(root, v, it)];
+    out.push(...groupButtons(it, false, (id, c) => this.write((t) => updateItem(root, id, c, t))));
     const open = h("button", { type: "button", class: "af-ghost" }, "Details");
     open.setAttribute("aria-label", `Open ${formatID(it.id)}`);
     open.addEventListener("click", () => this.select(it.id));
@@ -876,6 +881,13 @@ export class BacklogPane {
       archiveSession: (id: string) => this.host.archiveSession(id),
       restoreSession: (id: string) => this.host.restoreSession(id),
       group: (id: number, c: { paused?: boolean; archived?: boolean }) => this.write((t) => updateItem(root, id, c, t)),
+      orchestrator: {
+        open: (id: number) => {
+          const v = this.view();
+          if (v && here()) void this.effort.open(root, v, id);
+        },
+        unbind: (id: number) => void this.effort.unbind(root, id),
+      },
     };
   }
 }

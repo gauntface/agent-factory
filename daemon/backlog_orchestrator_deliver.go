@@ -95,7 +95,7 @@ func (m *Manager) deliverOrchestrator(stop <-chan struct{}, repoID string, group
 	prompt := b.OrchEventsPrompt(group, d.Events)
 	if backlogNeedsRestore(s) {
 		if !s.instance.AgentConversation().HasID() {
-			prompt = b.OrchStartPrompt(group, proposalDir(repoID, b.Item(group)), false, d.Events)
+			prompt = b.OrchStartPrompt(group, proposalDir(repoID, b.Item(group)), backlog.OrchRestarted, d.Events)
 		}
 		restored, err := restoreBacklogSession(m, RestoreSessionRequest{ID: d.SessionID, RepoID: repoID})
 		if err != nil {
@@ -155,7 +155,7 @@ func (m *Manager) replaceOrchestrator(stop <-chan struct{}, repoID string, b *ba
 		TitleBase: orchestratorTitleBase(g),
 		RepoPath:  root,
 		Program:   d.Program,
-		Prompt:    b.OrchStartPrompt(d.Group, proposalDir(repoID, g), true, d.Events),
+		Prompt:    b.OrchStartPrompt(d.Group, proposalDir(repoID, g), backlog.OrchReplacement, d.Events),
 		Backend:   string(session.BackendLocal),
 
 		OrchestratorTurn: true,

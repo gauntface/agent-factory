@@ -195,20 +195,34 @@ func (b *Backlog) OrchEventsPrompt(group int, events []OrchEvent) string {
 	return sb.String()
 }
 
+// Why af starts an orchestrator session without an earlier conversation.
+type OrchStart int
+
+const (
+	// OrchRestarted: a restored session whose agent conversation is gone.
+	OrchRestarted OrchStart = iota
+	// OrchReplacement: a new session in place of one that is gone.
+	OrchReplacement
+	// OrchNew: a new session for a group that had no orchestrator.
+	OrchNew
+)
+
 // OrchStartPrompt is the first prompt of a session that orchestrates group
-// without the earlier conversation: a replacement af started, or a restored
-// session whose agent conversation is gone. It carries the handoff and the
-// pending events. proposalDir is the group's proposal directory, or "".
-func (b *Backlog) OrchStartPrompt(group int, proposalDir string, replaced bool, events []OrchEvent) string {
+// without the earlier conversation. It carries the handoff and the pending
+// events. proposalDir is the group's proposal directory, or "".
+func (b *Backlog) OrchStartPrompt(group int, proposalDir string, why OrchStart, events []OrchEvent) string {
 	it := b.Item(group)
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "You orchestrate backlog effort %s: %s\n", FormatID(group), it.Title)
 	if proposalDir != "" {
 		fmt.Fprintf(&sb, "It comes from the proposal in %s\n", proposalDir)
 	}
-	if replaced {
+	switch why {
+	case OrchReplacement:
 		sb.WriteString("\nThe session that orchestrated it before is gone. af started this session to replace it and bound it to the group.\n")
-	} else {
+	case OrchNew:
+		sb.WriteString("\nThe user started this session from the web to orchestrate the group, and af bound it to the group.\n")
+	default:
 		sb.WriteString("\nThis session restarted without its earlier conversation.\n")
 	}
 	sb.WriteString("\nYour job:\n")

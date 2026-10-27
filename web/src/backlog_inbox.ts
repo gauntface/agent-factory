@@ -4,8 +4,8 @@
 
 import { h } from "./dom.js";
 import { icon } from "./icon.js";
-import { type BacklogView, type Message, formatID } from "./backlog_model.js";
-import { answerEffect, answerEffectText, inbox } from "./backlog_groups.js";
+import { type BacklogView, type Item, type Message, formatID, safeHttpUrl } from "./backlog_model.js";
+import { answerEffect, answerEffectText, inbox, inboxNotes } from "./backlog_groups.js";
 import { formatTime } from "./time.js";
 import type { SessionData } from "./types.js";
 
@@ -83,7 +83,8 @@ interface Card {
 }
 
 /** Each open question as a card: item, age, question, handoff, what an answer
- *  does, answer box. Cards are kept by item and question. */
+ *  does, answer box. Cards are kept by item and question. Inbox notes, such
+ *  as an effort session's done note, follow as read-only cards. */
 export class InboxList {
   readonly el = h("div", { class: "af-backlog-inbox" });
   private readonly list = h("ul", { class: "af-backlog-inbox-list" });
@@ -113,10 +114,28 @@ export class InboxList {
       next.set(key, card);
     }
     this.cards = next;
-    const want = [...next.values()].map((c) => c.li);
+    const notes = inboxNotes(view).map(({ item, note }) => this.note(item, note));
+    const want = [...[...next.values()].map((c) => c.li), ...notes];
     const have = [...this.list.children];
     if (want.length !== have.length || want.some((li, i) => li !== have[i])) this.list.replaceChildren(...want);
     this.empty.hidden = want.length > 0;
+  }
+
+  /** A read-only note card. Its signature lets an unchanged note keep its node. */
+  private note(item: Item, note: Message): HTMLElement {
+    const label = `${formatID(item.id)} ${item.title}`;
+    const sig = `note\n${item.id}:${note.id}\n${label}\n${note.text}\n${note.at}\n${item.pr ?? ""}`;
+    const kept = [...this.list.children].find((li) => (li as HTMLElement).dataset.sig === sig);
+    if (kept) return kept as HTMLElement;
+    const open = h("button", { type: "button", class: "af-backlog-item-link" }, label);
+    open.addEventListener("click", () => this.actions.select(item.id));
+    const pr = safeHttpUrl(item.pr);
+    const text = h("p", { class: "af-backlog-inbox-note-text" }, note.text);
+    const li = h("li", { class: "af-backlog-inbox-card af-backlog-inbox-note" },
+      h("div", { class: "af-backlog-inbox-head" }, open, h("span", { class: "af-backlog-reason" }, `Noted ${formatTime(note.at)}`)), text,
+      ...(pr ? [h("a", { class: "af-backlog-row-pr", href: pr, target: "_blank", rel: "noopener noreferrer" }, "Pull request", icon("external-link"))] : []));
+    li.dataset.sig = sig;
+    return li;
   }
 
   private card(id: number): Card {
