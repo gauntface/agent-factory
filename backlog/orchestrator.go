@@ -112,8 +112,12 @@ func (b *Backlog) ClearOrchestrator(id int, now time.Time) (*Orchestrator, error
 // a top-level parent.
 func (b *Backlog) checkOrchestrators() error {
 	for _, it := range b.Items {
-		if it.Orchestrator != nil && !b.isGroup(it.ID) {
+		switch {
+		case it.Orchestrator == nil:
+		case it.Parent != 0:
 			return fmt.Errorf("%s has an orchestrator and must stay a top-level parent; clear it first", FormatID(it.ID))
+		case !b.IsParent(it.ID):
+			return fmt.Errorf("%s has an orchestrator and must keep at least one child; clear it first", FormatID(it.ID))
 		}
 	}
 	return nil
@@ -129,6 +133,7 @@ func (b *Backlog) normalizeOrchestrators() {
 		if it.Orchestrator == nil {
 			continue
 		}
+		it.Orchestrator.SessionID = strings.TrimSpace(it.Orchestrator.SessionID)
 		if !b.isGroup(it.ID) || it.Orchestrator.SessionID == "" || seen[it.Orchestrator.SessionID] {
 			it.Orchestrator = nil
 			continue

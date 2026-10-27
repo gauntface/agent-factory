@@ -3,6 +3,7 @@ package backlog
 import (
 	"encoding/json"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -197,5 +198,106 @@ func TestMigratesV2Unchanged(t *testing.T) {
 	}
 	if strings.Contains(string(raw), `"handoff"`) || strings.Contains(string(raw), `"events"`) || strings.Contains(string(raw), `"meter"`) {
 		t.Fatalf("empty fields written: %s", raw)
+	}
+}
+
+func TestBatchReimportMovesLastChildAndAddsOne(t *testing.T) {
+	b := New()
+	if _, err := b.AddBatch(Batch{Proposal: "p", Items: []ItemInput{
+		{Key: "g", Title: "group"},
+		{Key: "a", Title: "a", Parent: Ref{Key: "g"}},
+		{Key: "h", Title: "other"},
+		{Key: "h1", Title: "h1", Parent: Ref{Key: "h"}},
+	}}, t0); err != nil {
+		t.Fatal(err)
+	}
+	g, a, h := b.bySource("p", "g"), b.bySource("p", "a"), b.bySource("p", "h")
+	if err := b.BindOrchestrator(g, orch("s"), t0); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := b.AddBatch(Batch{Proposal: "p", Items: []ItemInput{
+		{Key: "h", Title: "other"},
+		{Key: "h1", Title: "h1", Parent: Ref{Key: "h"}},
+		{Key: "g", Title: "group"},
+		{Key: "a", Title: "a", Parent: Ref{Key: "h"}},
+		{Key: "b", Title: "b", Parent: Ref{Key: "g"}},
+	}}, t0)
+	if err != nil {
+		t.Fatalf("valid end state refused: %v", err)
+	}
+	if b.Item(a).Parent != h || b.Item(ids["b"]).Parent != g || b.Item(g).Orchestrator == nil {
+		t.Fatalf("%+v", b.Items)
+	}
+
+	_, err = b.AddBatch(Batch{Proposal: "p", Items: []ItemInput{
+		{Key: "b", Title: "b", Parent: Ref{Key: "h"}},
+		{Key: "h", Title: "other"},
+	}}, t0)
+	if err == nil || err.Error() != "B-1 has an orchestrator and must keep at least one child; clear it first" {
+		t.Fatalf("emptied the group: %v", err)
+	}
+	if b.Item(ids["b"]).Parent != g {
+		t.Fatal("refused batch applied")
+	}
+}
+
+func TestMoveBoundGroupBeforeOrAfterChild(t *testing.T) {
+	b := mk(t, Item{ID: 1}, Item{ID: 2, Parent: 1}, Item{ID: 3}, Item{ID: 4, Parent: 3})
+	if err := b.BindOrchestrator(1, orch("s"), t0); err != nil {
+		t.Fatal(err)
+	}
+	for _, mv := range []Move{{Before: 4}, {After: 4}} {
+		err := b.Move(1, mv, t0)
+		if err == nil || err.Error() != "B-1 has an orchestrator and must stay a top-level parent; clear it first" {
+			t.Fatalf("%+v: %v", mv, err)
+		}
+		if b.Item(1).Parent != 0 {
+			t.Fatal("refused move applied")
+		}
+	}
+	if err := b.Move(2, Move{Into: 3}, t0); err == nil || !strings.Contains(err.Error(), "must keep at least one child") {
+		t.Fatal(err)
+	}
+}
+
+func TestNormalizeTrimsSessionID(t *testing.T) {
+	b := mk(t,
+		Item{ID: 1, Orchestrator: &Orchestrator{SessionID: " s "}},
+		Item{ID: 2, Parent: 1},
+		Item{ID: 3, Orchestrator: &Orchestrator{SessionID: "s"}},
+		Item{ID: 4, Parent: 3},
+		Item{ID: 5, Orchestrator: &Orchestrator{SessionID: " "}},
+		Item{ID: 6, Parent: 5},
+	)
+	if o := b.Item(1).Orchestrator; o == nil || o.SessionID != "s" {
+		t.Fatalf("%+v", o)
+	}
+	if b.Item(3).Orchestrator != nil || b.Item(5).Orchestrator != nil {
+		t.Fatal("kept a duplicate or blank session id")
+	}
+}
+
+func TestOrchestratorJSONRoundTrip(t *testing.T) {
+	b := mk(t, Item{ID: 1}, Item{ID: 2, Parent: 1})
+	if err := b.BindOrchestrator(1, orch("s"), t0); err != nil {
+		t.Fatal(err)
+	}
+	o := b.Item(1).Orchestrator
+	o.Handoff = "notes"
+	o.Meter = map[string]Meter{"/t.jsonl": {Offset: 10, Cost: 1.5, Last: "m1"}}
+	o.Events = []OrchEvent{{Kind: EventQuestion, Item: 2, Message: 3, At: t0}, {Kind: EventFinished, At: t0}}
+	raw, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := New()
+	if err := json.Unmarshal(raw, got); err != nil {
+		t.Fatal(err)
+	}
+	if err := got.normalize(); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Item(1).Orchestrator, o) {
+		t.Fatalf("got %+v, want %+v", got.Item(1).Orchestrator, o)
 	}
 }
