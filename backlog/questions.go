@@ -88,7 +88,8 @@ func (it *Item) appendMessage(m Message, now time.Time) *Message {
 }
 
 // Ask appends a question from the agent of sessionID, which must be the item's
-// latest run. The item must be open and have no open question.
+// latest run. The item must be open and have no open question. In a group with
+// an orchestrator the question goes to the orchestrator.
 func (b *Backlog) Ask(id int, sessionID string, q Question, now time.Time) (*Message, error) {
 	it, err := b.get(id)
 	if err != nil {
@@ -110,8 +111,11 @@ func (b *Backlog) Ask(id int, sessionID string, q Question, now time.Time) (*Mes
 	if it.OpenQuestion() != nil {
 		return nil, fmt.Errorf("%s already has an open question; wait for the answer", FormatID(id))
 	}
-	return it.appendMessage(Message{Kind: KindQuestion, Author: "agent:" + sessionID, Text: text,
-		Then: q.Then, Handoff: strings.TrimSpace(q.Handoff)}, now), nil
+	m := Message{Kind: KindQuestion, Author: "agent:" + sessionID, Text: text, Then: q.Then, Handoff: strings.TrimSpace(q.Handoff)}
+	if b.orchestratorFor(id) != nil {
+		m.Route = RouteOrchestrator
+	}
+	return it.appendMessage(m, now), nil
 }
 
 // Answered is what Answer did.
@@ -288,16 +292,6 @@ func (b *Backlog) AnsweredInSession(sessionID string, now time.Time) int {
 	q.Closed = ClosedAnsweredInSession
 	it.UpdatedAt = now
 	return it.ID
-}
-
-// OpenQuestionText is the text of the item's oldest open question, or "".
-func (b *Backlog) OpenQuestionText(id int) string {
-	if it := b.Item(id); it != nil {
-		if q := it.OpenQuestion(); q != nil {
-			return q.Text
-		}
-	}
-	return ""
 }
 
 // questionSessions maps each item with an open question to its latest run's

@@ -445,7 +445,7 @@ func TestAnsweredInSession(t *testing.T) {
 		t.Fatal(got)
 	}
 	th := b.Item(1).Thread
-	if th[0].Closed != ClosedAnsweredInSession || th[1].Closed != "" || b.OpenQuestionText(1) != "r" {
+	if th[0].Closed != ClosedAnsweredInSession || th[1].Closed != "" || b.UserQuestionText(1) != "r" {
 		t.Fatalf("only the oldest closes: %+v", th)
 	}
 }

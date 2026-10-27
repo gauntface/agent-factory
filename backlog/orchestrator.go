@@ -14,6 +14,9 @@ const (
 	EventStalled            = "stalled"
 	EventFinished           = "finished"
 	EventEscalationAnswered = "escalation_answered"
+	// EventAnsweredInSession: the user answered a question that waited for the
+	// orchestrator, in the item session's terminal.
+	EventAnsweredInSession = "answered_in_session"
 )
 
 // Orchestrator is the session that owns a group: af sends it the group's

@@ -207,7 +207,7 @@ func (m *Manager) sendBacklogAnswer(repoID string, inst *session.Instance, promp
 // that was just restored, under the backlog lock.
 func (m *Manager) syncBacklogAttention(repoID string, a backlog.PendingAnswer) {
 	_, err := m.backlogService().Apply(backlog.ProjectRef{ID: repoID}, func(b *backlog.Backlog) ([]int, error) {
-		if text := b.OpenQuestionText(a.ID); text != "" {
+		if text := b.UserQuestionText(a.ID); text != "" {
 			backlogHost{m: m}.SetAttention(repoID, a.SessionID, text)
 		}
 		return []int{}, nil
@@ -263,7 +263,7 @@ func (m *Manager) noteBacklogSubmitted(instance *session.Instance) {
 				return []int{}, nil
 			}
 			running = b.Item(id).Status == backlog.StatusRunning
-			backlogHost{m: m}.SetAttention(repoID, sessionID, b.OpenQuestionText(id))
+			backlogHost{m: m}.SetAttention(repoID, sessionID, b.UserQuestionText(id))
 			return []int{id}, nil
 		})
 		if err != nil {
