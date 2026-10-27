@@ -2116,6 +2116,8 @@
       "af backlog ask --then": "backlog.questions",
       "af backlog ask --handoff-file": "backlog.questions",
       "af backlog add --orchestrate": "backlog.orchestrator",
+      "af backlog add --replace": "backlog.orchestrator",
+      "af backlog orchestrate --replace": "backlog.orchestrator",
       "af backlog orchestrate --help": "meta.discovery",
       "af backlog orchestrate --self": "backlog.orchestrator",
       "af backlog orchestrate --clear": "backlog.orchestrator",
@@ -2835,6 +2837,9 @@
       "AddBacklogItems": {
         "orchestrator": {
           "ok": "An orchestrator is the agent of the session that calls af backlog add --file --orchestrate; the web adds single drafts and has no session of its own to bind."
+        },
+        "replace_orchestrator": {
+          "ok": "It goes with orchestrator, which the web never sets: only af backlog add --file --orchestrate --replace takes a group over."
         },
         "before": {
           "ok": "The New item row and Add child append at the bottom; the user then places the item by drag, Alt+arrows or Move…."

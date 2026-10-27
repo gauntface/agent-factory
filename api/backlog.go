@@ -303,6 +303,7 @@ var (
 	backlogAddProgram string
 	backlogAddFile    string
 	backlogAddOrch    bool
+	backlogAddReplace bool
 )
 
 var backlogAddCmd = &cobra.Command{
@@ -315,7 +316,8 @@ var backlogAddCmd = &cobra.Command{
 		"item with the same proposal and key as an existing one is updated, not added again. The " +
 		"batch is all or nothing and prints each key's id.\n\n" +
 		"With --orchestrate, also bind the session this runs in as the orchestrator of the one " +
-		"top-level parent the batch is under. An item session cannot orchestrate.",
+		"top-level parent the batch is under. An item session cannot orchestrate. A group another " +
+		"session orchestrates is refused unless --replace.",
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runBacklog(func() (any, error) {
@@ -337,6 +339,9 @@ func backlogAddBatch(cmd *cobra.Command, args []string) (any, error) {
 		return nil, errors.New("--file takes the items from JSON; do not pass a title with it")
 	}
 	orchestrator := ""
+	if backlogAddReplace && !backlogAddOrch {
+		return nil, errors.New("--replace goes with --orchestrate")
+	}
 	if backlogAddOrch {
 		var err error
 		if orchestrator, err = orchestratorSelf(); err != nil {
@@ -360,7 +365,7 @@ func backlogAddBatch(cmd *cobra.Command, args []string) (any, error) {
 	var resp daemon.AddBacklogItemsResponse
 	if err := callBacklogRoute("AddBacklogItems", daemon.AddBacklogItemsRequest{
 		RepoID: t.repoID, RepoPath: t.repoPath, Proposal: batch.Proposal, Items: batch.Items,
-		Orchestrator: orchestrator,
+		Orchestrator: orchestrator, ReplaceOrchestrator: backlogAddReplace,
 	}, &resp); err != nil {
 		return nil, err
 	}
@@ -386,8 +391,8 @@ func readFileOrStdin(cmd *cobra.Command, path string) (string, error) {
 }
 
 func backlogAddOne(cmd *cobra.Command, args []string) (any, error) {
-	if backlogAddOrch {
-		return nil, errors.New("--orchestrate goes with --file")
+	if backlogAddOrch || backlogAddReplace {
+		return nil, errors.New("--orchestrate and --replace go with --file")
 	}
 	if len(args) != 1 {
 		return nil, errors.New("af backlog add needs a title, or --file <path or -> for many items")
@@ -560,6 +565,7 @@ func init() {
 	f.StringVar(&backlogAddProgram, "program", "", "Program to run the item with (default: the project's default)")
 	f.StringVar(&backlogAddFile, "file", "", "Add or update many items from this JSON `file`; - reads stdin")
 	f.BoolVar(&backlogAddOrch, "orchestrate", false, "With --file, bind the session this runs in as the orchestrator of the batch's top-level parent")
+	f.BoolVar(&backlogAddReplace, "replace", false, "With --orchestrate, take the group over from the session that orchestrates it")
 
 	f = backlogEditCmd.Flags()
 	f.StringVar(&backlogEditTitle, "title", "", "New title")

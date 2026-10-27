@@ -56,7 +56,10 @@ func TestBacklogAddOrchestrate(t *testing.T) {
 		o.State != backlog.SessionLive || o.Pending != 0 {
 		t.Fatal(out)
 	}
-	if _, err := runBacklogCmd(t, "add", "x", "--orchestrate"); err == nil || err.Error() != "--orchestrate goes with --file" {
+	if _, err := runBacklogCmd(t, "add", "x", "--orchestrate"); err == nil || err.Error() != "--orchestrate and --replace go with --file" {
+		t.Fatal(err)
+	}
+	if _, err := runBacklogCmd(t, "add", "--file", writeBatch(t), "--replace"); err == nil || err.Error() != "--replace goes with --orchestrate" {
 		t.Fatal(err)
 	}
 }
@@ -97,7 +100,7 @@ func TestBacklogOrchestrate(t *testing.T) {
 	if r.ID != 1 || r.Orchestrator == nil || r.Orchestrator.SessionID != "o1" || r.Orchestrator.Handoff != "next: B-2" {
 		t.Fatal(out)
 	}
-	if strings.Join(*methods, ",") != "SetBacklogOrchestrator,SetBacklogOrchestratorHandoff" {
+	if strings.Join(*methods, ",") != "SetBacklogOrchestrator" {
 		t.Fatal(*methods)
 	}
 
@@ -127,12 +130,35 @@ func TestBacklogOrchestrate(t *testing.T) {
 		{[]string{"B-1"}, "needs one of --self or --clear"},
 		{[]string{"B-1", "--self", "--clear"}, "needs one of --self or --clear"},
 		{[]string{"--clear"}, "--clear needs the group's id"},
-		{[]string{"B-1", "--clear", "--handoff-file", notes}, "--handoff-file goes with --self"},
+		{[]string{"B-1", "--clear", "--handoff-file", notes}, "--handoff-file and --replace go with --self"},
+		{[]string{"B-1", "--clear", "--replace"}, "--handoff-file and --replace go with --self"},
+		{[]string{"--self", "--replace", "--handoff-file", notes}, "--replace needs the group's id"},
 		{[]string{"--self"}, "needs a group id, or --handoff-file"},
 		{[]string{"B-2", "--self"}, "B-2 is not a top-level parent"},
 	} {
 		if _, err := runBacklogCmd(t, append([]string{"orchestrate"}, c.args...)...); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%v: %v", c.args, err)
 		}
+	}
+}
+
+func TestBacklogOrchestrateReplace(t *testing.T) {
+	stubBacklogDaemon(t)
+	withOrchestratorSessions(t, &session.InstanceData{ID: "o1", Title: "planner"})
+	backlogTestSessions["o3"] = backlog.SessionInfo{Title: "new", State: backlog.SessionLive}
+	if _, err := runBacklogCmd(t, "add", "--file", writeBatch(t), "--orchestrate"); err != nil {
+		t.Fatal(err)
+	}
+	backlogSelfSession = func() (*session.InstanceData, error) { return &session.InstanceData{ID: "o3", Title: "new"}, nil }
+	_, err := runBacklogCmd(t, "orchestrate", "B-1", "--self")
+	if err == nil || err.Error() != `B-1 is orchestrated by session "o1"; pass --replace to take it over` {
+		t.Fatal(err)
+	}
+	out, err := runBacklogCmd(t, "orchestrate", "B-1", "--self", "--replace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := decodeOut[backlog.OrchestratorResponse](t, out); r.Change != backlog.OrchestratorReplaced || r.Previous != "o1" || r.Orchestrator.SessionID != "o3" {
+		t.Fatal(out)
 	}
 }

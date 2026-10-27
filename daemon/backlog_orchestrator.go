@@ -46,12 +46,23 @@ func backlogSessionState(v session.LifecycleView) string {
 	return backlog.SessionLive
 }
 
-func (m *Manager) publishOrchestratorBound(repoID string, out *backlog.OrchestratorResponse) {
+// publishOrchestratorChange sends backlog.orchestrator.bound or .replaced
+// when a bind changed the group's session.
+func (m *Manager) publishOrchestratorChange(repoID string, out *backlog.OrchestratorResponse) {
 	if out == nil || out.Orchestrator == nil {
 		return
 	}
-	m.publishEvent(agentproto.EventBacklogOrchestratorBound, backlog.OrchestratorBoundEvent{
-		RepoID: repoID, ID: out.ID, SessionID: out.Orchestrator.SessionID, Title: out.Orchestrator.Title})
+	var t agentproto.EventType
+	switch out.Change {
+	case backlog.OrchestratorBound:
+		t = agentproto.EventBacklogOrchestratorBound
+	case backlog.OrchestratorReplaced:
+		t = agentproto.EventBacklogOrchestratorReplaced
+	default:
+		return
+	}
+	m.publishEvent(t, backlog.OrchestratorEvent{RepoID: repoID, ID: out.ID,
+		SessionID: out.Orchestrator.SessionID, Title: out.Orchestrator.Title, Previous: out.Previous})
 }
 
 func (s *controlServer) SetBacklogOrchestrator(req SetBacklogOrchestratorRequest, resp *SetBacklogOrchestratorResponse) error {
@@ -64,9 +75,9 @@ func (s *controlServer) SetBacklogOrchestrator(req SetBacklogOrchestratorRequest
 		return err
 	}
 	*resp = *out
-	if !req.Clear {
+	if out.Change != "" {
 		if ref, err := svc.Resolve(req.RepoID, req.RepoPath); err == nil {
-			s.manager.publishOrchestratorBound(ref.ID, out)
+			s.manager.publishOrchestratorChange(ref.ID, out)
 		}
 	}
 	return nil

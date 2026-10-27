@@ -206,9 +206,9 @@ func (s *controlServer) AddBacklogItems(req AddBacklogItemsRequest, resp *AddBac
 		return err
 	}
 	*resp = *out
-	if out.Orchestrator != nil {
+	if out.Orchestrator != nil && out.Orchestrator.Change != "" {
 		if ref, err := svc.Resolve(req.RepoID, req.RepoPath); err == nil {
-			s.manager.publishOrchestratorBound(ref.ID, out.Orchestrator)
+			s.manager.publishOrchestratorChange(ref.ID, out.Orchestrator)
 		}
 	}
 	return nil

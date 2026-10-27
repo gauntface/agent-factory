@@ -528,7 +528,7 @@ Add a draft item, or add and update many items from JSON
 
 Add one draft item, at the bottom of its parent by default. With --file, add or update many items at once from JSON: {"proposal": "<slug>", "items": [{"key", "title", "body", "parent", "waits_on", "program", "sequential"}]}. key is local to the file; parent and waits_on take a key or an item id. With proposal set, an item with the same proposal and key as an existing one is updated, not added again. The batch is all or nothing and prints each key's id.
 
-With --orchestrate, also bind the session this runs in as the orchestrator of the one top-level parent the batch is under. An item session cannot orchestrate.
+With --orchestrate, also bind the session this runs in as the orchestrator of the one top-level parent the batch is under. An item session cannot orchestrate. A group another session orchestrates is refused unless --replace.
 
 ```
 af backlog add <title> | add --file <path or -> [flags]
@@ -545,6 +545,7 @@ af backlog add <title> | add --file <path or -> [flags]
 | `--orchestrate` |  | With --file, bind the session this runs in as the orchestrator of the batch's top-level parent |
 | `--parent` | `string` | Add the item as a child of this `id` |
 | `--program` | `string` | Program to run the item with (default: the project's default) |
+| `--replace` |  | With --orchestrate, take the group over from the session that orchestrates it |
 | `--waits-on` | `string` | Comma-separated item `ids` this item waits on |
 
 **Global flags**
@@ -876,12 +877,12 @@ af backlog note <id> <text> | note --self <text> [flags]
 
 Bind this session as a group's orchestrator, or unbind it
 
-With a group and --self, bind the session this runs in as the orchestrator of the group, a top-level parent. A session orchestrates at most one group, and an item session cannot orchestrate. Binding a group that has an orchestrator replaces it and keeps its handoff notes. With --clear, unbind the group.
+With a group and --self, bind the session this runs in as the orchestrator of the group, a top-level parent. A session orchestrates at most one group, and an item session cannot orchestrate. A group another session orchestrates is refused unless --replace; the new session keeps its handoff notes. With --clear, unbind the group.
 
 --handoff-file stores notes for a session that replaces this one as orchestrator (at most 8 KB), read from a file or from stdin with -. Without a group it updates the notes of the group this session orchestrates.
 
 ```
-af backlog orchestrate <group> --self | <group> --clear | --self --handoff-file <path|-> [flags]
+af backlog orchestrate <group> --self [--replace] | <group> --clear | --self --handoff-file <path|-> [flags]
 ```
 
 **Flags**
@@ -890,6 +891,7 @@ af backlog orchestrate <group> --self | <group> --clear | --self --handoff-file 
 |------|------|-------------|
 | `--clear` |  | Unbind the group's orchestrator |
 | `--handoff-file` | `string` | With --self, a `path` to notes for a session that replaces this one, or - for stdin |
+| `--replace` |  | With --self, take the group over from the session that orchestrates it |
 | `--self` |  | Bind the session this runs in |
 
 **Global flags**

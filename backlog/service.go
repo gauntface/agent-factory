@@ -125,6 +125,10 @@ func (p *project) named(err error) error {
 	return &NotFoundError{ID: nf.ID, Project: name}
 }
 
+// errNoChange aborts an update that has nothing to write; update then
+// returns the stored backlog and reports no change.
+var errNoChange = errors.New("backlog: nothing to change")
+
 func (s *Service) update(p *project, fn func(*Backlog) ([]int, error)) (*Backlog, error) {
 	var ids []int
 	b, err := Update(p.id, func(b *Backlog) error {
@@ -132,6 +136,9 @@ func (s *Service) update(p *project, fn func(*Backlog) ([]int, error)) (*Backlog
 		ids, err = fn(b)
 		return err
 	})
+	if errors.Is(err, errNoChange) {
+		return Load(p.id)
+	}
 	if err != nil {
 		return nil, p.named(err)
 	}
@@ -179,6 +186,7 @@ func (s *Service) Add(req AddRequest) (*AddResponse, error) {
 	var ids map[string]int
 	var order []int
 	group := 0
+	var bound bindResult
 	b, err := s.update(p, func(b *Backlog) ([]int, error) {
 		now := s.now()
 		if req.Before != 0 || req.After != 0 {
@@ -211,10 +219,10 @@ func (s *Service) Add(req AddRequest) (*AddResponse, error) {
 			if group, err = batchGroup(b, ids); err != nil {
 				return nil, err
 			}
-			if err := s.bind(b, group, *orch); err != nil {
+			if bound, err = s.bind(b, group, *orch, req.ReplaceOrchestrator, nil); err != nil {
 				return nil, err
 			}
-			if !slices.Contains(order, group) {
+			if bound.change != "" && !slices.Contains(order, group) {
 				return append(slices.Clone(order), group), nil
 			}
 		}
@@ -228,7 +236,8 @@ func (s *Service) Add(req AddRequest) (*AddResponse, error) {
 		out.Items = append(out.Items, *b.Item(id))
 	}
 	if group != 0 {
-		out.Orchestrator = &OrchestratorResponse{ID: group, Orchestrator: s.orchestratorView(p.id, b.Item(group).Orchestrator)}
+		out.Orchestrator = &OrchestratorResponse{ID: group, Orchestrator: s.orchestratorView(p.id, b.Item(group).Orchestrator),
+			Change: bound.change, Previous: bound.previous}
 	}
 	return out, nil
 }

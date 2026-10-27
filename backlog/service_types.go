@@ -45,6 +45,9 @@ type AddRequest struct {
 	After  int `json:"after,omitempty"`
 	// Orchestrator binds this session to the one group the batch is under.
 	Orchestrator string `json:"orchestrator,omitempty"`
+	// ReplaceOrchestrator lets Orchestrator take the group over from another
+	// session.
+	ReplaceOrchestrator bool `json:"replace_orchestrator,omitempty"`
 }
 
 type AddResponse struct {

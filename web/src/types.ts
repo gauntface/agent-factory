@@ -456,7 +456,8 @@ export type EventType =
   | "backlog.changed"
   | "backlog.spend"
   | "backlog.runner"
-  | "backlog.orchestrator.bound";
+  | "backlog.orchestrator.bound"
+  | "backlog.orchestrator.replaced";
 
 /**
  * agentproto.Event (agentproto/message.go): one message on the /v1/events plane.

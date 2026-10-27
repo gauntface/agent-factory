@@ -27,15 +27,16 @@ var (
 	backlogOrchestrateSelf        bool
 	backlogOrchestrateClear       bool
 	backlogOrchestrateHandoffFile string
+	backlogOrchestrateReplace     bool
 )
 
 var backlogOrchestrateCmd = &cobra.Command{
-	Use:   "orchestrate <group> --self | <group> --clear | --self --handoff-file <path|->",
+	Use:   "orchestrate <group> --self [--replace] | <group> --clear | --self --handoff-file <path|->",
 	Short: "Bind this session as a group's orchestrator, or unbind it",
 	Long: "With a group and --self, bind the session this runs in as the orchestrator of the " +
 		"group, a top-level parent. A session orchestrates at most one group, and an item " +
-		"session cannot orchestrate. Binding a group that has an orchestrator replaces it and " +
-		"keeps its handoff notes. With --clear, unbind the group.\n\n" +
+		"session cannot orchestrate. A group another session orchestrates is refused unless " +
+		"--replace; the new session keeps its handoff notes. With --clear, unbind the group.\n\n" +
 		"--handoff-file stores notes for a session that replaces this one as orchestrator (at " +
 		"most 8 KB), read from a file or from stdin with -. Without a group it updates the notes " +
 		"of the group this session orchestrates.",
@@ -49,8 +50,8 @@ var backlogOrchestrateCmd = &cobra.Command{
 				if len(args) != 1 {
 					return nil, errors.New("--clear needs the group's id")
 				}
-				if backlogOrchestrateHandoffFile != "" {
-					return nil, errors.New("--handoff-file goes with --self")
+				if backlogOrchestrateHandoffFile != "" || backlogOrchestrateReplace {
+					return nil, errors.New("--handoff-file and --replace go with --self")
 				}
 				if err := refuseFromItemSession("orchestrate"); err != nil {
 					return nil, err
@@ -58,6 +59,9 @@ var backlogOrchestrateCmd = &cobra.Command{
 			}
 			if len(args) == 0 && backlogOrchestrateHandoffFile == "" {
 				return nil, errors.New("af backlog orchestrate --self needs a group id, or --handoff-file to update this session's notes")
+			}
+			if len(args) == 0 && backlogOrchestrateReplace {
+				return nil, errors.New("--replace needs the group's id")
 			}
 			id := 0
 			if len(args) == 1 {
@@ -84,15 +88,13 @@ var backlogOrchestrateCmd = &cobra.Command{
 			if err != nil {
 				return nil, err
 			}
-			var out *backlog.OrchestratorResponse
 			if id != 0 {
-				if out, err = setBacklogOrchestrator(daemon.SetBacklogOrchestratorRequest{
-					RepoID: t.repoID, RepoPath: t.repoPath, ID: id, SessionID: sessionID}); err != nil {
-					return nil, err
+				var notes *string
+				if backlogOrchestrateHandoffFile != "" {
+					notes = &handoff
 				}
-			}
-			if backlogOrchestrateHandoffFile == "" {
-				return out, nil
+				return setBacklogOrchestrator(daemon.SetBacklogOrchestratorRequest{RepoID: t.repoID, RepoPath: t.repoPath, ID: id,
+					SessionID: sessionID, Replace: backlogOrchestrateReplace, Handoff: notes})
 			}
 			var resp daemon.SetBacklogOrchestratorHandoffResponse
 			if err := callBacklogRoute("SetBacklogOrchestratorHandoff", daemon.SetBacklogOrchestratorHandoffRequest{
@@ -116,6 +118,7 @@ func init() {
 	f := backlogOrchestrateCmd.Flags()
 	f.BoolVar(&backlogOrchestrateSelf, "self", false, "Bind the session this runs in")
 	f.BoolVar(&backlogOrchestrateClear, "clear", false, "Unbind the group's orchestrator")
+	f.BoolVar(&backlogOrchestrateReplace, "replace", false, "With --self, take the group over from the session that orchestrates it")
 	f.StringVar(&backlogOrchestrateHandoffFile, "handoff-file", "", "With --self, a `path` to notes for a session that replaces this one, or - for stdin")
 	BacklogCmd.AddCommand(backlogOrchestrateCmd)
 }

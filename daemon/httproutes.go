@@ -530,7 +530,7 @@ var httpRoutes = []HTTPRoute{
 	{
 		Method:      http.MethodPost,
 		Path:        "/v1/GetBacklog",
-		Description: "Read a project's backlog in tree order, with each item's derived state and reason and the runner's state and slots.",
+		Description: "Read a project's backlog in tree order, with each item's derived state and reason, the runner's state and slots, and a top-level orchestrators map by group id: each orchestrator's session, title, session state and pending event count.",
 		requestType: reflect.TypeOf(GetBacklogRequest{}),
 		handler:     func(cs *controlServer) http.HandlerFunc { return rpcHandler(cs.GetBacklog) },
 	},

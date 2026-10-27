@@ -37,13 +37,27 @@ type SetOrchestratorRequest struct {
 	SessionID string `json:"session_id,omitempty"`
 	// Clear unbinds the group; it cannot go with SessionID.
 	Clear bool `json:"clear,omitempty"`
+	// Replace takes the group over from another session.
+	Replace bool `json:"replace,omitempty"`
+	// Handoff, when set, also stores notes for a replacement session.
+	Handoff *string `json:"handoff,omitempty"`
 }
 
+// What a bind did to a group's orchestrator.
+const (
+	OrchestratorBound    = "bound"
+	OrchestratorReplaced = "replaced"
+)
+
 // OrchestratorResponse is a group and its orchestrator; Orchestrator is nil
-// when the group has none.
+// when the group has none. Change is OrchestratorBound or
+// OrchestratorReplaced when the bind changed the session, and Previous names
+// the session it replaced.
 type OrchestratorResponse struct {
 	ID           int               `json:"id"`
 	Orchestrator *OrchestratorView `json:"orchestrator"`
+	Change       string            `json:"change,omitempty"`
+	Previous     string            `json:"previous_session_id,omitempty"`
 }
 
 type SetOrchestratorHandoffRequest struct {
@@ -65,13 +79,14 @@ type OrchestratorView struct {
 	Handoff   string    `json:"handoff,omitempty"`
 }
 
-// OrchestratorBoundEvent is the payload of a backlog.orchestrator.bound
-// event.
-type OrchestratorBoundEvent struct {
+// OrchestratorEvent is the payload of a backlog.orchestrator.bound or
+// backlog.orchestrator.replaced event.
+type OrchestratorEvent struct {
 	RepoID    string `json:"repo_id"`
 	ID        int    `json:"id"`
 	SessionID string `json:"session_id"`
 	Title     string `json:"title"`
+	Previous  string `json:"previous_session_id,omitempty"`
 }
 
 func (s *Service) orchestratorView(repoID string, o *Orchestrator) *OrchestratorView {
@@ -117,11 +132,62 @@ func (s *Service) newOrchestrator(p *project, sessionID string) (Orchestrator, e
 	return Orchestrator{SessionID: sessionID, Title: info.Title, Program: info.Program}, nil
 }
 
-func (s *Service) bind(b *Backlog, id int, o Orchestrator) error {
+type bindResult struct {
+	change   string
+	previous string
+	handoff  bool
+}
+
+// bind makes o's session the orchestrator of group id. A group bound to
+// another session is refused unless replace; a repeat bind of the same
+// session changes nothing. A non-nil handoff is stored in the same write.
+func (s *Service) bind(b *Backlog, id int, o Orchestrator, replace bool, handoff *string) (bindResult, error) {
+	var r bindResult
 	if b.ItemForSession(o.SessionID) != nil {
-		return ErrOrchestrateFromItemSession
+		return r, ErrOrchestrateFromItemSession
 	}
-	return b.BindOrchestrator(id, o, s.now())
+	it, err := b.get(id)
+	if err != nil {
+		return r, err
+	}
+	prev := it.Orchestrator
+	switch {
+	case prev != nil && prev.SessionID == o.SessionID:
+	case prev != nil && !replace:
+		return r, fmt.Errorf("%s is orchestrated by session %q; pass --replace to take it over", FormatID(id), prev.SessionID)
+	default:
+		if err := b.BindOrchestrator(id, o, s.now()); err != nil {
+			return r, err
+		}
+		r.change = OrchestratorBound
+		if prev != nil {
+			r.change, r.previous = OrchestratorReplaced, prev.SessionID
+		}
+	}
+	if handoff != nil {
+		if _, err := b.SetOrchestratorHandoff(o.SessionID, *handoff, s.now()); err != nil {
+			return r, err
+		}
+		r.handoff = true
+	}
+	return r, nil
+}
+
+func (s *Service) clear(b *Backlog, id int) error {
+	if _, err := b.get(id); err != nil {
+		return err
+	}
+	if !b.isGroup(id) {
+		return fmt.Errorf("%s is not a top-level parent; only groups have an orchestrator — clear its group, %s", FormatID(id), FormatID(b.rootOf(id)))
+	}
+	prev, err := b.ClearOrchestrator(id, s.now())
+	if err != nil {
+		return err
+	}
+	if prev == nil {
+		return errNoChange
+	}
+	return nil
 }
 
 // SetOrchestrator binds a session to a group as its orchestrator, or with
@@ -133,24 +199,32 @@ func (s *Service) SetOrchestrator(req SetOrchestratorRequest) (*OrchestratorResp
 	}
 	var o Orchestrator
 	switch {
-	case req.Clear && req.SessionID != "":
-		return nil, errors.New("clear unbinds the group; it cannot go with session_id")
+	case req.Clear && (req.SessionID != "" || req.Replace || req.Handoff != nil):
+		return nil, errors.New("clear unbinds the group; it cannot go with session_id, replace or handoff")
 	case !req.Clear:
 		if o, err = s.newOrchestrator(p, req.SessionID); err != nil {
 			return nil, err
 		}
 	}
+	var r bindResult
 	b, err := s.update(p, func(b *Backlog) ([]int, error) {
 		if req.Clear {
-			_, err := b.ClearOrchestrator(req.ID, s.now())
-			return []int{req.ID}, err
+			return []int{req.ID}, s.clear(b, req.ID)
 		}
-		return []int{req.ID}, s.bind(b, req.ID, o)
+		var err error
+		if r, err = s.bind(b, req.ID, o, req.Replace, req.Handoff); err != nil {
+			return nil, err
+		}
+		if r.change == "" && !r.handoff {
+			return nil, errNoChange
+		}
+		return []int{req.ID}, nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &OrchestratorResponse{ID: req.ID, Orchestrator: s.orchestratorView(p.id, b.Item(req.ID).Orchestrator)}, nil
+	return &OrchestratorResponse{ID: req.ID, Orchestrator: s.orchestratorView(p.id, b.Item(req.ID).Orchestrator),
+		Change: r.change, Previous: r.previous}, nil
 }
 
 // SetOrchestratorHandoff stores the notes for a session that replaces the

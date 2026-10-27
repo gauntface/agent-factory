@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func orchService(t *testing.T) (*Service, *testHost) {
@@ -109,7 +110,8 @@ func TestAddBatchOrchestrate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if o := out.Orchestrator; o == nil || o.ID != 1 || o.Orchestrator.SessionID != "o2" || o.Orchestrator.State != SessionArchived {
+	if o := out.Orchestrator; o == nil || o.ID != 1 || o.Orchestrator.SessionID != "o2" || o.Orchestrator.State != SessionArchived ||
+		o.Change != OrchestratorBound || o.Previous != "" {
 		t.Fatalf("%+v", out.Orchestrator)
 	}
 	b, _ := Load(repoID)
@@ -127,9 +129,18 @@ func TestAddBatchOrchestrate(t *testing.T) {
 	}
 
 	h.reset()
-	out, err = s.Add(AddRequest{RepoID: repoID, Orchestrator: "o1", Items: []ItemInput{{Key: "c", Title: "C", Parent: Ref{ID: 1}}}})
-	if err != nil || out.Orchestrator == nil || out.Orchestrator.ID != 1 || out.Orchestrator.Orchestrator.SessionID != "o1" {
-		t.Fatalf("%+v %v", out, err)
+	_, err = s.Add(AddRequest{RepoID: repoID, Orchestrator: "o1", Items: []ItemInput{{Key: "c", Title: "C", Parent: Ref{ID: 1}}}})
+	if err == nil || err.Error() != `B-1 is orchestrated by session "o2"; pass --replace to take it over` {
+		t.Fatal(err)
+	}
+	if len(h.changed) != 0 {
+		t.Fatalf("refused add changed %v", h.changed)
+	}
+	out, err = s.Add(AddRequest{RepoID: repoID, Orchestrator: "o1", ReplaceOrchestrator: true,
+		Items: []ItemInput{{Key: "c", Title: "C", Parent: Ref{ID: 1}}}})
+	if err != nil || out.Orchestrator == nil || out.Orchestrator.ID != 1 || out.Orchestrator.Orchestrator.SessionID != "o1" ||
+		out.Orchestrator.Change != OrchestratorReplaced || out.Orchestrator.Previous != "o2" {
+		t.Fatalf("%+v %v", out.Orchestrator, err)
 	}
 	if len(out.Items) != 1 || out.Items[0].ID != 4 {
 		t.Fatalf("items %+v", out.Items)
@@ -184,10 +195,82 @@ func TestSetOrchestratorHandoff(t *testing.T) {
 	if err != nil || out.ID != 1 || out.Orchestrator.Handoff != "notes" {
 		t.Fatalf("%+v %v", out, err)
 	}
-	if _, err := s.SetOrchestrator(SetOrchestratorRequest{RepoID: repoID, ID: 1, SessionID: "o2"}); err != nil {
+	if _, err := s.SetOrchestrator(SetOrchestratorRequest{RepoID: repoID, ID: 1, SessionID: "o2", Replace: true}); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := Load(repoID); b.Item(1).Orchestrator.Handoff != "notes" {
 		t.Fatal("replacement lost the handoff")
+	}
+}
+
+func TestSetOrchestratorReplaceAndRepeat(t *testing.T) {
+	s, h := orchService(t)
+	mustAdd(t, s, ItemInput{Key: "g", Title: "G"}, ItemInput{Key: "a", Title: "A", Parent: Ref{Key: "g"}})
+	out, err := s.SetOrchestrator(SetOrchestratorRequest{RepoID: repoID, ID: 1, SessionID: "o1"})
+	if err != nil || out.Change != OrchestratorBound {
+		t.Fatalf("%+v %v", out, err)
+	}
+	bound := out.Orchestrator.BoundAt
+	s.now = func() time.Time { return bound.Add(time.Hour) }
+
+	h.reset()
+	out, err = s.SetOrchestrator(SetOrchestratorRequest{RepoID: repoID, ID: 1, SessionID: "o1"})
+	if err != nil || out.Change != "" || !out.Orchestrator.BoundAt.Equal(bound) {
+		t.Fatalf("repeat bind: %+v %v", out, err)
+	}
+	if len(h.changed) != 0 {
+		t.Fatalf("repeat bind changed %v", h.changed)
+	}
+
+	_, err = s.SetOrchestrator(SetOrchestratorRequest{RepoID: repoID, ID: 1, SessionID: "o2"})
+	if err == nil || err.Error() != `B-1 is orchestrated by session "o1"; pass --replace to take it over` {
+		t.Fatal(err)
+	}
+	out, err = s.SetOrchestrator(SetOrchestratorRequest{RepoID: repoID, ID: 1, SessionID: "o2", Replace: true})
+	if err != nil || out.Change != OrchestratorReplaced || out.Previous != "o1" || out.Orchestrator.SessionID != "o2" {
+		t.Fatalf("%+v %v", out, err)
+	}
+}
+
+func TestSetOrchestratorWithHandoffIsOneWrite(t *testing.T) {
+	s, h := orchService(t)
+	mustAdd(t, s, ItemInput{Key: "g", Title: "G"}, ItemInput{Key: "a", Title: "A", Parent: Ref{Key: "g"}})
+	h.reset()
+	big := strings.Repeat("x", MaxHandoffBytes+1)
+	if _, err := s.SetOrchestrator(SetOrchestratorRequest{RepoID: repoID, ID: 1, SessionID: "o1", Handoff: &big}); err == nil {
+		t.Fatal("too big handoff accepted")
+	}
+	if b, _ := Load(repoID); b.Item(1).Orchestrator != nil || len(h.changed) != 0 {
+		t.Fatal("refused handoff left the bind")
+	}
+	notes := "notes"
+	out, err := s.SetOrchestrator(SetOrchestratorRequest{RepoID: repoID, ID: 1, SessionID: "o1", Handoff: &notes})
+	if err != nil || out.Change != OrchestratorBound || out.Orchestrator.Handoff != "notes" || len(h.changed) != 1 {
+		t.Fatalf("%+v %v %v", out, err, h.changed)
+	}
+	more := "more"
+	out, err = s.SetOrchestrator(SetOrchestratorRequest{RepoID: repoID, ID: 1, SessionID: "o1", Handoff: &more})
+	if err != nil || out.Change != "" || out.Orchestrator.Handoff != "more" || len(h.changed) != 2 {
+		t.Fatalf("%+v %v %v", out, err, h.changed)
+	}
+}
+
+func TestClearOrchestratorRules(t *testing.T) {
+	s, h := orchService(t)
+	mustAdd(t, s, ItemInput{Key: "g", Title: "G"}, ItemInput{Key: "a", Title: "A", Parent: Ref{Key: "g"}})
+	h.reset()
+	_, err := s.SetOrchestrator(SetOrchestratorRequest{RepoID: repoID, ID: 2, Clear: true})
+	if err == nil || err.Error() != "B-2 is not a top-level parent; only groups have an orchestrator — clear its group, B-1" {
+		t.Fatal(err)
+	}
+	out, err := s.SetOrchestrator(SetOrchestratorRequest{RepoID: repoID, ID: 1, Clear: true})
+	if err != nil || out.Orchestrator != nil || out.Change != "" {
+		t.Fatalf("%+v %v", out, err)
+	}
+	if len(h.changed) != 0 {
+		t.Fatalf("clear of an unbound group changed %v", h.changed)
+	}
+	if _, err := s.SetOrchestrator(SetOrchestratorRequest{RepoID: repoID, ID: 1, Clear: true, Replace: true}); err == nil {
+		t.Fatal("clear with replace accepted")
 	}
 }
