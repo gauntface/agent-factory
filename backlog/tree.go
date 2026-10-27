@@ -80,6 +80,20 @@ func (m Move) count() int {
 
 // Move reorders the backlog. On error b is unchanged.
 func (b *Backlog) Move(id int, to Move, now time.Time) error {
+	c := b.clone()
+	if err := c.move(id, to, now); err != nil {
+		return err
+	}
+	if err := c.checkOrchestrators(); err != nil {
+		return err
+	}
+	*b = *c
+	return nil
+}
+
+// move is Move without the orchestrator check, for callers that make many
+// moves and check the end state once. On error b is unchanged.
+func (b *Backlog) move(id int, to Move, now time.Time) error {
 	if to.count() != 1 {
 		return errors.New("move needs exactly one of --before, --after, --top, --bottom, --into")
 	}

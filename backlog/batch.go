@@ -175,6 +175,9 @@ func (b *Backlog) AddBatch(in Batch, now time.Time) (map[string]int, error) {
 	if err := c.checkCycles(); err != nil {
 		return nil, err
 	}
+	if err := c.checkOrchestrators(); err != nil {
+		return nil, err
+	}
 	*b = *c
 	return ids, nil
 }
@@ -198,7 +201,7 @@ func (b *Backlog) placeBatch(ordered, parents []int, now time.Time) error {
 			it := b.Item(id)
 			if o < 0 || it.Parent != p {
 				mv := Move{Into: p, Bottom: p == 0}
-				if err := b.Move(id, mv, now); err != nil {
+				if err := b.move(id, mv, now); err != nil {
 					return err
 				}
 			}
