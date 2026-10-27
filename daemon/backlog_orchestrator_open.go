@@ -38,7 +38,7 @@ func (m *Manager) OpenBacklogOrchestrator(req backlog.OpenOrchestratorRequest) (
 		return backlog.OpenOrchestratorResponse{}, err
 	}
 	if !m.backlog.beginOrchestrate(ref.ID, req.ID) {
-		return backlog.OpenOrchestratorResponse{}, fmt.Errorf("af is sending events to the effort session of %s; try again in a moment", backlog.FormatID(req.ID))
+		return backlog.OpenOrchestratorResponse{}, fmt.Errorf("af is already working on the effort session of %s; try again in a moment", backlog.FormatID(req.ID))
 	}
 	done := make(chan orchOpenResult, 1)
 	if !m.launchBackgroundMutation(func(stop <-chan struct{}) {
@@ -144,12 +144,16 @@ func (m *Manager) startOrchestrator(stop <-chan struct{}, ref backlog.ProjectRef
 	}
 	next := backlog.Orchestrator{SessionID: data.ID, Title: data.Title, Program: program}
 	svc := m.backlogService()
-	_, err = svc.Apply(ref, func(b *backlog.Backlog) ([]int, error) {
+	err = m.applyRetryingBusy(stop, ref, func(b *backlog.Backlog) ([]int, error) {
 		if prev != nil {
 			return []int{group}, b.OrchReplaced(group, prev.SessionID, next, nil, svc.Now())
 		}
 		return []int{group}, b.BindNewOrchestrator(group, next, svc.Now())
 	})
+	if errors.Is(err, backlog.ErrBusy) {
+		m.warn().Printf("bind effort session %q to %s: %v", data.Title, backlog.FormatID(group), err)
+		return none, fmt.Errorf("af started effort session %q but stopped before it could bind it to %s: %w", data.Title, backlog.FormatID(group), err)
+	}
 	if err != nil {
 		if killed, kerr := killOrchestratorSession(m, KillSessionRequest{ID: data.ID, Title: data.Title, RepoID: ref.ID}); kerr != nil {
 			m.warn().Printf("kill unbound effort session %q: %v", data.Title, kerr)

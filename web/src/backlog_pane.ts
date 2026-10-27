@@ -178,6 +178,7 @@ export class BacklogPane {
       return;
     }
     if (root !== this.root) {
+      this.effort.stopWaiting();
       this.closePanel();
       this.selected = this.want?.root === root ? this.want.id : null;
       this.focusPanel = this.selected !== null;
@@ -887,6 +888,7 @@ export class BacklogPane {
           if (v && here()) void this.effort.open(root, v, id);
         },
         unbind: (id: number) => void this.effort.unbind(root, id),
+        start: (v: BacklogView, g: Item) => this.effort.button(root, v, g),
       },
     };
   }

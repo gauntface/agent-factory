@@ -7,6 +7,7 @@ import type { BacklogData } from "./backlog_data.js";
 import { inbox, inboxNotes } from "./backlog_groups.js";
 import { type BacklogView, type Item, type Message, listRows, needsYouCount } from "./backlog_model.js";
 import { BacklogPane, type BacklogHost } from "./backlog_pane.js";
+import { WAIT_LISTED_MS } from "./backlog_effort.js";
 import type { SessionData } from "./types.js";
 
 let dom: ReturnType<typeof installFakeDom>;
@@ -133,11 +134,15 @@ test("Start effort session opens the session af starts once it is listed", async
   await settle();
   assert.equal(effortButton(pane).textContent, "Starting effort session…");
   assert.equal(effortButton(pane).disabled, true);
+  assert.equal(effortButton(pane).getAttribute("aria-label"), "Starting effort session for B-1");
+  assert.equal(effortButton(pane).getAttribute("aria-busy"), "true");
   release();
   await settle();
 
   assert.deepEqual(calls.find((c) => c.method === "OpenBacklogOrchestrator")?.body, { repo_path: "/a", id: 1 });
   assert.equal(effortButton(pane).textContent, "Start effort session");
+  assert.equal(effortButton(pane).getAttribute("aria-busy"), null);
+  assert.equal(effortButton(pane).getAttribute("aria-label"), "Start effort session for B-1");
   assert.deepEqual(h.opened, [], "not listed yet");
   pane.update(d, "/a", [session("n1")]);
   assert.deepEqual(h.opened, ["n1"]);
@@ -207,4 +212,62 @@ test("the Inbox shows an effort session's done note with its pull request", asyn
   assert.match(card.textContent ?? "", /marked this done/);
   assert.equal(card.querySelector("a")?.href, "https://example.test/pr/1");
   assert.equal(el(pane).querySelector(".af-backlog-empty")?.hidden, true);
+});
+
+async function startUnlisted(h: ReturnType<typeof host>): Promise<{ pane: BacklogPane; d: BacklogData }> {
+  const pane = mount(h);
+  const d = data(view([item(1), item(2, { parent: 1 })]));
+  pane.update(d, "/a", []);
+  replies.OpenBacklogOrchestrator = { session_id: "n1", title: "effort B-1", change: "started" };
+  effortButton(pane).click();
+  await settle();
+  return { pane, d };
+}
+
+test("a session listed after the wait window does not steal focus", async () => {
+  const h = host();
+  const { pane, d } = await startUnlisted(h);
+  mock.timers.tick(WAIT_LISTED_MS);
+  pane.update(d, "/a", [session("n1")]);
+  assert.deepEqual(h.opened, []);
+});
+
+test("a session listed within the wait window opens", async () => {
+  const h = host();
+  const { pane, d } = await startUnlisted(h);
+  mock.timers.tick(WAIT_LISTED_MS - 1);
+  pane.update(d, "/a", [session("n1")]);
+  assert.deepEqual(h.opened, ["n1"]);
+});
+
+test("moving to another project stops waiting for the session", async () => {
+  const h = host();
+  const { pane, d } = await startUnlisted(h);
+  const other: BacklogData = { ...d, views: new Map([...d.views, ["/b", view([])]]) };
+  pane.update(other, "/b", []);
+  pane.update(other, "/b", [session("n1")]);
+  assert.deepEqual(h.opened, []);
+});
+
+test("the group panel offers Start effort session to a keyboard user when the group has none", async () => {
+  const pane = mount(host());
+  pane.update(data(view([item(1), item(2, { parent: 1 })])), "/a", []);
+  el(pane).querySelectorAll("button").find((b) => b.textContent === "Details")!.click();
+  await settle();
+  const start = el(pane).querySelector(".af-backlog-panel .af-backlog-orchestrator .af-backlog-effort")!;
+  assert.equal(start.textContent, "Start effort session");
+  assert.equal(start.getAttribute("tabindex"), null, "reachable by Tab");
+  start.click();
+  await settle();
+  assert.deepEqual(calls.find((c) => c.method === "OpenBacklogOrchestrator")?.body, { repo_path: "/a", id: 1 });
+});
+
+test("an archived group with no effort session offers none in the panel", async () => {
+  const pane = mount(host());
+  pane.update(data(view([item(1, { archived: true }), item(2, { parent: 1 })])), "/a", []);
+  el(pane).querySelectorAll("button").find((b) => b.textContent === "Show archived")!.click();
+  el(pane).querySelectorAll("button").find((b) => b.textContent === "Details")!.click();
+  await settle();
+  assert.ok(el(pane).querySelector(".af-backlog-panel"));
+  assert.equal(el(pane).querySelector(".af-backlog-orchestrator"), null);
 });

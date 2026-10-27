@@ -200,11 +200,18 @@ func (m *Manager) replaceOrchestrator(stop <-chan struct{}, repoID string, b *ba
 // the session for the next pass to find unbound.
 func (m *Manager) bindReplacement(stop <-chan struct{}, repoID string, d backlog.OrchDelivery, next backlog.Orchestrator) error {
 	svc := m.backlogService()
+	return m.applyRetryingBusy(stop, backlog.ProjectRef{ID: repoID}, func(b *backlog.Backlog) ([]int, error) {
+		return []int{d.Group}, b.OrchReplaced(d.Group, d.SessionID, next, d.Events, svc.Now())
+	})
+}
+
+// applyRetryingBusy applies fn, retrying a busy backlog with backoff until the
+// write lands or stop closes.
+func (m *Manager) applyRetryingBusy(stop <-chan struct{}, ref backlog.ProjectRef, fn func(*backlog.Backlog) ([]int, error)) error {
+	svc := m.backlogService()
 	delay := finishStartBackoff
 	for {
-		_, err := svc.Apply(backlog.ProjectRef{ID: repoID}, func(b *backlog.Backlog) ([]int, error) {
-			return []int{d.Group}, b.OrchReplaced(d.Group, d.SessionID, next, d.Events, svc.Now())
-		})
+		_, err := svc.Apply(ref, fn)
 		if err == nil || !errors.Is(err, backlog.ErrBusy) {
 			return err
 		}

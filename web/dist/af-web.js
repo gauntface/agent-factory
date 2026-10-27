@@ -17250,6 +17250,7 @@ function routedTag(view, it) {
   if (view.states[String(it.id)]?.reason === WITH_EFFORT_SESSION) return [];
   return [h("span", { class: "af-backlog-tag af-backlog-effort-tag" }, WITH_EFFORT_SESSION)];
 }
+var WAIT_LISTED_MS = 3e4;
 var EffortSessions = class {
   constructor(host, rerender2) {
     this.host = host;
@@ -17257,27 +17258,40 @@ var EffortSessions = class {
   }
   busy = /* @__PURE__ */ new Map();
   waiting = null;
+  waitTimer = null;
   sessions = [];
   sessionsChanged(sessions) {
     this.sessions = sessions;
     const id = this.waiting;
     if (id && sessions.some((s) => s.id === id)) {
-      this.waiting = null;
+      this.stopWaiting();
       this.host.openSession(id);
     }
+  }
+  stopWaiting() {
+    this.waiting = null;
+    if (this.waitTimer !== null) clearTimeout(this.waitTimer);
+    this.waitTimer = null;
+  }
+  waitFor(id) {
+    this.stopWaiting();
+    this.waiting = id;
+    this.waitTimer = setTimeout(() => this.stopWaiting(), WAIT_LISTED_MS);
   }
   button(root2, view, group) {
     const progress2 = this.busy.get(`${root2}:${group.id}`);
     const bound = !!group.orchestrator;
+    const label = progress2 ?? effortLabel(view, group.id);
     const b = h(
       "button",
       { type: "button", class: "af-ghost af-backlog-effort" },
-      progress2 ?? effortLabel(view, group.id),
+      label,
       ...progress2 || !bound ? [] : [icon("external-link")]
     );
     b.dataset.action = "effort";
     b.disabled = progress2 !== void 0;
-    b.setAttribute("aria-label", `${progress2 ?? effortLabel(view, group.id)} for ${formatID(group.id)}`);
+    b.setAttribute("aria-label", `${label.replace(/…$/, "")} for ${formatID(group.id)}`);
+    if (progress2) b.setAttribute("aria-busy", "true");
     b.addEventListener("click", () => void this.open(root2, view, group.id));
     return b;
   }
@@ -17285,13 +17299,13 @@ var EffortSessions = class {
     const key = `${root2}:${group}`;
     const token2 = this.host.token();
     if (token2 === null || this.busy.has(key)) return;
-    this.waiting = null;
+    this.stopWaiting();
     this.busy.set(key, effortProgress(view, group));
     this.rerender();
     try {
       const r = await openOrchestrator(root2, group, token2);
       if (this.sessions.some((s) => s.id === r.session_id)) this.host.openSession(r.session_id);
-      else this.waiting = r.session_id;
+      else this.waitFor(r.session_id);
     } catch (e) {
       this.host.notify(errorText(e));
     } finally {
@@ -17348,7 +17362,15 @@ function section(title, ...children) {
 }
 function orchestratorSection(view, group, actions2) {
   const o = orchestratorOf(view, group.id);
-  if (!o) return null;
+  if (!o) {
+    if (group.archived) return null;
+    return section("Orchestrator", h(
+      "div",
+      { class: "af-backlog-dep af-backlog-orchestrator" },
+      h("span", { class: "af-backlog-reason" }, "No effort session"),
+      actions2.start(view, group)
+    ));
+  }
   const open = h("button", { type: "button", class: "af-backlog-item-link" }, o.title || o.session_id);
   open.setAttribute("aria-label", `Open effort session ${o.title || o.session_id}`);
   open.addEventListener("click", () => actions2.open(group.id));
@@ -18708,6 +18730,7 @@ var BacklogPane = class {
       return;
     }
     if (root2 !== this.root) {
+      this.effort.stopWaiting();
       this.closePanel();
       this.selected = this.want?.root === root2 ? this.want.id : null;
       this.focusPanel = this.selected !== null;
@@ -19431,7 +19454,8 @@ ${id}`;
           const v = this.view();
           if (v && here()) void this.effort.open(root2, v, id);
         },
-        unbind: (id) => void this.effort.unbind(root2, id)
+        unbind: (id) => void this.effort.unbind(root2, id),
+        start: (v, g) => this.effort.button(root2, v, g)
       }
     };
   }

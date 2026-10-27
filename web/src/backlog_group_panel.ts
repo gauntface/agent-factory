@@ -49,13 +49,20 @@ function section(title: string, ...children: Node[]): HTMLElement {
 export interface OrchestratorActions {
   open(group: number): void;
   unbind(group: number): void;
+  /** The Start effort session button, as the card header shows it. */
+  start(view: BacklogView, group: Item): HTMLButtonElement;
 }
 
 /** The group's effort session: its title, which opens it, its state, the
- *  events waiting for it, and Unbind. Nothing when the group has none. */
+ *  events waiting for it, and Unbind. A group with none offers Start effort
+ *  session, unless it is archived. */
 export function orchestratorSection(view: BacklogView, group: Item, actions: OrchestratorActions): HTMLElement | null {
   const o = orchestratorOf(view, group.id);
-  if (!o) return null;
+  if (!o) {
+    if (group.archived) return null;
+    return section("Orchestrator", h("div", { class: "af-backlog-dep af-backlog-orchestrator" },
+      h("span", { class: "af-backlog-reason" }, "No effort session"), actions.start(view, group)));
+  }
   const open = h("button", { type: "button", class: "af-backlog-item-link" }, o.title || o.session_id);
   open.setAttribute("aria-label", `Open effort session ${o.title || o.session_id}`);
   open.addEventListener("click", () => actions.open(group.id));

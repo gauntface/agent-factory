@@ -119,5 +119,32 @@ func TestOpenOrchestratorRefusedDuringADelivery(t *testing.T) {
 	defer m.backlog.endOrchestrate(repoID, 2)
 
 	_, err := openOrch(m, repoID, 2)
-	require.ErrorContains(t, err, "try again in a moment")
+	require.EqualError(t, err, "af is already working on the effort session of B-2; try again in a moment")
+}
+
+func TestOpenOrchestratorKillsASessionItCouldNotBind(t *testing.T) {
+	m, repoID := orchestratedGroup(t)
+	svc := m.backlogService()
+	_, err := svc.SetOrchestrator(backlog.SetOrchestratorRequest{RepoID: repoID, ID: 2, Clear: true})
+	require.NoError(t, err)
+	prev := createBacklogSession
+	createBacklogSession = func(*Manager, context.Context, CreateSessionRequest) (session.InstanceData, error) {
+		_, err := svc.Apply(backlog.ProjectRef{ID: repoID}, func(b *backlog.Backlog) ([]int, error) {
+			return []int{2}, b.BindOrchestrator(2, backlog.Orchestrator{SessionID: "other", Title: "other"}, svc.Now())
+		})
+		require.NoError(t, err)
+		return session.InstanceData{ID: "n1", Title: "effort B-2 Effort"}, nil
+	}
+	prevKill := killOrchestratorSession
+	var killed []KillSessionRequest
+	killOrchestratorSession = func(_ *Manager, req KillSessionRequest) (session.InstanceData, error) {
+		killed = append(killed, req)
+		return session.InstanceData{ID: req.ID}, nil
+	}
+	t.Cleanup(func() { createBacklogSession, killOrchestratorSession = prev, prevKill })
+
+	_, err = openOrch(m, repoID, 2)
+	require.ErrorContains(t, err, `"other" started orchestrating B-2 meanwhile`)
+	require.Equal(t, []KillSessionRequest{{ID: "n1", Title: "effort B-2 Effort", RepoID: repoID}}, killed)
+	require.Equal(t, "other", orchOf(t, repoID).SessionID)
 }
