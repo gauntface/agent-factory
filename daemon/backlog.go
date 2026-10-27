@@ -200,11 +200,17 @@ func (s *controlServer) AddBacklogItems(req AddBacklogItemsRequest, resp *AddBac
 	if err := s.requireStateMutationAdmission(); err != nil {
 		return err
 	}
-	out, err := s.manager.backlogService().Add(req)
+	svc := s.manager.backlogService()
+	out, err := svc.Add(req)
 	if err != nil {
 		return err
 	}
 	*resp = *out
+	if out.Orchestrator != nil && out.Orchestrator.Change != "" {
+		if ref, err := svc.Resolve(req.RepoID, req.RepoPath); err == nil {
+			s.manager.publishOrchestratorChange(ref.ID, out.Orchestrator)
+		}
+	}
 	return nil
 }
 

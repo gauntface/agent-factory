@@ -25,6 +25,12 @@ type testHost struct {
 	// answerRuns are the answers that started a new run.
 	answerRuns []AnswerRunRequest
 	usage      planusage.Usage
+	sessions   map[string]SessionInfo
+}
+
+func (h *testHost) Session(_, sessionID string) (SessionInfo, bool) {
+	info, ok := h.sessions[sessionID]
+	return info, ok
 }
 
 func (h *testHost) SetAttention(_, sessionID, reason string) {
