@@ -67,7 +67,9 @@ func (s *Service) ask(p *project, req PostMessageRequest) (*MessageResponse, err
 			return nil, err
 		}
 		msg = *m
-		s.host.SetAttention(p.id, req.SessionID, b.OpenQuestionText(req.ID))
+		if text := b.UserQuestionText(req.ID); text != "" {
+			s.host.SetAttention(p.id, req.SessionID, text)
+		}
 		return []int{req.ID}, nil
 	})
 	if err != nil {
@@ -122,8 +124,8 @@ func (s *Service) answer(p *project, req PostMessageRequest) (*MessageResponse, 
 			return nil, fmt.Errorf("%s changed while answering; retry", FormatID(req.ID))
 		}
 		next := ""
-		if out.Next != nil && target == TargetLive {
-			next = out.Next.Text
+		if target == TargetLive {
+			next = b.UserQuestionText(req.ID)
 		}
 		s.host.SetAttention(p.id, sessionID, next)
 		it := b.Item(req.ID)

@@ -138,7 +138,8 @@ var backlogDoneCmd = &cobra.Command{
 	Use:   "done <id> | done --self [--pr <url>]",
 	Short: "Mark an item done after review, or, from an item session, send it to review",
 	Long: "With an id, mark the item done. Items that wait on it can then start. Open questions " +
-		"on it close; its session stays.\n\n" +
+		"on it close; its session stays. When the session this runs in orchestrates the item's " +
+		"group, af adds a note to the user's Inbox.\n\n" +
 		"With --self, run from inside an item session: the agent's work is finished and the " +
 		"item goes to review for the user. --pr stores the pull request link.",
 	Args: cobra.MaximumNArgs(1),
@@ -172,8 +173,12 @@ var backlogDoneCmd = &cobra.Command{
 			if err != nil {
 				return nil, err
 			}
+			caller := ""
+			if s, err := backlogSelfSession(); err == nil && s != nil {
+				caller = s.ID
+			}
 			return setBacklogStatus(daemon.SetBacklogItemStatusRequest{RepoID: t.repoID, RepoPath: t.repoPath,
-				ID: id, Status: backlog.StatusDone})
+				ID: id, Status: backlog.StatusDone, CallerSessionID: caller})
 		})
 	},
 }
@@ -239,7 +244,8 @@ var backlogAskCmd = &cobra.Command{
 	Short: "From an item session, ask the user a question",
 	Long: "Run from inside an item session: add a question to the item's thread and set the " +
 		"session's attention to it. The item shows Needs you until the user answers. An item " +
-		"has one open question at a time.\n\n" +
+		"has one open question at a time. In a group with an orchestrator, the question goes to " +
+		"the effort session instead; it answers, or escalates the question to the user.\n\n" +
 		"With --then archive (the default), af archives the session when this turn ends, so " +
 		"end your turn at once. The answer restores the session and arrives in it. With " +
 		"--then wait, the session stays live until the answer arrives.\n\n" +

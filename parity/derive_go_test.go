@@ -70,6 +70,7 @@ var auditedRequests = map[string]reflect.Type{
 	"RunBacklogRequest":                    reflect.TypeOf(daemon.RunBacklogRequest{}),
 	"SetBacklogOrchestratorRequest":        reflect.TypeOf(daemon.SetBacklogOrchestratorRequest{}),
 	"SetBacklogOrchestratorHandoffRequest": reflect.TypeOf(daemon.SetBacklogOrchestratorHandoffRequest{}),
+	"EscalateBacklogQuestionRequest":       reflect.TypeOf(daemon.EscalateBacklogQuestionRequest{}),
 	"AttachProposalRequest":                reflect.TypeOf(daemon.AttachProposalRequest{}),
 	"DetachProposalRequest":                reflect.TypeOf(daemon.DetachProposalRequest{}),
 	"ListProposalsRequest":                 reflect.TypeOf(daemon.ListProposalsRequest{}),

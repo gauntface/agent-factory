@@ -270,3 +270,42 @@ func batchGroup(b *Backlog, ids map[string]int) (int, error) {
 	}
 	return order[0], nil
 }
+
+type EscalateRequest struct {
+	RepoID   string `json:"repo_id,omitempty"`
+	RepoPath string `json:"repo_path,omitempty"`
+	ID       int    `json:"id"`
+	// Note is the orchestrator's note for the user, added to the thread.
+	Note string `json:"note,omitempty"`
+}
+
+// EscalateResponse is the item and the question now with the user.
+type EscalateResponse struct {
+	ID       int     `json:"id"`
+	Question Message `json:"question"`
+}
+
+// Escalate sends an item's question from the group's orchestrator to the
+// user: it shows in the Inbox and on the item session's attention.
+func (s *Service) Escalate(req EscalateRequest) (*EscalateResponse, error) {
+	p, err := s.resolve(req.RepoID, req.RepoPath)
+	if err != nil {
+		return nil, err
+	}
+	var q Message
+	_, err = s.update(p, func(b *Backlog) ([]int, error) {
+		m, err := b.Escalate(req.ID, req.Note, s.now())
+		if err != nil {
+			return nil, err
+		}
+		q = *m
+		if last := b.Item(req.ID).lastRun(); last != nil && last.SessionID != "" {
+			s.host.SetAttention(p.id, last.SessionID, b.UserQuestionText(req.ID))
+		}
+		return []int{req.ID}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &EscalateResponse{ID: req.ID, Question: q}, nil
+}

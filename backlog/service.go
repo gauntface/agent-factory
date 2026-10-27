@@ -141,6 +141,14 @@ func (s *Service) update(p *project, fn func(*Backlog) ([]int, error)) (*Backlog
 			return err
 		}
 		if prev != nil {
+			for _, id := range b.escalateStranded(s.now()) {
+				if last := b.Item(id).lastRun(); last != nil && last.SessionID != "" {
+					s.host.SetAttention(p.id, last.SessionID, b.UserQuestionText(id))
+				}
+				if !slices.Contains(ids, id) {
+					ids = append(ids, id)
+				}
+			}
 			for _, g := range b.queueOrchChanges(prev, s.now()) {
 				if !slices.Contains(ids, g) {
 					ids = append(ids, g)
@@ -343,12 +351,19 @@ func (s *Service) SetItemStatus(req SetItemStatusRequest) (*ItemResponse, error)
 		} else if req.PR != "" {
 			return nil, errors.New("pr goes with session_id: only the agent's done sets it")
 		}
+		wasDone := false
+		if it := b.Item(req.ID); it != nil {
+			wasDone = it.Status == StatusDone
+		}
 		changed, err := b.SetStatus(req.ID, req.Status, by, runActive, s.now())
 		if err != nil {
 			return nil, err
 		}
 		if req.PR != "" {
 			b.Item(req.ID).PR = req.PR
+		}
+		if req.Status == StatusDone && !wasDone {
+			b.noteOrchestratorDone(req.ID, req.CallerSessionID, s.now())
 		}
 		still := b.questionSessions()
 		for id, sessionID := range asked {
