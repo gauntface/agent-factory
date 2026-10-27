@@ -95,7 +95,7 @@ func (m *Manager) deliverOrchestrator(stop <-chan struct{}, repoID string, group
 	prompt := b.OrchEventsPrompt(group, d.Events)
 	if backlogNeedsRestore(s) {
 		if !s.instance.AgentConversation().HasID() {
-			prompt = b.OrchStartPrompt(group, proposalDir(repoID, b.Item(group)), false, d.Events)
+			prompt = b.OrchStartPrompt(group, proposalDir(repoID, b.Item(group)), backlog.OrchRestarted, d.Events)
 		}
 		restored, err := restoreBacklogSession(m, RestoreSessionRequest{ID: d.SessionID, RepoID: repoID})
 		if err != nil {
@@ -155,7 +155,7 @@ func (m *Manager) replaceOrchestrator(stop <-chan struct{}, repoID string, b *ba
 		TitleBase: orchestratorTitleBase(g),
 		RepoPath:  root,
 		Program:   d.Program,
-		Prompt:    b.OrchStartPrompt(d.Group, proposalDir(repoID, g), true, d.Events),
+		Prompt:    b.OrchStartPrompt(d.Group, proposalDir(repoID, g), backlog.OrchReplacement, d.Events),
 		Backend:   string(session.BackendLocal),
 
 		OrchestratorTurn: true,
@@ -200,11 +200,18 @@ func (m *Manager) replaceOrchestrator(stop <-chan struct{}, repoID string, b *ba
 // the session for the next pass to find unbound.
 func (m *Manager) bindReplacement(stop <-chan struct{}, repoID string, d backlog.OrchDelivery, next backlog.Orchestrator) error {
 	svc := m.backlogService()
+	return m.applyRetryingBusy(stop, backlog.ProjectRef{ID: repoID}, func(b *backlog.Backlog) ([]int, error) {
+		return []int{d.Group}, b.OrchReplaced(d.Group, d.SessionID, next, d.Events, svc.Now())
+	})
+}
+
+// applyRetryingBusy applies fn, retrying a busy backlog with backoff until the
+// write lands or stop closes.
+func (m *Manager) applyRetryingBusy(stop <-chan struct{}, ref backlog.ProjectRef, fn func(*backlog.Backlog) ([]int, error)) error {
+	svc := m.backlogService()
 	delay := finishStartBackoff
 	for {
-		_, err := svc.Apply(backlog.ProjectRef{ID: repoID}, func(b *backlog.Backlog) ([]int, error) {
-			return []int{d.Group}, b.OrchReplaced(d.Group, d.SessionID, next, d.Events, svc.Now())
-		})
+		_, err := svc.Apply(ref, fn)
 		if err == nil || !errors.Is(err, backlog.ErrBusy) {
 			return err
 		}
