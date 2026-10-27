@@ -105,14 +105,41 @@ func (m *Manager) backlogSlotsUsed(repoID string) int {
 // edge that ended it: the marker went true→false and the session settled
 // Ready. A teardown that clears the marker lands elsewhere and fires nothing.
 func (m *Manager) noteBacklogRunEnd(repoID string, instance *session.Instance, wasActive bool) {
-	if !wasActive || instance.BacklogItem == 0 || instance.BacklogRunActive() ||
+	if !wasActive || instance.BacklogRunActive() ||
 		instance.StartupStateUnknown() || instance.GetLiveness() != session.LiveReady {
 		return
 	}
 	sessionID := instance.ID
+	if instance.BacklogItem == 0 {
+		m.launchBackgroundMutation(func(<-chan struct{}) {
+			m.orchestratorTurnEnded(repoID, sessionID)
+		})
+		return
+	}
 	m.launchBackgroundMutation(func(<-chan struct{}) {
 		m.backlogRunEnded(repoID, sessionID)
 	})
+}
+
+// orchestratorTurnEnded archives an orchestrator whose turn ended with
+// nothing left to send, unless it asked to stay for this turn.
+func (m *Manager) orchestratorTurnEnded(repoID, sessionID string) {
+	svc := m.backlogService()
+	var end backlog.OrchTurnEnd
+	_, err := svc.Apply(backlog.ProjectRef{ID: repoID}, func(b *backlog.Backlog) ([]int, error) {
+		end = b.OrchTurnEnded(sessionID, svc.Now())
+		if !end.Changed {
+			return nil, errBacklogNoChange
+		}
+		return []int{end.Group}, nil
+	})
+	if err != nil && !errors.Is(err, errBacklogNoChange) {
+		m.warn().Printf("orchestrator turn end for session %s: %v", sessionID, err)
+		return
+	}
+	if end.Archive {
+		m.archiveBacklogSession(repoID, sessionID, backlog.ArchiveOrchIdle)
+	}
 }
 
 // backlogRunEnded moves a silent run's item to review, and archives the
@@ -133,7 +160,7 @@ func (m *Manager) backlogRunEnded(repoID, sessionID string) {
 		return
 	}
 	if end.Archive {
-		m.archiveItemSession(repoID, sessionID, end.Reason)
+		m.archiveBacklogSession(repoID, sessionID, end.Reason)
 	}
 }
 
@@ -229,6 +256,7 @@ func (m *Manager) recoverBacklog(repoID string) bool {
 		m.backlogRunEnded(repoID, sessionID)
 	}
 	m.redriveOwedArchives(repoID, sessions, handled)
+	m.redriveOrchestratorArchives(repoID, b)
 	return true
 }
 

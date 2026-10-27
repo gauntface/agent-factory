@@ -173,6 +173,7 @@ func (m *Manager) CreateSession(ctx context.Context, req CreateSessionRequest) (
 		Title:                          title,
 		TaskID:                         req.TaskID,
 		BacklogItem:                    req.BacklogItem,
+		OrchestratorTurn:               req.OrchestratorTurn,
 		Path:                           workspace,
 		Program:                        req.Program,
 		Account:                        req.Account,

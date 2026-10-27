@@ -81,7 +81,7 @@ func TestAnswerCancelsOwedArchive(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	m.archiveItemSession(repoID, inst.ID, backlog.ArchiveAsk)
+	m.archiveBacklogSession(repoID, inst.ID, backlog.ArchiveAsk)
 	if len(*archived) != 0 || inst.OwedArchive() != nil {
 		t.Fatalf("archived %v, owed %+v", *archived, inst.OwedArchive())
 	}

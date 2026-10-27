@@ -145,20 +145,31 @@ type itemRun struct {
 	inst   *session.Instance
 }
 
-func (m *Manager) startedItemRuns(home string) []itemRun {
+// orchRun is a group's orchestrator, with its session when it still exists.
+type orchRun struct {
+	repoID string
+	group  int
+	orch   backlog.Orchestrator
+	inst   *session.Instance
+}
+
+// startedItemRuns returns every started item run and every bound
+// orchestrator across projects.
+func (m *Manager) startedItemRuns(home string) ([]itemRun, []orchRun) {
 	paths, _ := filepath.Glob(filepath.Join(home, "repos", "*", backlog.BacklogFileName))
 	if len(paths) == 0 {
-		return nil
+		return nil, nil
 	}
 	sessions := map[string]*session.Instance{}
 	m.mu.Lock()
 	for _, inst := range m.instances {
-		if inst != nil && inst.BacklogItem != 0 {
+		if inst != nil {
 			sessions[inst.ID] = inst
 		}
 	}
 	m.mu.Unlock()
 	var out []itemRun
+	var orchs []orchRun
 	for _, p := range paths {
 		repoID := filepath.Base(filepath.Dir(p))
 		b, err := backlog.Load(repoID)
@@ -167,17 +178,29 @@ func (m *Manager) startedItemRuns(home string) []itemRun {
 			continue
 		}
 		for _, it := range b.Items {
+			if o := it.Orchestrator; o != nil && o.SessionID != "" {
+				var inst *session.Instance
+				if s := sessions[o.SessionID]; s != nil && s.BacklogItem == 0 {
+					inst = s
+				}
+				orchs = append(orchs, orchRun{repoID: repoID, group: it.ID, orch: *o, inst: inst})
+			}
 			for _, r := range it.Runs {
 				if r.State == backlog.RunStarted && r.SessionID != "" {
-					out = append(out, itemRun{repoID: repoID, item: it, run: r, inst: sessions[r.SessionID]})
+					inst := sessions[r.SessionID]
+					if inst != nil && inst.BacklogItem == 0 {
+						inst = nil
+					}
+					out = append(out, itemRun{repoID: repoID, item: it, run: r, inst: inst})
 				}
 			}
 		}
 	}
-	return out
+	return out, orchs
 }
 
-// meterPassLocked meters every item run and every Claude transcript, stores
+// meterPassLocked meters every item run, every orchestrator, and every Claude
+// transcript; orchestrator transcripts count as backlog spend. It stores
 // offsets and window totals, and publishes backlog.spend when it changed.
 func (m *Manager) meterPassLocked(now time.Time) {
 	st := &m.backlog.meter
@@ -199,7 +222,8 @@ func (m *Manager) meterPassLocked(now time.Time) {
 	updates := map[string]map[string]map[string]backlog.Meter{}
 	var backlogDirs []string
 	metered := map[string]bool{}
-	for _, r := range m.startedItemRuns(home) {
+	runs, orchs := m.startedItemRuns(home)
+	for _, r := range runs {
 		usage.Runs[r.run.SessionID] = r.run.Cost()
 		running := r.item.Status == backlog.StatusRunning
 		if r.inst == nil {
@@ -234,9 +258,40 @@ func (m *Manager) meterPassLocked(now time.Time) {
 			updates[r.repoID][r.run.SessionID] = rm.Meter
 		}
 	}
-	for repoID, meters := range updates {
+	orchUpdates := map[string]map[string]map[string]backlog.Meter{}
+	for _, r := range orchs {
+		if r.inst == nil {
+			continue
+		}
+		_, dirs, err := r.inst.ClaudeRunTranscriptDirs()
+		if err != nil {
+			continue
+		}
+		backlogDirs = append(backlogDirs, dirs...)
+		sessionID := r.orch.SessionID
+		metered[sessionID] = true
+		seen := state.RunSeenFor(sessionID)
+		planusage.PruneSeen(seen, now)
+		rm := backlog.MeterRun(r.group, backlog.RunRef{Meter: r.orch.Meter, StartedAt: r.orch.BoundAt},
+			planusage.TranscriptFiles(dirs), seen, overrides, now)
+		if rm.Changed {
+			if orchUpdates[r.repoID] == nil {
+				orchUpdates[r.repoID] = map[string]map[string]backlog.Meter{}
+			}
+			orchUpdates[r.repoID][sessionID] = rm.Meter
+		}
+	}
+	repos := map[string]bool{}
+	for repoID := range updates {
+		repos[repoID] = true
+	}
+	for repoID := range orchUpdates {
+		repos[repoID] = true
+	}
+	for repoID := range repos {
 		if _, err := backlog.Update(repoID, func(b *backlog.Backlog) error {
-			b.SetRunMeters(meters)
+			b.SetRunMeters(updates[repoID])
+			b.SetOrchestratorMeters(orchUpdates[repoID])
 			return nil
 		}); err != nil {
 			m.warn().Printf("plan meter: storing run costs of project %s: %v", repoID, err)

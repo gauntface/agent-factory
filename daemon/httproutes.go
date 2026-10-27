@@ -607,7 +607,7 @@ var httpRoutes = []HTTPRoute{
 	{
 		Method:      http.MethodPost,
 		Path:        "/v1/SetBacklogOrchestratorHandoff",
-		Description: "Store notes (at most 8 KB) for a session that replaces the orchestrator, on the group the session orchestrates.",
+		Description: "Store notes (at most 8 KB) for a session that replaces the orchestrator, on the group the session orchestrates, and with stay keep the session live after its current turn instead of archiving it. Send handoff, stay, or both.",
 		requestType: reflect.TypeOf(SetBacklogOrchestratorHandoffRequest{}),
 		handler:     func(cs *controlServer) http.HandlerFunc { return rpcHandler(cs.SetBacklogOrchestratorHandoff) },
 	},

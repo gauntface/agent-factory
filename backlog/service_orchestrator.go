@@ -64,7 +64,10 @@ type SetOrchestratorHandoffRequest struct {
 	RepoID    string `json:"repo_id,omitempty"`
 	RepoPath  string `json:"repo_path,omitempty"`
 	SessionID string `json:"session_id"`
-	Handoff   string `json:"handoff"`
+	// Handoff, when set, replaces the notes for a replacement session.
+	Handoff *string `json:"handoff,omitempty"`
+	// Stay keeps the session live when its current turn ends.
+	Stay bool `json:"stay,omitempty"`
 }
 
 // OrchestratorView is a group's orchestrator as the routes show it: the
@@ -77,6 +80,10 @@ type OrchestratorView struct {
 	State     string    `json:"state"`
 	Pending   int       `json:"pending"`
 	Handoff   string    `json:"handoff,omitempty"`
+	// Stay is whether the session stays live after its current turn.
+	Stay bool `json:"stay,omitempty"`
+	// Cost is the metered cost of the group's orchestrator sessions, in USD.
+	Cost float64 `json:"cost,omitempty"`
 }
 
 // OrchestratorEvent is the payload of a backlog.orchestrator.bound or
@@ -98,7 +105,7 @@ func (s *Service) orchestratorView(repoID string, o *Orchestrator) *Orchestrator
 		state = info.State
 	}
 	return &OrchestratorView{SessionID: o.SessionID, Title: o.Title, Program: o.Program, BoundAt: o.BoundAt,
-		State: state, Pending: len(o.Events), Handoff: o.Handoff}
+		State: state, Pending: len(o.Events), Handoff: o.Handoff, Stay: o.Stay, Cost: o.Cost()}
 }
 
 func (s *Service) orchestratorViews(repoID string, b *Backlog) map[int]OrchestratorView {
@@ -228,8 +235,11 @@ func (s *Service) SetOrchestrator(req SetOrchestratorRequest) (*OrchestratorResp
 }
 
 // SetOrchestratorHandoff stores the notes for a session that replaces the
-// orchestrator.
+// orchestrator, and with Stay keeps the session live after its current turn.
 func (s *Service) SetOrchestratorHandoff(req SetOrchestratorHandoffRequest) (*OrchestratorResponse, error) {
+	if req.Handoff == nil && !req.Stay {
+		return nil, errors.New("set handoff, stay, or both")
+	}
 	p, err := s.resolve(req.RepoID, req.RepoPath)
 	if err != nil {
 		return nil, err
@@ -237,7 +247,14 @@ func (s *Service) SetOrchestratorHandoff(req SetOrchestratorHandoffRequest) (*Or
 	var id int
 	b, err := s.update(p, func(b *Backlog) ([]int, error) {
 		var err error
-		id, err = b.SetOrchestratorHandoff(req.SessionID, req.Handoff, s.now())
+		if req.Handoff != nil {
+			if id, err = b.SetOrchestratorHandoff(req.SessionID, *req.Handoff, s.now()); err != nil {
+				return nil, err
+			}
+		}
+		if req.Stay {
+			id, err = b.SetOrchestratorStay(req.SessionID, s.now())
+		}
 		return []int{id}, err
 	})
 	if err != nil {

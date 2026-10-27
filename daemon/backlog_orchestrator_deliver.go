@@ -78,7 +78,8 @@ func (m *Manager) beginOrchDelivery(repoID string, group int, now time.Time) (*b
 // deliverOrchestrator sends group's pending events to its orchestrator in one
 // prompt. A live session gets the prompt; an archived, lost or dead one is
 // restored first; a killed or missing one is replaced by a new session whose
-// first prompt carries the handoff and the events. A client attached, a usage
+// first prompt carries the handoff and the events. The prompt opens a turn
+// whose end archives the session when nothing is left to send. A client attached, a usage
 // limit, or an archive that raced the send holds it for a later pass. Any
 // other failure counts toward escalation, unless the daemon is stopping.
 func (m *Manager) deliverOrchestrator(stop <-chan struct{}, repoID string, group int, now time.Time) {
@@ -107,7 +108,14 @@ func (m *Manager) deliverOrchestrator(stop <-chan struct{}, repoID string, group
 			return
 		}
 	}
+	armed := s.instance.ArmOrchestratorTurn(time.Now())
+	if armed {
+		m.persistAndPublishInstance(repoID, s.instance)
+	}
 	err := m.sendBacklogAnswer(repoID, s.instance, prompt)
+	if err != nil && armed {
+		m.disarmBacklogRun(repoID, s.instance)
+	}
 	switch {
 	case err == nil:
 		m.orchDelivered(repoID, d)
@@ -149,6 +157,8 @@ func (m *Manager) replaceOrchestrator(stop <-chan struct{}, repoID string, b *ba
 		Program:   d.Program,
 		Prompt:    b.OrchStartPrompt(d.Group, proposalDir(repoID, g), true, d.Events),
 		Backend:   string(session.BackendLocal),
+
+		OrchestratorTurn: true,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

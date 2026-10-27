@@ -69,6 +69,26 @@ func (i *Instance) ArmBacklogRun(at time.Time) bool {
 	if i.BacklogItem == 0 || i.taskRunActive {
 		return false
 	}
+	i.armBacklogRunLocked(at)
+	return true
+}
+
+// ArmOrchestratorTurn opens a turn on an orchestrator session when af sends it
+// the group's events, so its idle edge ends the turn like a backlog run. The
+// marker is not persisted for a session that is not an item session: a turn
+// cut by a restart ends unobserved. It reports false for an item session or a
+// task session.
+func (i *Instance) ArmOrchestratorTurn(at time.Time) bool {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.BacklogItem != 0 || i.TaskID != "" || i.taskRunActive {
+		return false
+	}
+	i.armBacklogRunLocked(at)
+	return true
+}
+
+func (i *Instance) armBacklogRunLocked(at time.Time) {
 	i.backlogRunActive = true
 	i.backlogRunEndedAt = time.Time{}
 	i.owedArchive = nil
@@ -78,7 +98,6 @@ func (i *Instance) ArmBacklogRun(at time.Time) bool {
 	i.taskRunTurnGateHeld = true
 	i.stateEpoch++
 	i.touchLocked()
-	return true
 }
 
 // DisarmBacklogRun closes a backlog run whose prompt was not delivered.
