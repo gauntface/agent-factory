@@ -80,7 +80,7 @@ func (s *Service) ask(p *project, req PostMessageRequest) (*MessageResponse, err
 
 func (s *Service) answer(p *project, req PostMessageRequest) (*MessageResponse, error) {
 	if req.SessionID != "" {
-		return nil, errors.New("an answer comes from the user; it cannot carry session_id")
+		return nil, errors.New("an answer comes from the user or the effort session; it cannot carry session_id — use caller_session_id")
 	}
 	b, err := Load(p.id)
 	if err != nil {
@@ -107,7 +107,7 @@ func (s *Service) answer(p *project, req PostMessageRequest) (*MessageResponse, 
 		return nil, fmt.Errorf("%s is %s; reopen it to start a new run with your answer", FormatID(req.ID), it.Status)
 	}
 	if target == TargetGone {
-		msg, err := s.host.StartAnswerRun(p.id, AnswerRunRequest{RepoPath: req.RepoPath, ID: req.ID, QuestionID: req.QuestionID, Text: req.Text})
+		msg, err := s.host.StartAnswerRun(p.id, AnswerRunRequest{RepoPath: req.RepoPath, ID: req.ID, QuestionID: req.QuestionID, Text: req.Text, CallerSessionID: req.CallerSessionID})
 		if err != nil {
 			return nil, p.named(err)
 		}
@@ -117,7 +117,7 @@ func (s *Service) answer(p *project, req PostMessageRequest) (*MessageResponse, 
 	var pending PendingAnswer
 	b, err = s.update(p, func(b *Backlog) ([]int, error) {
 		var err error
-		if out, err = b.Answer(req.ID, req.QuestionID, req.Text, true, s.now()); err != nil {
+		if out, err = b.Answer(req.ID, req.QuestionID, req.Text, req.CallerSessionID, true, s.now()); err != nil {
 			return nil, err
 		}
 		if out.SessionID != sessionID {
@@ -130,7 +130,7 @@ func (s *Service) answer(p *project, req PostMessageRequest) (*MessageResponse, 
 		s.host.SetAttention(p.id, sessionID, next)
 		it := b.Item(req.ID)
 		pending = PendingAnswer{ID: req.ID, AnswerID: out.Answer.ID, SessionID: sessionID,
-			Prompt: AnswerPrompt(it, out.Answer.Text), Handoff: it.handoff(out.Answer.Answers)}
+			Prompt: AnswerPrompt(it, out.Answer), Handoff: it.handoff(out.Answer.Answers)}
 		return []int{req.ID}, nil
 	})
 	if err != nil {
@@ -147,7 +147,7 @@ func (s *Service) answerGroup(p *project, req PostMessageRequest) (*MessageRespo
 	var out Answered
 	_, err := s.update(p, func(b *Backlog) ([]int, error) {
 		var err error
-		if out, err = b.Answer(req.ID, req.QuestionID, req.Text, false, s.now()); err != nil {
+		if out, err = b.Answer(req.ID, req.QuestionID, req.Text, req.CallerSessionID, false, s.now()); err != nil {
 			return nil, err
 		}
 		if o := b.Item(req.ID).Orchestrator; o != nil {

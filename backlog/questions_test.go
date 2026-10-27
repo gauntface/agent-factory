@@ -210,7 +210,7 @@ func TestBeginAnswerRunLeavesBacklogOnError(t *testing.T) {
 	mustAdd(t, s, ItemInput{Key: "a", Title: "A"})
 	withRun(t, 1, StatusReview)
 	b, _ := Load(repoID)
-	if _, err := b.BeginAnswerRun(1, 0, "a", t0); err == nil || !strings.Contains(err.Error(), "no open question") {
+	if _, err := b.BeginAnswerRun(1, 0, "a", "", t0); err == nil || !strings.Contains(err.Error(), "no open question") {
 		t.Fatal(err)
 	}
 	if it := b.Item(1); len(it.Runs) != 1 || it.Status != StatusReview || len(it.Thread) != 0 {
@@ -228,7 +228,7 @@ func goneAnswer(t *testing.T) (*Backlog, AnswerRun) {
 	ask(t, s, "Which db?")
 	b, _ := Load(repoID)
 	b.Item(1).Status = StatusReview
-	out, err := b.BeginAnswerRun(1, 0, "Postgres", t0)
+	out, err := b.BeginAnswerRun(1, 0, "Postgres", "", t0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func TestAnswerRunFailedStartKeepsAnswer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	again, err := b.BeginAnswerRun(1, 0, "MySQL", t0)
+	again, err := b.BeginAnswerRun(1, 0, "MySQL", "", t0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,7 +489,7 @@ func TestAnswerDelivered(t *testing.T) {
 	if _, err := b.Ask(1, "s1", Question{Text: "q"}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	out, err := b.Answer(1, 0, "a", true, time.Now())
+	out, err := b.Answer(1, 0, "a", "", true, time.Now())
 	if err != nil || b.Item(1).Status != StatusRunning || out.Answer.PrevStatus != StatusReview {
 		t.Fatal(out, err)
 	}

@@ -118,6 +118,9 @@ type PostMessageRequest struct {
 	// ("wait" or "archive"; empty waits), and notes for a later run.
 	Then    string `json:"then,omitempty"`
 	Handoff string `json:"handoff,omitempty"`
+	// CallerSessionID goes with an answer: the af session it comes from, if
+	// any. When it orchestrates the item's group, the answer is the agent's.
+	CallerSessionID string `json:"caller_session_id,omitempty"`
 }
 
 type MessageResponse struct {

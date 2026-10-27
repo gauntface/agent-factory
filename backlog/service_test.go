@@ -48,7 +48,7 @@ func (h *testHost) StartAnswerRun(repo string, req AnswerRunRequest) (Message, e
 	h.answerRuns = append(h.answerRuns, req)
 	var m Message
 	_, err := Update(repo, func(b *Backlog) error {
-		out, err := b.BeginAnswerRun(req.ID, req.QuestionID, req.Text, time.Now())
+		out, err := b.BeginAnswerRun(req.ID, req.QuestionID, req.Text, req.CallerSessionID, time.Now())
 		m = out.Answer
 		return err
 	})

@@ -248,7 +248,7 @@ func TestEscalateStrandedMovedBetweenGroups(t *testing.T) {
 			t.Fatalf("%s: no attention text", route)
 		}
 		prev = b.clone()
-		if _, err := b.Answer(2, 0, "this one", false, t0); err != nil {
+		if _, err := b.Answer(2, 0, "this one", "", false, t0); err != nil {
 			t.Fatal(err)
 		}
 		if got := b.queueOrchChanges(prev, t0); got != nil {
@@ -310,5 +310,47 @@ func TestQueueOrchChangesAnsweredInSession(t *testing.T) {
 	}
 	if line := b.orchEventLine(want[0]); !strings.Contains(line, "answered its question in the item session") {
 		t.Fatalf("line %q", line)
+	}
+}
+
+func TestAnswerFromOrchestrator(t *testing.T) {
+	for _, tc := range []struct {
+		caller, author, prompt string
+	}{
+		{"o", "agent:o", "The effort session answered your question on B-2: postgres"},
+		{"x", AuthorUser, "The user answered your question on B-2: postgres"},
+		{"", AuthorUser, "The user answered your question on B-2: postgres"},
+	} {
+		b := eventsGroup(t)
+		if _, err := b.Ask(2, "s2", Question{Text: "which?"}, t0); err != nil {
+			t.Fatal(err)
+		}
+		out, err := b.Answer(2, 0, "postgres", tc.caller, true, t0)
+		if err != nil || out.Answer.Author != tc.author {
+			t.Fatalf("caller %q: %+v %v", tc.caller, out.Answer, err)
+		}
+		if p := b.PendingAnswers(); len(p) != 1 || p[0].Prompt != tc.prompt {
+			t.Fatalf("caller %q: %+v", tc.caller, p)
+		}
+	}
+}
+
+func TestAnswerRunFromOrchestrator(t *testing.T) {
+	b := eventsGroup(t)
+	if _, err := b.Ask(2, "s2", Question{Text: "which?"}, t0); err != nil {
+		t.Fatal(err)
+	}
+	out, err := b.BeginAnswerRun(2, 0, "postgres", "o", t0)
+	if err != nil || out.Answer.Author != "agent:o" {
+		t.Fatalf("%+v %v", out.Answer, err)
+	}
+	p := b.StartPrompt(b.Item(2), "", PrevRun{})
+	for _, want := range []string{"asked the effort session a question", "The effort session's answer:\n\n```markdown\npostgres\n```\n"} {
+		if !strings.Contains(p, want) {
+			t.Fatalf("no %q in\n%s", want, p)
+		}
+	}
+	if strings.Contains(p, "The user's answer") || strings.Contains(p, "asked the user") {
+		t.Fatalf("names the user:\n%s", p)
 	}
 }

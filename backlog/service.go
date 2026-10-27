@@ -56,6 +56,8 @@ type AnswerRunRequest struct {
 	ID         int
 	QuestionID int
 	Text       string
+	// CallerSessionID is as in PostMessageRequest.
+	CallerSessionID string
 }
 
 // AnswerTarget is where an answer can go.

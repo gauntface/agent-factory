@@ -364,7 +364,7 @@ func TestBacklogRedeliversPendingAnswer(t *testing.T) {
 	m, repoID, inst := askedItem(t)
 	sent := stubBacklogSend(t, m, repoID)
 	if _, err := backlog.Update(repoID, func(b *backlog.Backlog) error {
-		if _, err := b.Answer(1, 0, "Postgres", true, daemonProcessStart.Add(-time.Minute)); err != nil {
+		if _, err := b.Answer(1, 0, "Postgres", "", true, daemonProcessStart.Add(-time.Minute)); err != nil {
 			return err
 		}
 		return nil

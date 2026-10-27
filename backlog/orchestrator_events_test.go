@@ -97,7 +97,7 @@ func TestQueueOrchChangesEscalationAnswered(t *testing.T) {
 	}
 	q.Route = RouteUser
 	prev := b.clone()
-	if _, err := b.Answer(2, 0, "this one", false, t0); err != nil {
+	if _, err := b.Answer(2, 0, "this one", "", false, t0); err != nil {
 		t.Fatal(err)
 	}
 	b.queueOrchChanges(prev, t0)
@@ -115,7 +115,7 @@ func TestQueueOrchChangesRoutedAnswerIsNotEscalation(t *testing.T) {
 	}
 	q.Route = RouteOrchestrator
 	prev := b.clone()
-	if _, err := b.Answer(2, 0, "this one", false, t0); err != nil {
+	if _, err := b.Answer(2, 0, "this one", "", false, t0); err != nil {
 		t.Fatal(err)
 	}
 	if got := b.queueOrchChanges(prev, t0); got != nil {
