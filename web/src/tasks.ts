@@ -57,8 +57,8 @@ export interface TaskActions {
   /** Opens the edit modal seeded from this task; submits the changed fields via
    *  UpdateTask (the field-level patch, #1935). */
   edit(task: TaskData): void;
-  /** Flips enabled via UpdateTask. */
-  toggle(task: TaskData): void;
+  /** Flips enabled via UpdateTask. Resolves true when the new value was applied. */
+  toggle(task: TaskData): Promise<boolean>;
   /** Fires the task now via TriggerTask (enabled cron tasks only). */
   trigger(task: TaskData): void;
   /** Removes the task via RemoveTask. */
@@ -409,7 +409,25 @@ export class TasksPane {
     toggle.setAttribute("aria-checked", t.enabled ? "true" : "false");
     toggle.setAttribute("aria-label", `Enabled: ${t.name}`);
     toggle.title = t.enabled ? "Enabled · click to disable" : "Disabled · click to enable";
-    toggle.addEventListener("click", () => this.actions.toggle(t));
+    const showEnabled = (on: boolean): void => {
+      toggle.classList.toggle("af-task-switch-on", on);
+      toggle.setAttribute("aria-checked", on ? "true" : "false");
+      toggle.title = on ? "Enabled · click to disable" : "Disabled · click to enable";
+    };
+    toggle.addEventListener("click", () => {
+      const next = !t.enabled;
+      showEnabled(next);
+      toggle.disabled = true;
+      toggle.setAttribute("aria-busy", "true");
+      void this.actions.toggle(t).then(
+        (applied) => (applied ? next : t.enabled),
+        () => t.enabled,
+      ).then((on) => {
+        showEnabled(on);
+        toggle.disabled = false;
+        toggle.removeAttribute("aria-busy");
+      });
+    });
 
     const verbs: { label: string; glyph: IconName; run: () => void }[] = [
       { label: "Edit", glyph: "pencil", run: () => this.actions.edit(t) },
