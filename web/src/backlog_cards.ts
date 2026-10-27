@@ -3,7 +3,7 @@
 // its descendants are the card's rows.
 
 import {
-  type Backlog, type BacklogView, type Item, type ListRow, type State,
+  type BacklogView, type Item, type ListRow, type State,
   archivedBy, derivedOf, formatID, isAncestor, isParent, itemByID, needsYouLabel,
 } from "./backlog_model.js";
 import { PAUSED_GLYPH } from "./backlog_group_panel.js";
@@ -27,11 +27,10 @@ export function segments(rows: readonly ListRow[]): Segment[] {
   return out;
 }
 
-/** Each descendant's place in its group, counted from 1 in tree order. */
-export function positions(b: Backlog, group: number): Map<number, number> {
-  const out = new Map<number, number>();
-  for (const it of b.items) if (isAncestor(b, group, it.id)) out.set(it.id, out.size + 1);
-  return out;
+/** Each shown row's place in its card, counted from 1, so the numbers match
+ *  what the card shows under the current filters. */
+export function positions(rows: readonly ListRow[]): Map<number, number> {
+  return new Map(rows.map((r, i) => [r.item.id, i + 1]));
 }
 
 export interface Counts {
@@ -83,29 +82,44 @@ export function overview(view: BacklogView): string {
   return [plural(groups, "group"), plural(c.total, "item"), ...tail(c)].join(" · ");
 }
 
-/** The open items it waits on, and those of them in the same group by place. */
-export function waitsInGroup(b: Backlog, it: Item, pos: ReadonlyMap<number, number>): { open: number; after: number[] } {
-  let open = 0;
-  const after: number[] = [];
-  for (const w of it.waits_on ?? []) {
-    const x = itemByID(b, w);
-    if (x && x.status !== "done" && x.status !== "dropped") open++;
-    const p = pos.get(w);
-    if (p !== undefined) after.push(p);
-  }
-  return { open, after: after.sort((x, y) => x - y) };
+export interface Waits {
+  /** Items it still waits on, as the daemon derives them: not done, dropped included. */
+  open: number;
+  dropped: number;
+  /** Places of the shown items in the same card that it waits on. */
+  after: { pos: number; dropped: boolean }[];
 }
 
-/** The line under a card row's title: id, the in-group items it comes after,
- *  and how many open items it still waits on. */
-export function metaLine(b: Backlog, it: Item, pos: ReadonlyMap<number, number>): HTMLElement {
-  const { open, after } = waitsInGroup(b, it, pos);
+/** What a card row waits on. A missing item does not block, as in the
+ *  daemon's waitReason. */
+export function waitsInGroup(view: BacklogView, it: Item, pos: ReadonlyMap<number, number>): Waits {
+  const out: Waits = { open: 0, dropped: 0, after: [] };
+  for (const w of it.waits_on ?? []) {
+    if (!itemByID(view.backlog, w)) continue;
+    const s = derivedOf(view, w).state;
+    if (s !== "done") out.open++;
+    if (s === "dropped") out.dropped++;
+    const p = pos.get(w);
+    if (p !== undefined) out.after.push({ pos: p, dropped: s === "dropped" });
+  }
+  out.after.sort((x, y) => x.pos - y.pos);
+  return out;
+}
+
+/** The line under a card row's title: id, the shown items in the card it
+ *  comes after, and how many items it still waits on. */
+export function metaLine(view: BacklogView, it: Item, pos: ReadonlyMap<number, number>): HTMLElement {
+  const { open, dropped, after } = waitsInGroup(view, it, pos);
   const parts: Node[] = [h("span", { class: "af-backlog-id" }, formatID(it.id))];
   if (after.length > 0) {
-    parts.push(h("span", { ariaHidden: "true" }, "·"), h("span", {}, "after"),
-      ...after.map((p) => h("span", { class: "af-backlog-pos-chip" }, `#${p}`)));
+    parts.push(h("span", { ariaHidden: "true" }, "·"), h("span", {}, "after"), ...after.map((a) => a.dropped
+      ? h("span", { class: "af-backlog-pos-chip af-backlog-pos-dropped" }, `#${a.pos} dropped`)
+      : h("span", { class: "af-backlog-pos-chip" }, `#${a.pos}`)));
   }
-  if (open > 0) parts.push(h("span", { ariaHidden: "true" }, "·"), h("span", {}, `waiting on ${plural(open, "item")}`));
+  if (open > 0) {
+    const text = `waiting on ${plural(open, "item")}${dropped > 0 ? ` (${dropped} dropped)` : ""}`;
+    parts.push(h("span", { ariaHidden: "true" }, "·"), h("span", { class: dropped > 0 ? "af-backlog-warn" : "" }, text));
+  }
   return h("span", { class: "af-backlog-meta" }, ...parts);
 }
 
@@ -114,16 +128,23 @@ export function presentational<T extends HTMLElement>(el: T): T {
   return el;
 }
 
-export function progress(c: Counts): HTMLElement {
+/** The progress line. It sits in the tree only for layout: the header row
+ *  names it with aria-describedby. */
+export function progress(c: Counts, id: string): HTMLElement {
   const pct = c.total === 0 ? 0 : Math.round((c.done / c.total) * 100);
   const fill = h("span", { class: "af-backlog-progress-fill" });
   fill.style.width = `${pct}%`;
-  return presentational(h("li", { class: "af-backlog-progress" },
-    h("span", { class: "af-backlog-progress-bar", ariaHidden: "true" }, fill),
+  return hiddenLine(h("li", { class: "af-backlog-progress", id },
+    h("span", { class: "af-backlog-progress-bar" }, fill),
     h("span", { class: "af-backlog-reason" }, progressText(c))));
 }
 
-export function pausedNotice(): HTMLElement {
-  return presentational(h("li", { class: "af-backlog-notice" },
+function hiddenLine(el: HTMLElement): HTMLElement {
+  el.setAttribute("aria-hidden", "true");
+  return presentational(el);
+}
+
+export function pausedNotice(id: string): HTMLElement {
+  return hiddenLine(h("li", { class: "af-backlog-notice", id },
     h("span", { ariaHidden: "true" }, PAUSED_GLYPH), " Paused — the runner starts nothing in this group until you unpause it."));
 }

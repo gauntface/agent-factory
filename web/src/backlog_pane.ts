@@ -1,8 +1,9 @@
 // The Backlog view (backlog proposal, ui.md): a header with a "New group"
 // row, the runner bar, the ordered item tree with filters and each group as a
-// card, reorder by drag or Alt+arrows, and the item panel. Every change goes to the daemon and comes back through
-// backlog.changed; a reorder shows at once and snaps back on refusal, and a
-// started item shows Starting until its session exists.
+// card, reorder by drag or Alt+arrows, and the item panel. Every change goes
+// to the daemon and comes back through backlog.changed; a reorder shows at
+// once and snaps back on refusal, and a started item shows Starting until its
+// session exists.
 
 import { errorText } from "./api.js";
 import {
@@ -14,7 +15,7 @@ import {
   applyMove, blocking, derivedOf, dropMove, formatID, itemByID, keyboardMove, latestRun, listRows, needsYouLabel, relatedIDs,
   safeHttpUrl, sources, topQueued,
 } from "./backlog_model.js";
-import { groupCounts, metaLine, overview, pausedNotice, positions, presentational, progress, segments } from "./backlog_cards.js";
+import { groupCounts, metaLine, overview, pausedNotice, positions, progress, segments } from "./backlog_cards.js";
 import { PAUSED_GLYPH, groupButtons } from "./backlog_group_panel.js";
 import { inbox } from "./backlog_groups.js";
 import { InboxList } from "./backlog_inbox.js";
@@ -47,12 +48,34 @@ const DRAG_TYPE = "application/x-af-backlog-item";
 
 export const EMPTY_COPY = "No items yet · Name a group above, or ask an agent to make items from a proposal.";
 
-/** Where a row sits in a group card: its group, each item's place in it, and
+/** Where a row sits in a group card: each shown row's place in it, and
  *  whether it is the card's header. */
 interface CardSpot {
-  group: number;
   pos: ReadonlyMap<number, number>;
   head?: boolean;
+}
+
+/** One group's card. It outlives renders so its "Add item…" input keeps
+ *  focus and IME composition while the rows around it rebuild. */
+interface Card {
+  el: HTMLElement;
+  tree: HTMLUListElement;
+  add: HTMLElement;
+}
+
+/** Puts `want` in `parent` in order, moving only nodes that are out of place,
+ *  so a node that holds focus stays attached. */
+function placeChildren(parent: HTMLElement, want: readonly HTMLElement[]): void {
+  let cur = parent.firstChild;
+  for (const el of want) {
+    if (cur === el) cur = cur.nextSibling;
+    else parent.insertBefore(el, cur);
+  }
+  while (cur) {
+    const next = cur.nextSibling;
+    cur.remove();
+    cur = next;
+  }
 }
 
 /** Whether a started item still shows Starting: its request is out, or its
@@ -91,7 +114,8 @@ export class BacklogPane {
   private rowEls = new Map<number, HTMLElement>();
   private readonly newGroup: HTMLInputElement;
   private readonly overviewEl = h("p", { class: "af-backlog-overview" });
-  private readonly addInputs = new Map<number, HTMLInputElement>();
+  private readonly cards = new Map<number, Card>();
+  private readonly listEl = h("div", { class: "af-backlog-list" });
   // Items started from this tab, by project and id: gen is the refresh that
   // follows the start's reply, Infinity until it comes.
   private readonly starts = new Map<string, { root: string; id: number; gen: number }>();
@@ -160,7 +184,7 @@ export class BacklogPane {
       this.inboxOn = false;
       this.cursor = null;
       this.folded.clear();
-      this.addInputs.clear();
+      this.cards.clear();
     }
     if (this.pending && data.generation > this.pending.gen) this.pending = null;
     this.data = data;
@@ -402,15 +426,11 @@ export class BacklogPane {
     const rows = this.inboxOn ? [] : listRows(v, this.listOptions());
     const shown = (id: number | null): boolean => id !== null && rows.some((r) => r.item.id === id);
     this.cursor = [this.focusId, this.cursor, this.selected].find(shown) ?? rows[0]?.item.id ?? null;
-    const typing = [...this.addInputs.values()].find((x) => x === document.activeElement);
-    const list = h("ul", { class: "af-backlog-list", role: "tree" });
-    list.setAttribute("aria-label", "Items");
+    const active = document.activeElement as HTMLElement | null;
+    const typing = active?.tagName === "INPUT" && this.listEl.contains(active) ? active : null;
     this.rowEls = new Map();
-    for (const seg of segments(rows)) {
-      if (seg.kind === "group") list.append(this.card(v, seg.head, seg.rows));
-      else for (const row of seg.rows) list.append(this.row(v, row));
-    }
-    for (const id of this.addInputs.keys()) if (!itemByID(v.backlog, id)) this.addInputs.delete(id);
+    for (const id of this.cards.keys()) if (!rows.some((r) => r.item.id === id && r.depth === 0)) this.cards.delete(id);
+    placeChildren(this.listEl, segments(rows).map((seg) => seg.kind === "group" ? this.card(v, seg.head, seg.rows) : this.loose(v, seg.rows)));
     this.overviewEl.textContent = overview(v);
     this.runner.update(v, this.data?.budget ?? null, this.data?.usage ?? null, this.running);
     this.filterSlot.replaceChildren(this.filters(v));
@@ -420,8 +440,8 @@ export class BacklogPane {
       this.inboxList.render(v, this.sessions);
       if (this.listSlot.firstChild !== this.inboxList.el) this.listSlot.replaceChildren(this.inboxList.el);
     } else {
-      this.listSlot.replaceChildren(list);
-      this.popover.rebind(list);
+      if (this.listSlot.firstChild !== this.listEl) this.listSlot.replaceChildren(this.listEl);
+      this.popover.rebind(this.listEl);
     }
     if (!this.inboxOn && v.backlog.items.length === 0) this.emptySlot.append(h("p", { class: "af-backlog-empty" }, EMPTY_COPY));
     else if (!this.inboxOn && rows.length === 0) this.emptySlot.append(h("p", { class: "af-backlog-empty" }, "No items match this filter"));
@@ -437,7 +457,9 @@ export class BacklogPane {
     }
     this.el.classList.toggle("af-backlog-has-panel", this.selected !== null);
     if (this.focusPanel && this.panel) this.panel.focus();
-    else if (typing && this.focusId === null && typing.isConnected) typing.focus();
+    else if (typing && this.focusId === null) {
+      if (typing.isConnected && document.activeElement !== typing) typing.focus();
+    }
     else if (this.focusId !== null) {
       (this.rowEls.get(this.focusId) ?? (this.cursor !== null ? this.rowEls.get(this.cursor) : undefined))?.focus({ preventScroll: true });
     }
@@ -500,30 +522,39 @@ export class BacklogPane {
     return row;
   }
 
-  /** A group as a card: its header row, progress, a paused notice, its rows,
-   *  and an "Add item…" row while it is open. */
-  private card(v: BacklogView, head: ListRow, rows: ListRow[]): HTMLElement {
-    const g = head.item;
-    const spot = { group: g.id, pos: positions(v.backlog, g.id) };
-    const inner = presentational(h("ul", { class: "af-backlog-group-list" }, this.row(v, head, { ...spot, head: true }),
-      progress(groupCounts(v, g.id))));
-    if (g.paused && !g.archived) inner.append(pausedNotice());
-    for (const row of rows) inner.append(this.row(v, row, spot));
-    if (!head.folded && !g.archived) {
-      inner.append(presentational(h("li", { class: "af-backlog-new af-backlog-group-add" }, icon("plus"), this.addInput(g.id))));
-    }
-    const cls = `af-backlog-group${g.paused ? " af-backlog-group-paused" : ""}`;
-    return presentational(h("li", { class: cls }, inner));
+  /** A run of top-level items with no children: a tree of plain rows. */
+  private loose(v: BacklogView, rows: ListRow[]): HTMLElement {
+    const ul = h("ul", { class: "af-backlog-tree" }, ...rows.map((r) => this.row(v, r)));
+    ul.setAttribute("role", "tree");
+    ul.setAttribute("aria-label", "Items");
+    return ul;
   }
 
-  private addInput(group: number): HTMLInputElement {
-    let input = this.addInputs.get(group);
-    if (!input) {
+  /** A group as a card: a tree of its header row, progress, a paused notice
+   *  and its rows, then an "Add item…" row outside the tree while it is open. */
+  private card(v: BacklogView, head: ListRow, rows: ListRow[]): HTMLElement {
+    const g = head.item;
+    let c = this.cards.get(g.id);
+    if (!c) {
       const root = this.root ?? "";
-      input = entryField("Add item…", `Add item to ${formatID(group)}`, (title) => this.write((t) => addItem(root, { title, parent: group }, t)));
-      this.addInputs.set(group, input);
+      const input = entryField("Add item…", `Add item to ${formatID(g.id)}`,
+        (title) => this.write((t) => addItem(root, { title, parent: g.id }, t)));
+      const tree = h("ul", { class: "af-backlog-group-list" });
+      tree.setAttribute("role", "tree");
+      const add = h("div", { class: "af-backlog-new af-backlog-group-add" }, icon("plus"), input);
+      c = { el: h("div", { class: "af-backlog-group" }, tree, add), tree, add };
+      this.cards.set(g.id, c);
     }
-    return input;
+    c.el.classList.toggle("af-backlog-group-paused", g.paused === true);
+    c.tree.setAttribute("aria-label", g.title);
+    const pos = positions(rows);
+    const lines = [progress(groupCounts(v, g.id), `af-backlog-progress-${g.id}`)];
+    if (g.paused && !g.archived) lines.push(pausedNotice(`af-backlog-paused-${g.id}`));
+    const headEl = this.row(v, head, { pos, head: true });
+    headEl.setAttribute("aria-describedby", lines.map((l) => l.id).join(" "));
+    c.tree.replaceChildren(headEl, ...lines, ...rows.map((r) => this.row(v, r, { pos })));
+    c.add.hidden = head.folded || g.archived === true;
+    return c.el;
   }
 
   private row(v: BacklogView, row: ListRow, spot?: CardSpot): HTMLElement {
@@ -576,13 +607,14 @@ export class BacklogPane {
       const n = groupCounts(v, it.id).needsYou;
       const tags = n > 0 ? [h("span", { class: "af-backlog-tag af-backlog-state-needs_you" }, needsYouLabel(n))] : [];
       return [title, h("span", { class: "af-backlog-id" }, formatID(it.id)),
-        h("span", { class: "af-backlog-group-end" }, ...tags, ...this.groupTags(it), ...this.headActions(it))];
+        h("span", { class: "af-backlog-group-end" }, this.rowChip(v, it, derivedOf(v, it.id).reason ?? "", li), ...tags,
+          ...this.groupTags(it), ...this.rowTail(v, it), ...this.headActions(it))];
     }
     const tail = [this.rowChip(v, it, row.reason, li), ...this.groupTags(it), ...this.rowTail(v, it)];
     if (!spot) return [h("span", { class: "af-backlog-id" }, formatID(it.id)), title, ...tail];
     li.classList.add("af-backlog-group-row");
     return [h("span", { class: "af-backlog-pos" }, `#${spot.pos.get(it.id) ?? ""}`),
-      h("span", { class: "af-backlog-row-main" }, title, metaLine(v.backlog, it, spot.pos)), h("span", { class: "af-backlog-group-end" }, ...tail)];
+      h("span", { class: "af-backlog-row-main" }, title, metaLine(v, it, spot.pos)), h("span", { class: "af-backlog-group-end" }, ...tail)];
   }
 
   /** Pause or Unpause, or Unarchive, and the group panel. Archive stays in the

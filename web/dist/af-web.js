@@ -17247,10 +17247,8 @@ function segments(rows) {
   }
   return out;
 }
-function positions(b, group) {
-  const out = /* @__PURE__ */ new Map();
-  for (const it of b.items) if (isAncestor(b, group, it.id)) out.set(it.id, out.size + 1);
-  return out;
+function positions(rows) {
+  return new Map(rows.map((r, i) => [r.item.id, i + 1]));
 }
 var working = (s) => s === "working" || s === "starting";
 function count(view, items) {
@@ -17283,49 +17281,54 @@ function overview(view) {
   const c = count(view, live.filter((it) => !isParent(b, it.id)));
   return [plural(groups, "group"), plural(c.total, "item"), ...tail(c)].join(" \xB7 ");
 }
-function waitsInGroup(b, it, pos) {
-  let open = 0;
-  const after = [];
+function waitsInGroup(view, it, pos) {
+  const out = { open: 0, dropped: 0, after: [] };
   for (const w of it.waits_on ?? []) {
-    const x = itemByID(b, w);
-    if (x && x.status !== "done" && x.status !== "dropped") open++;
+    if (!itemByID(view.backlog, w)) continue;
+    const s = derivedOf(view, w).state;
+    if (s !== "done") out.open++;
+    if (s === "dropped") out.dropped++;
     const p = pos.get(w);
-    if (p !== void 0) after.push(p);
+    if (p !== void 0) out.after.push({ pos: p, dropped: s === "dropped" });
   }
-  return { open, after: after.sort((x, y) => x - y) };
+  out.after.sort((x, y) => x.pos - y.pos);
+  return out;
 }
-function metaLine(b, it, pos) {
-  const { open, after } = waitsInGroup(b, it, pos);
+function metaLine(view, it, pos) {
+  const { open, dropped, after } = waitsInGroup(view, it, pos);
   const parts = [h("span", { class: "af-backlog-id" }, formatID(it.id))];
   if (after.length > 0) {
-    parts.push(
-      h("span", { ariaHidden: "true" }, "\xB7"),
-      h("span", {}, "after"),
-      ...after.map((p) => h("span", { class: "af-backlog-pos-chip" }, `#${p}`))
-    );
+    parts.push(h("span", { ariaHidden: "true" }, "\xB7"), h("span", {}, "after"), ...after.map((a) => a.dropped ? h("span", { class: "af-backlog-pos-chip af-backlog-pos-dropped" }, `#${a.pos} dropped`) : h("span", { class: "af-backlog-pos-chip" }, `#${a.pos}`)));
   }
-  if (open > 0) parts.push(h("span", { ariaHidden: "true" }, "\xB7"), h("span", {}, `waiting on ${plural(open, "item")}`));
+  if (open > 0) {
+    const text = `waiting on ${plural(open, "item")}${dropped > 0 ? ` (${dropped} dropped)` : ""}`;
+    parts.push(h("span", { ariaHidden: "true" }, "\xB7"), h("span", { class: dropped > 0 ? "af-backlog-warn" : "" }, text));
+  }
   return h("span", { class: "af-backlog-meta" }, ...parts);
 }
 function presentational(el2) {
   el2.setAttribute("role", "none");
   return el2;
 }
-function progress(c) {
+function progress(c, id) {
   const pct2 = c.total === 0 ? 0 : Math.round(c.done / c.total * 100);
   const fill = h("span", { class: "af-backlog-progress-fill" });
   fill.style.width = `${pct2}%`;
-  return presentational(h(
+  return hiddenLine(h(
     "li",
-    { class: "af-backlog-progress" },
-    h("span", { class: "af-backlog-progress-bar", ariaHidden: "true" }, fill),
+    { class: "af-backlog-progress", id },
+    h("span", { class: "af-backlog-progress-bar" }, fill),
     h("span", { class: "af-backlog-reason" }, progressText(c))
   ));
 }
-function pausedNotice() {
-  return presentational(h(
+function hiddenLine(el2) {
+  el2.setAttribute("aria-hidden", "true");
+  return presentational(el2);
+}
+function pausedNotice(id) {
+  return hiddenLine(h(
     "li",
-    { class: "af-backlog-notice" },
+    { class: "af-backlog-notice", id },
     h("span", { ariaHidden: "true" }, PAUSED_GLYPH),
     " Paused \u2014 the runner starts nothing in this group until you unpause it."
   ));
@@ -18407,6 +18410,18 @@ var RunnerBar = class {
 // src/backlog_pane.ts
 var DRAG_TYPE = "application/x-af-backlog-item";
 var EMPTY_COPY = "No items yet \xB7 Name a group above, or ask an agent to make items from a proposal.";
+function placeChildren(parent, want) {
+  let cur = parent.firstChild;
+  for (const el2 of want) {
+    if (cur === el2) cur = cur.nextSibling;
+    else parent.insertBefore(el2, cur);
+  }
+  while (cur) {
+    const next = cur.nextSibling;
+    cur.remove();
+    cur = next;
+  }
+}
 function stillStarting(it, inFlight, sessions) {
   if (inFlight) return true;
   const run = it?.runs?.at(-1);
@@ -18473,7 +18488,8 @@ var BacklogPane = class {
   rowEls = /* @__PURE__ */ new Map();
   newGroup;
   overviewEl = h("p", { class: "af-backlog-overview" });
-  addInputs = /* @__PURE__ */ new Map();
+  cards = /* @__PURE__ */ new Map();
+  listEl = h("div", { class: "af-backlog-list" });
   // Items started from this tab, by project and id: gen is the refresh that
   // follows the start's reply, Infinity until it comes.
   starts = /* @__PURE__ */ new Map();
@@ -18513,7 +18529,7 @@ var BacklogPane = class {
       this.inboxOn = false;
       this.cursor = null;
       this.folded.clear();
-      this.addInputs.clear();
+      this.cards.clear();
     }
     if (this.pending && data.generation > this.pending.gen) this.pending = null;
     this.data = data;
@@ -18749,15 +18765,11 @@ ${id}`;
     const rows = this.inboxOn ? [] : listRows(v, this.listOptions());
     const shown = (id) => id !== null && rows.some((r) => r.item.id === id);
     this.cursor = [this.focusId, this.cursor, this.selected].find(shown) ?? rows[0]?.item.id ?? null;
-    const typing = [...this.addInputs.values()].find((x) => x === document.activeElement);
-    const list = h("ul", { class: "af-backlog-list", role: "tree" });
-    list.setAttribute("aria-label", "Items");
+    const active = document.activeElement;
+    const typing = active?.tagName === "INPUT" && this.listEl.contains(active) ? active : null;
     this.rowEls = /* @__PURE__ */ new Map();
-    for (const seg of segments(rows)) {
-      if (seg.kind === "group") list.append(this.card(v, seg.head, seg.rows));
-      else for (const row of seg.rows) list.append(this.row(v, row));
-    }
-    for (const id of this.addInputs.keys()) if (!itemByID(v.backlog, id)) this.addInputs.delete(id);
+    for (const id of this.cards.keys()) if (!rows.some((r) => r.item.id === id && r.depth === 0)) this.cards.delete(id);
+    placeChildren(this.listEl, segments(rows).map((seg) => seg.kind === "group" ? this.card(v, seg.head, seg.rows) : this.loose(v, seg.rows)));
     this.overviewEl.textContent = overview(v);
     this.runner.update(v, this.data?.budget ?? null, this.data?.usage ?? null, this.running);
     this.filterSlot.replaceChildren(this.filters(v));
@@ -18767,8 +18779,8 @@ ${id}`;
       this.inboxList.render(v, this.sessions);
       if (this.listSlot.firstChild !== this.inboxList.el) this.listSlot.replaceChildren(this.inboxList.el);
     } else {
-      this.listSlot.replaceChildren(list);
-      this.popover.rebind(list);
+      if (this.listSlot.firstChild !== this.listEl) this.listSlot.replaceChildren(this.listEl);
+      this.popover.rebind(this.listEl);
     }
     if (!this.inboxOn && v.backlog.items.length === 0) this.emptySlot.append(h("p", { class: "af-backlog-empty" }, EMPTY_COPY));
     else if (!this.inboxOn && rows.length === 0) this.emptySlot.append(h("p", { class: "af-backlog-empty" }, "No items match this filter"));
@@ -18784,8 +18796,9 @@ ${id}`;
     }
     this.el.classList.toggle("af-backlog-has-panel", this.selected !== null);
     if (this.focusPanel && this.panel) this.panel.focus();
-    else if (typing && this.focusId === null && typing.isConnected) typing.focus();
-    else if (this.focusId !== null) {
+    else if (typing && this.focusId === null) {
+      if (typing.isConnected && document.activeElement !== typing) typing.focus();
+    } else if (this.focusId !== null) {
       (this.rowEls.get(this.focusId) ?? (this.cursor !== null ? this.rowEls.get(this.cursor) : void 0))?.focus({ preventScroll: true });
     }
     this.focusPanel = false;
@@ -18853,33 +18866,41 @@ ${id}`;
     }
     return row;
   }
-  /** A group as a card: its header row, progress, a paused notice, its rows,
-   *  and an "Add item…" row while it is open. */
+  /** A run of top-level items with no children: a tree of plain rows. */
+  loose(v, rows) {
+    const ul = h("ul", { class: "af-backlog-tree" }, ...rows.map((r) => this.row(v, r)));
+    ul.setAttribute("role", "tree");
+    ul.setAttribute("aria-label", "Items");
+    return ul;
+  }
+  /** A group as a card: a tree of its header row, progress, a paused notice
+   *  and its rows, then an "Add item…" row outside the tree while it is open. */
   card(v, head, rows) {
     const g = head.item;
-    const spot = { group: g.id, pos: positions(v.backlog, g.id) };
-    const inner = presentational(h(
-      "ul",
-      { class: "af-backlog-group-list" },
-      this.row(v, head, { ...spot, head: true }),
-      progress(groupCounts(v, g.id))
-    ));
-    if (g.paused && !g.archived) inner.append(pausedNotice());
-    for (const row of rows) inner.append(this.row(v, row, spot));
-    if (!head.folded && !g.archived) {
-      inner.append(presentational(h("li", { class: "af-backlog-new af-backlog-group-add" }, icon("plus"), this.addInput(g.id))));
-    }
-    const cls = `af-backlog-group${g.paused ? " af-backlog-group-paused" : ""}`;
-    return presentational(h("li", { class: cls }, inner));
-  }
-  addInput(group) {
-    let input = this.addInputs.get(group);
-    if (!input) {
+    let c = this.cards.get(g.id);
+    if (!c) {
       const root2 = this.root ?? "";
-      input = entryField("Add item\u2026", `Add item to ${formatID(group)}`, (title) => this.write((t) => addItem(root2, { title, parent: group }, t)));
-      this.addInputs.set(group, input);
+      const input = entryField(
+        "Add item\u2026",
+        `Add item to ${formatID(g.id)}`,
+        (title) => this.write((t) => addItem(root2, { title, parent: g.id }, t))
+      );
+      const tree = h("ul", { class: "af-backlog-group-list" });
+      tree.setAttribute("role", "tree");
+      const add = h("div", { class: "af-backlog-new af-backlog-group-add" }, icon("plus"), input);
+      c = { el: h("div", { class: "af-backlog-group" }, tree, add), tree, add };
+      this.cards.set(g.id, c);
     }
-    return input;
+    c.el.classList.toggle("af-backlog-group-paused", g.paused === true);
+    c.tree.setAttribute("aria-label", g.title);
+    const pos = positions(rows);
+    const lines = [progress(groupCounts(v, g.id), `af-backlog-progress-${g.id}`)];
+    if (g.paused && !g.archived) lines.push(pausedNotice(`af-backlog-paused-${g.id}`));
+    const headEl = this.row(v, head, { pos, head: true });
+    headEl.setAttribute("aria-describedby", lines.map((l) => l.id).join(" "));
+    c.tree.replaceChildren(headEl, ...lines, ...rows.map((r) => this.row(v, r, { pos })));
+    c.add.hidden = head.folded || g.archived === true;
+    return c.el;
   }
   row(v, row, spot) {
     const it = row.item;
@@ -18934,7 +18955,15 @@ ${id}`;
       return [
         title,
         h("span", { class: "af-backlog-id" }, formatID(it.id)),
-        h("span", { class: "af-backlog-group-end" }, ...tags, ...this.groupTags(it), ...this.headActions(it))
+        h(
+          "span",
+          { class: "af-backlog-group-end" },
+          this.rowChip(v, it, derivedOf(v, it.id).reason ?? "", li),
+          ...tags,
+          ...this.groupTags(it),
+          ...this.rowTail(v, it),
+          ...this.headActions(it)
+        )
       ];
     }
     const tail2 = [this.rowChip(v, it, row.reason, li), ...this.groupTags(it), ...this.rowTail(v, it)];
@@ -18942,7 +18971,7 @@ ${id}`;
     li.classList.add("af-backlog-group-row");
     return [
       h("span", { class: "af-backlog-pos" }, `#${spot.pos.get(it.id) ?? ""}`),
-      h("span", { class: "af-backlog-row-main" }, title, metaLine(v.backlog, it, spot.pos)),
+      h("span", { class: "af-backlog-row-main" }, title, metaLine(v, it, spot.pos)),
       h("span", { class: "af-backlog-group-end" }, ...tail2)
     ];
   }

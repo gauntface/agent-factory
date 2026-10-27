@@ -4417,17 +4417,23 @@ button[class], input[class], select[class], textarea[class] { font-size: var(--a
 
 .af-backlog-list > .af-backlog-group { margin: var(--af-space-2) 0 var(--af-space-3); }
 
-.af-backlog-group-list {
-  list-style: none;
-  margin: 0;
+.af-backlog-group {
   padding: var(--af-space-2);
-  display: flex;
-  flex-direction: column;
-  gap: var(--af-space-1);
   background: var(--af-surface);
   border: calc(var(--af-space-1) * 0.25) solid var(--af-border);
   border-radius: var(--af-radius-dialog);
 }
+
+.af-backlog-group-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--af-space-1);
+}
+
+.af-backlog-group-add[hidden] { display: none; }
 
 .af-backlog-group .af-backlog-row {
   border: calc(var(--af-space-1) * 0.25) solid transparent;
@@ -4546,7 +4552,7 @@ button[class], input[class], select[class], textarea[class] { font-size: var(--a
   font-weight: 600;
 }
 
-.af-backlog-list {
+.af-backlog-tree {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -4924,8 +4930,11 @@ button[class], input[class], select[class], textarea[class] { font-size: var(--a
 }
 
 .af-backlog-row-related, .af-backlog-row-picked { background: var(--af-surface-raised); }
-.af-backlog-row-related { outline: calc(var(--af-space-1) * 0.25) dashed var(--af-accent); outline-offset: calc(var(--af-space-1) * -0.25); }
-.af-backlog-group .af-backlog-row-related { outline: none; border-style: dashed; border-color: var(--af-accent); }
+.af-backlog-tree > .af-backlog-row-related:not(:focus-visible):not(.af-backlog-drop-into) {
+  outline: calc(var(--af-space-1) * 0.25) dashed var(--af-accent);
+  outline-offset: calc(var(--af-space-1) * -0.25);
+}
+.af-backlog-group .af-backlog-row-related { border-style: dashed; border-color: var(--af-accent); }
 
 .af-backlog-preview {
   position: fixed;
