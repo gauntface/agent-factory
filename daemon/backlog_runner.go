@@ -161,8 +161,8 @@ func (m *Manager) runBacklogPass(now time.Time) {
 	}
 }
 
-// runBacklogProject is one pass for one project: stop runs over the cap per
-// run, then, with the runner on and its gates open, start queued items into
+// runBacklogProject is one pass for one project: deliver orchestrator events,
+// stop runs over the cap per run, then, with the runner on and its gates open, start queued items into
 // the free slots.
 func (m *Manager) runBacklogProject(repoID string, now time.Time) {
 	b, err := backlog.Load(repoID)
@@ -170,6 +170,7 @@ func (m *Manager) runBacklogProject(repoID string, now time.Time) {
 		m.warn().Printf("backlog runner for project %s: %v", repoID, err)
 		return
 	}
+	m.deliverOrchestrators(repoID, b, now)
 	budget, err := backlog.LoadBudget()
 	if err != nil {
 		m.warn().Printf("backlog runner: %v", err)

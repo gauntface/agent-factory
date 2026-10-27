@@ -33,6 +33,9 @@ type backlogState struct {
 	// deferredArchive holds the sessions whose archive waits for an attached
 	// client to leave, with the reason af owes it.
 	deferredArchive map[string]string
+	// orchestrating holds the groups with a delivery to their orchestrator in
+	// flight.
+	orchestrating map[string]bool
 	// recovered, recovering and recoveryDone track restart recovery.
 	recovered    map[string]bool
 	recovering   bool
@@ -86,6 +89,26 @@ func (s *backlogState) endContinue(repoID string, id int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.continuing, continueKey(repoID, id))
+}
+
+// beginOrchestrate claims the group's delivery; false when one is in flight.
+func (s *backlogState) beginOrchestrate(repoID string, group int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.orchestrating[continueKey(repoID, group)] {
+		return false
+	}
+	if s.orchestrating == nil {
+		s.orchestrating = map[string]bool{}
+	}
+	s.orchestrating[continueKey(repoID, group)] = true
+	return true
+}
+
+func (s *backlogState) endOrchestrate(repoID string, group int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.orchestrating, continueKey(repoID, group))
 }
 
 func (s *backlogState) deferArchive(sessionID, reason string) {

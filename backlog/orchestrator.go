@@ -30,6 +30,9 @@ type Orchestrator struct {
 	// Events is the outbox of events not yet delivered, oldest first, so a
 	// daemon restart can finish delivery.
 	Events []OrchEvent `json:"events,omitempty"`
+	// Failures holds when recent deliveries to the session failed, within
+	// OrchFailureWindow, oldest first.
+	Failures []time.Time `json:"failures,omitempty"`
 }
 
 // OrchEvent is one group event for the orchestrator. Item is the item it is
@@ -48,6 +51,7 @@ func (o *Orchestrator) clone() *Orchestrator {
 	c := *o
 	c.Meter = maps.Clone(o.Meter)
 	c.Events = append([]OrchEvent(nil), o.Events...)
+	c.Failures = append([]time.Time(nil), o.Failures...)
 	return &c
 }
 
@@ -87,6 +91,7 @@ func (b *Backlog) BindOrchestrator(id int, o Orchestrator, now time.Time) error 
 	if prev := it.Orchestrator; prev != nil {
 		o.Handoff, o.Meter, o.Events = prev.Handoff, prev.Meter, prev.Events
 	}
+	o.Failures = nil
 	o.BoundAt = now
 	it.Orchestrator = &o
 	it.UpdatedAt = now
