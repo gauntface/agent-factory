@@ -42,6 +42,17 @@ func TestOrchRunActivity(t *testing.T) {
 	}
 }
 
+func TestOrchRunActivityCountsRuntimeReplacement(t *testing.T) {
+	inst := &session.Instance{ID: "s"}
+	inst.ClearIdleEvidence()
+	got, ok := orchRunActivity(itemSession{instance: inst,
+		view: session.LifecycleView{Liveness: session.LiveRunning, BacklogRunActive: true}}, true)
+	require.True(t, ok)
+	require.True(t, got.Working)
+	require.True(t, got.LastActive.After(daemonProcessStart))
+	require.Equal(t, inst.LastActivityAt(), got.LastActive)
+}
+
 func TestNoteOrchStallsQueuesKilledRun(t *testing.T) {
 	m, repoID := orchestratedGroup(t)
 	svc := m.backlogService()

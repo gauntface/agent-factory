@@ -162,3 +162,14 @@ func TestOwedArchiveNotWrittenForArchivedRow(t *testing.T) {
 	require.NoError(t, inst.Transition(CommitArchive()))
 	require.Nil(t, inst.ToInstanceData().OwedArchive)
 }
+
+func TestLastActivityAtCountsRuntimeReplacement(t *testing.T) {
+	inst := &Instance{}
+	churn := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	inst.lastPaneChurnAt = churn
+	require.Equal(t, churn, inst.LastActivityAt())
+
+	before := time.Now()
+	inst.ClearIdleEvidence()
+	require.False(t, inst.LastActivityAt().Before(before))
+}

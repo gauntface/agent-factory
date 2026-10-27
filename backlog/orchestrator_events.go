@@ -30,7 +30,7 @@ func (b *Backlog) HasOrchestrator() bool {
 
 // queueOrchChanges compares b with prev, the same backlog before a write, and
 // queues the events the write caused on the orchestrated groups: an agent's
-// new question, an item that moved to review, an escalated question the user
+// new question, an item that moved to review or got a new PR there, an escalated question the user
 // answered, and a group whose children are all done or dropped. It returns
 // the groups it queued on.
 func (b *Backlog) queueOrchChanges(prev *Backlog, now time.Time) []int {
@@ -52,7 +52,7 @@ func (b *Backlog) queueOrchChanges(prev *Backlog, now time.Time) []int {
 			continue
 		}
 		was := prev.Item(it.ID)
-		if it.Status == StatusReview && (was == nil || was.Status != StatusReview) {
+		if it.Status == StatusReview && (was == nil || was.Status != StatusReview || (it.PR != "" && was.PR != it.PR)) {
 			queue(OrchEvent{Kind: EventReview, Item: it.ID})
 		}
 		for _, m := range it.Thread {
@@ -62,7 +62,7 @@ func (b *Backlog) queueOrchChanges(prev *Backlog, now time.Time) []int {
 			if strings.HasPrefix(m.Author, "agent:") && (was == nil || was.message(m.ID) == nil) {
 				queue(OrchEvent{Kind: EventQuestion, Item: it.ID, Message: m.ID})
 			}
-			if m.Route == RouteUser && m.Closed == ClosedAnswered && was != nil && was.questionOpen(m.ID) {
+			if m.Route == RouteUser && (m.Closed == ClosedAnswered || m.Closed == ClosedAnsweredInSession) && was != nil && was.questionOpen(m.ID) {
 				queue(OrchEvent{Kind: EventEscalationAnswered, Item: it.ID, Message: m.ID})
 			}
 		}

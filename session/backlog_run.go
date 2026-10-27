@@ -125,13 +125,16 @@ func (i *Instance) EndBacklogRunForTest() {
 	i.endRunsLocked()
 }
 
-// LastActivityAt is the latest pane output or prompt sent to the session seen
-// by this process; zero when there is none.
+// LastActivityAt is the latest pane output, prompt sent, or runtime
+// replacement this process saw; zero when there is none.
 func (i *Instance) LastActivityAt() time.Time {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
-	if i.lastPromptAttemptAt.After(i.lastPaneChurnAt) {
-		return i.lastPromptAttemptAt
+	last := i.lastPaneChurnAt
+	for _, t := range []time.Time{i.lastPromptAttemptAt, i.runtimeReplacedAt} {
+		if t.After(last) {
+			last = t
+		}
 	}
-	return i.lastPaneChurnAt
+	return last
 }

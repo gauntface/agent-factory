@@ -226,3 +226,39 @@ func TestQueueOrchStallsSkips(t *testing.T) {
 		})
 	}
 }
+
+func TestQueueOrchChangesReviewOnNewPR(t *testing.T) {
+	b := eventsGroup(t)
+	b.Item(2).Status = StatusReview
+	prev := b.clone()
+	b.Item(2).PR = "https://example.com/pr/1"
+	b.queueOrchChanges(prev, t0)
+	if got := kinds(b, 1); !reflect.DeepEqual(got, []OrchEvent{{Kind: EventReview, Item: 2}}) {
+		t.Fatalf("events %+v", got)
+	}
+
+	b.Item(1).Orchestrator.Events = nil
+	prev = b.clone()
+	b.Item(2).PR = ""
+	if got := b.queueOrchChanges(prev, t0); got != nil {
+		t.Fatalf("a cleared PR queued on %v", got)
+	}
+}
+
+func TestQueueOrchChangesEscalationAnsweredInSession(t *testing.T) {
+	b := eventsGroup(t)
+	q, err := b.Ask(2, "s2", Question{Text: "which?"}, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q.Route = RouteUser
+	prev := b.clone()
+	if b.AnsweredInSession("s2", t0) != 2 {
+		t.Fatal("not answered in session")
+	}
+	b.queueOrchChanges(prev, t0)
+	want := []OrchEvent{{Kind: EventEscalationAnswered, Item: 2, Message: 1}}
+	if got := kinds(b, 1); !reflect.DeepEqual(got, want) {
+		t.Fatalf("events %+v", got)
+	}
+}
