@@ -150,11 +150,9 @@ export class BacklogPane {
     this.effort = new EffortSessions(host, () => this.render());
     this.inboxList = new InboxList({
       answer: (id, qid, text) => this.answer(this.root ?? "", id, qid, text),
-      dismiss: (id, noteId) => {
-        const root = this.root ?? "";
-        this.write((t) => dismissNote(root, id, noteId, t));
-      },
+      dismiss: (id, noteId) => this.dismiss(this.root ?? "", id, noteId),
       select: (id) => this.select(id),
+      focusInbox: () => (this.filterSlot.querySelector("button") as HTMLElement | null)?.focus(),
     });
     this.newGroup = entryField("New group…", "New group title", (title) => this.mutate((t) => addItem(this.root ?? "", { title }, t)));
     this.headSlot.append(h("div", { class: "af-backlog-top" },
@@ -353,6 +351,20 @@ export class BacklogPane {
     }
   }
 
+  private async dismiss(root: string, id: number, noteId: number): Promise<boolean> {
+    const token = this.host.token();
+    if (token === null) return false;
+    try {
+      await dismissNote(root, id, noteId, token);
+      void this.host.refresh();
+      return true;
+    } catch (e) {
+      this.host.notify(errorText(e));
+      void this.host.refresh();
+      return false;
+    }
+  }
+
   private runnerActions() {
     return {
       setRunner: (on: boolean) => this.mutate((t) => setSettings(this.root ?? "", { runner: on }, t)),
@@ -442,7 +454,10 @@ export class BacklogPane {
     placeChildren(this.listEl, segments(rows).map((seg) => seg.kind === "group" ? this.card(v, seg.head, seg.rows) : this.loose(v, seg.rows)));
     this.overviewEl.textContent = overview(v);
     this.runner.update(v, this.data?.budget ?? null, this.data?.usage ?? null, this.running);
+    const chips = [...this.filterSlot.querySelectorAll("button")];
+    const focusedChip = chips.findIndex((b) => b === document.activeElement);
     this.filterSlot.replaceChildren(this.filters(v));
+    if (focusedChip >= 0) (this.filterSlot.querySelectorAll("button")[focusedChip] as HTMLElement | undefined)?.focus();
     this.emptySlot.replaceChildren();
     if (this.inboxOn) {
       this.popover.hide();

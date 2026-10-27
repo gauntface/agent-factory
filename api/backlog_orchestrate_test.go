@@ -238,6 +238,14 @@ func TestBacklogEscalateAndOrchestratorDone(t *testing.T) {
 		!strings.Contains(out, backlog.OrchestratorDoneNote("")) {
 		t.Fatalf("no done note: %q %v", out, err)
 	}
+	backlogSelfSession = func() (*session.InstanceData, error) { return item, nil }
+	if _, err := runBacklogCmd(t, "dismiss", "B-2", "3"); err == nil || !strings.Contains(err.Error(), "item sessions cannot run \"af backlog dismiss\"") {
+		t.Fatal(err)
+	}
+	backlogSelfSession = func() (*session.InstanceData, error) { return orchestrator, nil }
+	if _, err := runBacklogCmd(t, "dismiss", "B-2", "9"); err == nil || !strings.Contains(err.Error(), "B-2 has no message 9 — \"af backlog inbox\" prints each note's id") {
+		t.Fatal(err)
+	}
 	if _, err := runBacklogCmd(t, "dismiss", "B-2", "x"); err == nil || !strings.Contains(err.Error(), "invalid note id") {
 		t.Fatal(err)
 	}

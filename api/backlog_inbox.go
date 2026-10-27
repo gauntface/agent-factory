@@ -105,6 +105,9 @@ var backlogDismissCmd = &cobra.Command{
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runBacklog(func() (any, error) {
+			if err := refuseFromItemSession("dismiss"); err != nil {
+				return nil, err
+			}
 			id, err := backlog.ParseID(args[0])
 			if err != nil {
 				return nil, err

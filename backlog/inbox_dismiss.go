@@ -25,7 +25,7 @@ func (b *Backlog) DismissNote(id, noteID int, now time.Time) (*Message, error) {
 		out := *m
 		return &out, nil
 	}
-	return nil, fmt.Errorf("%s has no message %d", FormatID(id), noteID)
+	return nil, fmt.Errorf("%s has no message %d — \"af backlog inbox\" prints each note's id", FormatID(id), noteID)
 }
 
 type DismissNoteRequest struct {
