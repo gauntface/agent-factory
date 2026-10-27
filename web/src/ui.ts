@@ -2025,13 +2025,23 @@ export class AppShell {
     item.dataset.projectFocus = `project:${p.root}`;
     item.setAttribute("role", "option");
     item.setAttribute("aria-selected", current ? "true" : "false");
-    item.addEventListener("click", (e) => {
-      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const activate = (e: Event): void => {
       e.preventDefault();
       e.stopPropagation();
       this.closeProjectMenu();
       this.appControls.dismiss();
       this.actions.switchProject(p.root);
+    };
+    // Ctrl/Cmd/Shift-click keep the browser's new tab/window. Alt-click is NOT
+    // let through: browsers treat it as "download link", which would save the page.
+    item.addEventListener("click", (e) => {
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
+      activate(e);
+    });
+    // A button activated on Space and a listbox option is chosen with it; an anchor
+    // only answers Enter, so restore Space here.
+    item.addEventListener("keydown", (e) => {
+      if (e.key === " ") activate(e);
     });
     return item;
   }

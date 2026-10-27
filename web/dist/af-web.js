@@ -20751,13 +20751,19 @@ var AppShell = class {
     item.dataset.projectFocus = `project:${p.root}`;
     item.setAttribute("role", "option");
     item.setAttribute("aria-selected", current ? "true" : "false");
-    item.addEventListener("click", (e) => {
-      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const activate = (e) => {
       e.preventDefault();
       e.stopPropagation();
       this.closeProjectMenu();
       this.appControls.dismiss();
       this.actions.switchProject(p.root);
+    };
+    item.addEventListener("click", (e) => {
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
+      activate(e);
+    });
+    item.addEventListener("keydown", (e) => {
+      if (e.key === " ") activate(e);
     });
     return item;
   }
