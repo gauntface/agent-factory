@@ -124,3 +124,14 @@ func (i *Instance) EndBacklogRunForTest() {
 	defer i.mu.Unlock()
 	i.endRunsLocked()
 }
+
+// LastActivityAt is the latest pane output or prompt sent to the session seen
+// by this process; zero when there is none.
+func (i *Instance) LastActivityAt() time.Time {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	if i.lastPromptAttemptAt.After(i.lastPaneChurnAt) {
+		return i.lastPromptAttemptAt
+	}
+	return i.lastPaneChurnAt
+}
