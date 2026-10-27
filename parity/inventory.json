@@ -2808,10 +2808,10 @@
       },
       "AddBacklogItems": {
         "before": {
-          "ok": "The New item row and Add child append at the bottom; the user then places the item by drag, Alt+arrows or Move…."
+          "ok": "The New group row, a card's Add item row and Add child append at the bottom; the user then places the item by drag, Alt+arrows or Move…."
         },
         "after": {
-          "ok": "The New item row and Add child append at the bottom; the user then places the item by drag, Alt+arrows or Move…."
+          "ok": "The New group row, a card's Add item row and Add child append at the bottom; the user then places the item by drag, Alt+arrows or Move…."
         },
         "proposal": {
           "ok": "Items keyed by a proposal come from the agent attached to it (af backlog add --file); the web adds single drafts."

@@ -93,7 +93,9 @@ existing item id (a number, such as `12`); `"12"` or `"B-12"` as a string is
 read as a key. The batch is all or nothing, and prints each key's id.
 
 To add one item: `af backlog add "Fix the login redirect" --body -` (the body
-comes from stdin), or type a title in the **New item** row of the Backlog view.
+comes from stdin), or type a title in the **New group** row at the top of the
+Backlog view. Each group shows as a card with its progress, and its **Add item**
+row adds a child to that group.
 
 ### 2. Order and queue
 
