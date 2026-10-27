@@ -310,3 +310,52 @@ func TestServiceRepeatDoneSelfQueuesReview(t *testing.T) {
 	}
 	done()
 }
+
+func TestServiceRepeatDoneSelfDuringDelivery(t *testing.T) {
+	s, _ := orchService(t)
+	mustAdd(t, s, ItemInput{Key: "g", Title: "G"}, ItemInput{Key: "a", Title: "A", Parent: Ref{Key: "g"}})
+	if _, err := Update(repoID, func(b *Backlog) error {
+		it := b.Item(2)
+		it.Status = StatusRunning
+		it.Runs = []RunRef{{SessionID: "s2", State: RunStarted}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetOrchestrator(SetOrchestratorRequest{RepoID: repoID, ID: 1, SessionID: "o1"}); err != nil {
+		t.Fatal(err)
+	}
+	done := func() {
+		t.Helper()
+		if _, err := s.SetItemStatus(SetItemStatusRequest{RepoID: repoID, ID: 2, Status: StatusReview,
+			SessionID: "s2", PR: "https://x/pull/1"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	done()
+	var d OrchDelivery
+	if _, err := Update(repoID, func(b *Backlog) error {
+		var ok bool
+		if d, ok, _ = b.BeginOrchDelivery(1, s.now()); !ok {
+			t.Fatal("no delivery")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	later := s.now().Add(time.Minute)
+	s.now = func() time.Time { return later }
+	done()
+	if _, err := Update(repoID, func(b *Backlog) error {
+		if !b.OrchDelivered(1, "o1", d.Events, later) {
+			t.Fatal("delivery not recorded")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := Load(repoID)
+	if got := b.Item(1).Orchestrator.Events; len(got) != 1 || got[0].Kind != EventReview || got[0].Item != 2 || !got[0].At.Equal(later) {
+		t.Fatalf("events %+v", got)
+	}
+}
