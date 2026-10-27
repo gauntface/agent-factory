@@ -16688,6 +16688,12 @@ function rootOf(b, id) {
 function withOrchestrator(b, id, q) {
   return q.route === "orchestrator" && !!itemByID(b, rootOf(b, id))?.orchestrator;
 }
+function authorLabel(b, id, author) {
+  if (author === "user") return "you";
+  if (!author.startsWith("agent:")) return author;
+  const o = itemByID(b, rootOf(b, id))?.orchestrator;
+  return o?.session_id && author === `agent:${o.session_id}` ? "effort session" : "agent";
+}
 function userQuestions(b, it) {
   return openQuestions(it).filter((q) => !withOrchestrator(b, it.id, q));
 }
@@ -17962,7 +17968,7 @@ var ItemPanel = class {
       { class: `af-backlog-msg af-backlog-msg-${m.kind}` },
       h("div", { class: "af-backlog-msg-meta" }, [
         m.kind === "note" ? "Note" : m.kind === "question" ? "Question" : "Answer",
-        m.author === "user" ? "you" : m.author.startsWith("agent:") ? "agent" : m.author,
+        authorLabel(view.backlog, it.id, m.author),
         formatTime(m.at),
         ...m.closed ? [m.closed === "answered in session" ? "Answered in session" : `Closed \xB7 ${m.closed}`] : []
       ].join(" \xB7 ")),

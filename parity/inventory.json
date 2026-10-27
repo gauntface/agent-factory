@@ -2910,6 +2910,9 @@
         },
         "handoff": {
           "ok": "Set only on an agent's question (af backlog ask --self --handoff-file); the web only answers."
+        },
+        "caller_session_id": {
+          "ok": "Set only by af backlog answer run inside a session, so an effort session's answer is stored as its own; the web has no session of its own and answers as the user."
         }
       },
       "SetBacklogItemStatus": {
