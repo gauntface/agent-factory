@@ -29,8 +29,9 @@ func (e OrchEvent) same(o OrchEvent) bool {
 }
 
 // QueueOrchEvent adds ev to the outbox of the group above ev.Item and returns
-// the group, or 0 when that group has no orchestrator. An event the outbox
-// already holds is not added twice.
+// the group, or 0 when that group has no orchestrator. An event already
+// waiting is not added twice; one a delivery in flight carries is, because
+// that delivery drops its copy.
 func (b *Backlog) QueueOrchEvent(ev OrchEvent, now time.Time) int {
 	if b.Item(ev.Item) == nil {
 		return 0
@@ -39,7 +40,8 @@ func (b *Backlog) QueueOrchEvent(ev OrchEvent, now time.Time) int {
 	if g.Orchestrator == nil {
 		return 0
 	}
-	for _, e := range g.Orchestrator.Events {
+	o := g.Orchestrator
+	for _, e := range o.Events[min(o.Sending, len(o.Events)):] {
 		if e.same(ev) {
 			return g.ID
 		}
@@ -47,7 +49,7 @@ func (b *Backlog) QueueOrchEvent(ev OrchEvent, now time.Time) int {
 	if ev.At.IsZero() {
 		ev.At = now
 	}
-	g.Orchestrator.Events = append(g.Orchestrator.Events, ev)
+	o.Events = append(o.Events, ev)
 	g.UpdatedAt = now
 	return g.ID
 }
@@ -76,6 +78,22 @@ func (b *Backlog) OrchDeliveries(now time.Time) []OrchDelivery {
 			Events: append([]OrchEvent(nil), o.Events...)})
 	}
 	return out
+}
+
+// BeginOrchDelivery marks group's pending events as in flight and returns
+// them, when they are due for delivery now. changed is false when the
+// backlog already held that mark, so the caller need not write it.
+func (b *Backlog) BeginOrchDelivery(group int, now time.Time) (d OrchDelivery, ok, changed bool) {
+	for _, c := range b.OrchDeliveries(now) {
+		if c.Group != group {
+			continue
+		}
+		o := b.Item(group).Orchestrator
+		changed = o.Sending != len(c.Events)
+		o.Sending = len(c.Events)
+		return c, true, changed
+	}
+	return OrchDelivery{}, false, false
 }
 
 func (o *Orchestrator) dropEvents(delivered []OrchEvent) {
@@ -115,7 +133,7 @@ func (b *Backlog) OrchDelivered(group int, sessionID string, delivered []OrchEve
 		return false
 	}
 	o.dropEvents(delivered)
-	o.Failures = nil
+	o.Failures, o.Sending = nil, 0
 	b.Item(group).UpdatedAt = now
 	return true
 }
@@ -143,7 +161,7 @@ func (b *Backlog) OrchDeliveryFailed(group int, sessionID, reason string, now ti
 			kept = append(kept, f)
 		}
 	}
-	o.Failures = append(kept, now)
+	o.Failures, o.Sending = append(kept, now), 0
 	it.UpdatedAt = now
 	if len(o.Failures) < OrchMaxFailures {
 		return false

@@ -202,3 +202,73 @@ func TestOrchPrompts(t *testing.T) {
 		t.Errorf("restart prompt:\n%s", p)
 	}
 }
+
+func TestQueueOrchEventDuringADeliveryIsKept(t *testing.T) {
+	b := boundGroup(t)
+	b.QueueOrchEvent(OrchEvent{Kind: EventStalled, Item: 3}, t0)
+	d, ok, changed := b.BeginOrchDelivery(1, t0)
+	if !ok || !changed || len(d.Events) != 1 || b.Item(1).Orchestrator.Sending != 1 {
+		t.Fatalf("%+v %v %v", d, ok, changed)
+	}
+	if _, _, changed = b.BeginOrchDelivery(1, t0); changed {
+		t.Fatal("a repeat mark reports a change")
+	}
+	b.QueueOrchEvent(OrchEvent{Kind: EventStalled, Item: 3}, t0.Add(time.Second))
+	b.QueueOrchEvent(OrchEvent{Kind: EventStalled, Item: 3}, t0.Add(2*time.Second))
+	if got := len(b.Item(1).Orchestrator.Events); got != 2 {
+		t.Fatalf("events %d: a new event merged into the one in flight, or a waiting one was added twice", got)
+	}
+	b.OrchDelivered(1, "o", d.Events, t0)
+	o := b.Item(1).Orchestrator
+	if len(o.Events) != 1 || !o.Events[0].At.Equal(t0.Add(time.Second)) || o.Sending != 0 {
+		t.Fatalf("%+v", o)
+	}
+	if _, ok, _ := b.BeginOrchDelivery(4, t0); ok {
+		t.Fatal("an unbound item has a delivery")
+	}
+}
+
+func TestOrchDeliveryFailedEndsTheInFlightMark(t *testing.T) {
+	b := boundGroup(t)
+	b.QueueOrchEvent(OrchEvent{Kind: EventStalled, Item: 3}, t0)
+	b.BeginOrchDelivery(1, t0)
+	b.OrchDeliveryFailed(1, "o", "x", t0)
+	if b.Item(1).Orchestrator.Sending != 0 {
+		t.Fatal("a failed delivery stays in flight")
+	}
+}
+
+func TestRebindClosesTheEscalation(t *testing.T) {
+	escalated := func() *Backlog {
+		b := boundGroup(t)
+		b.QueueOrchEvent(OrchEvent{Kind: EventStalled, Item: 3}, t0)
+		for range OrchMaxFailures {
+			b.OrchDeliveryFailed(1, "o", "x", t0)
+		}
+		if !b.OrchEscalated(1) {
+			t.Fatal("not escalated")
+		}
+		return b
+	}
+
+	b := escalated()
+	if err := b.OrchReplaced(1, "o", orch("n"), nil, t0); err != nil {
+		t.Fatal(err)
+	}
+	if b.OrchEscalated(1) || len(b.OrchDeliveries(t0)) != 1 {
+		t.Fatal("the escalation blocks the replacement")
+	}
+	if q := b.Item(1).Thread[0]; q.Closed != ClosedRebound {
+		t.Fatalf("question %+v", q)
+	}
+
+	b = escalated()
+	if err := b.BindOrchestrator(1, orch("n"), t0); err != nil || b.OrchEscalated(1) {
+		t.Fatalf("bind: %v, escalated %v", err, b.OrchEscalated(1))
+	}
+
+	b = escalated()
+	if _, err := b.ClearOrchestrator(1, t0); err != nil || b.OrchEscalated(1) || len(b.Inbox()) != 0 {
+		t.Fatalf("clear: %v, inbox %+v", err, b.Inbox())
+	}
+}

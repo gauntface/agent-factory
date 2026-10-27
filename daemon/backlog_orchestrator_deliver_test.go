@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,13 @@ import (
 func orchestratedGroup(t *testing.T) (*Manager, string) {
 	t.Helper()
 	m, repoID := runnerTestManager(t)
+	addOrchGroup(t, m, repoID)
+	m.backlog.markRecovered(repoID)
+	return m, repoID
+}
+
+func addOrchGroup(t *testing.T, m *Manager, repoID string) {
+	t.Helper()
 	svc := m.backlogService()
 	_, err := svc.Add(backlog.AddRequest{RepoID: repoID, Items: []backlog.ItemInput{
 		{Key: "g", Title: "Effort"}, {Key: "c", Title: "Child", Parent: backlog.Ref{Key: "g"}}}})
@@ -30,8 +38,6 @@ func orchestratedGroup(t *testing.T) (*Manager, string) {
 	_, err = svc.SetOrchestrator(backlog.SetOrchestratorRequest{RepoID: repoID, ID: 2, SessionID: "o1"})
 	require.NoError(t, err)
 	queueOrch(t, m, repoID, backlog.OrchEvent{Kind: backlog.EventReview, Item: 3})
-	m.backlog.markRecovered(repoID)
-	return m, repoID
 }
 
 func queueOrch(t *testing.T, m *Manager, repoID string, ev backlog.OrchEvent) {
@@ -211,4 +217,88 @@ func TestOrchestratorDeliveryBacksOffThenEscalates(t *testing.T) {
 	runOrchDelivery(t, m, repoID, now.Add(time.Hour))
 	require.Equal(t, backlog.OrchMaxFailures+1, sent.count(), "the answer resumes delivery")
 	require.Empty(t, orchOf(t, repoID).Events)
+}
+
+func TestOrchestratorDeliveryForABacklogMadeAfterRecovery(t *testing.T) {
+	m, repoID := runnerTestManager(t)
+	path, err := backlog.BacklogPath(repoID)
+	require.NoError(t, err)
+	require.NoError(t, os.Rename(path, path+".aside"))
+	m.recoverBacklogStarts()
+	require.NoError(t, os.Rename(path+".aside", path))
+	addOrchGroup(t, m, repoID)
+	sent := stubBacklogSend(t, m, repoID)
+
+	runOrchDelivery(t, m, repoID, time.Now())
+
+	require.Equal(t, 1, sent.count(), "a backlog recovery never saw has nothing to recover")
+	require.Empty(t, orchOf(t, repoID).Events)
+}
+
+func TestOrchestratorReplacementRefusedIsKilled(t *testing.T) {
+	m, repoID := orchestratedGroup(t)
+	m.mu.Lock()
+	delete(m.instances, daemonInstanceKey(repoID, "planner"))
+	m.instances[daemonInstanceKey(repoID, "other")] = &session.Instance{ID: "o2", Title: "other"}
+	m.mu.Unlock()
+	prevCreate, prevKill := createBacklogSession, killOrchestratorSession
+	createBacklogSession = func(m *Manager, _ context.Context, _ CreateSessionRequest) (session.InstanceData, error) {
+		// The user takes the group over while the replacement starts.
+		if _, err := m.backlogService().SetOrchestrator(backlog.SetOrchestratorRequest{RepoID: repoID, ID: 2, SessionID: "o2", Replace: true}); err != nil {
+			return session.InstanceData{}, err
+		}
+		return session.InstanceData{ID: "n1", Title: "effort B-2 Effort"}, nil
+	}
+	var killed []KillSessionRequest
+	killOrchestratorSession = func(_ *Manager, req KillSessionRequest) (session.InstanceData, error) {
+		killed = append(killed, req)
+		return session.InstanceData{ID: req.ID, Title: req.Title}, nil
+	}
+	t.Cleanup(func() { createBacklogSession, killOrchestratorSession = prevCreate, prevKill })
+
+	runOrchDelivery(t, m, repoID, time.Now())
+
+	require.Equal(t, []KillSessionRequest{{ID: "n1", Title: "effort B-2 Effort", RepoID: repoID}}, killed)
+	o := orchOf(t, repoID)
+	require.Equal(t, "o2", o.SessionID, "the user's bind stands")
+	require.Len(t, o.Events, 1, "the events wait for the session bound now")
+}
+
+func TestOrchestratorSendThatRacesAnArchiveIsHeld(t *testing.T) {
+	m, repoID := orchestratedGroup(t)
+	inst, ok := m.projectSession(repoID, "o1")
+	require.True(t, ok)
+	prev := sendBacklogPrompt
+	sendBacklogPrompt = func(*Manager, SendPromptRequest) error {
+		inst.instance.SetArchived()
+		return errors.New("pane closed")
+	}
+	t.Cleanup(func() { sendBacklogPrompt = prev })
+
+	runOrchDelivery(t, m, repoID, time.Now())
+
+	o := orchOf(t, repoID)
+	require.Len(t, o.Events, 1)
+	require.Empty(t, o.Failures, "an archive that raced the send is not a failure")
+}
+
+func TestOrchestratorFailureDuringShutdownIsNotCounted(t *testing.T) {
+	m, repoID := orchestratedGroup(t)
+	m.mu.Lock()
+	delete(m.instances, daemonInstanceKey(repoID, "planner"))
+	m.mu.Unlock()
+	stop := make(chan struct{})
+	prev := createBacklogSession
+	createBacklogSession = func(_ *Manager, ctx context.Context, _ CreateSessionRequest) (session.InstanceData, error) {
+		close(stop)
+		<-ctx.Done()
+		return session.InstanceData{}, ctx.Err()
+	}
+	t.Cleanup(func() { createBacklogSession = prev })
+
+	m.deliverOrchestrator(stop, repoID, 2, time.Now())
+
+	o := orchOf(t, repoID)
+	require.Empty(t, o.Failures, "a shutdown is not the session's fault")
+	require.Len(t, o.Events, 1)
 }
