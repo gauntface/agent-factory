@@ -9755,7 +9755,7 @@ function terminalLinkHandler(open, setTooltip) {
       if (href) open(href, "_blank", "noopener,noreferrer");
     },
     hover(_event, text) {
-      setTooltip(text);
+      setTooltip(safeHttpUrl(text) ?? "");
     },
     leave() {
       setTooltip("");
@@ -10221,6 +10221,7 @@ var AttachTerminal = class {
     this.container.removeEventListener("copy", this.onCopy);
     this.endHandedOffDrag();
     this.closeSocket();
+    this.container.removeAttribute("title");
     this.term.dispose();
   }
   applicationOwnsMouse() {

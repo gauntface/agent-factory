@@ -27,7 +27,9 @@ export function terminalLinkHandler(open: OpenWindow, setTooltip: SetTooltip): I
       if (href) open(href, "_blank", "noopener,noreferrer");
     },
     hover(_event, text) {
-      setTooltip(text);
+      // The normalized href, not the raw text: URL() turns a lookalike Unicode
+      // host into its xn-- punycode form, so the tooltip shows what opens.
+      setTooltip(safeHttpUrl(text) ?? "");
     },
     leave() {
       setTooltip("");

@@ -37,3 +37,10 @@ test("hover shows the link's real URL and leave clears it", () => {
   handler.leave!(click, "https://example.test/real", range);
   assert.deepEqual(tips, ["https://example.test/real", ""]);
 });
+
+test("hover shows a lookalike Unicode host in its punycode form", () => {
+  const tips: string[] = [];
+  const handler = terminalLinkHandler(() => {}, (tip) => tips.push(tip));
+  handler.hover!(click, "https://\u0430pple.com/", range);
+  assert.deepEqual(tips, ["https://xn--pple-43d.com/"]);
+});

@@ -814,6 +814,9 @@ export class AttachTerminal {
     this.container.removeEventListener("copy", this.onCopy);
     this.endHandedOffDrag();
     this.closeSocket();
+    // term.dispose() never calls the link handler's leave(), so drop a link
+    // tooltip the pointer was resting on.
+    this.container.removeAttribute("title");
     this.term.dispose();
   }
 
