@@ -6,19 +6,31 @@
 // links routinely (PR URLs, docs), so the dialog was a warning the user had to
 // dismiss each time. We open the link directly instead, but only for http and
 // https URLs, and with noopener so the new tab cannot reach back into af.
+//
+// An OSC 8 link's visible text can differ from its target. The dialog used to
+// be the only place the real URL showed, so hover now shows it as a tooltip.
 
 import type { ILinkHandler } from "@xterm/xterm";
-import { safeHttpUrl } from "./backlog_model.js";
+import { safeHttpUrl } from "./url.js";
 
 /** The opener seam: window.open in the browser, a spy in tests. */
 export type OpenWindow = (url: string, target: string, features: string) => unknown;
 
+/** Shows the hovered link's real URL; "" clears it. */
+export type SetTooltip = (tip: string) => void;
+
 /** A linkHandler that opens safe links in a new tab and drops the rest. */
-export function terminalLinkHandler(open: OpenWindow): ILinkHandler {
+export function terminalLinkHandler(open: OpenWindow, setTooltip: SetTooltip): ILinkHandler {
   return {
     activate(_event, text) {
       const href = safeHttpUrl(text);
       if (href) open(href, "_blank", "noopener,noreferrer");
+    },
+    hover(_event, text) {
+      setTooltip(text);
+    },
+    leave() {
+      setTooltip("");
     },
   };
 }

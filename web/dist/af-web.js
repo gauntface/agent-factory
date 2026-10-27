@@ -9736,334 +9736,7 @@ var TouchScroll = (now) => {
   };
 };
 
-// src/backlog_model.ts
-var STATE_LABELS = {
-  done: "Done",
-  dropped: "Dropped",
-  needs_you: "Needs you",
-  in_review: "In review",
-  working: "Working",
-  starting: "Starting",
-  stopped: "Stopped",
-  waiting: "Waiting",
-  queued: "Queued",
-  draft: "Draft"
-};
-var STATE_GLYPHS = {
-  done: "\u2713",
-  dropped: "\xD7",
-  needs_you: "?",
-  in_review: "\u270E",
-  working: "\u25CF",
-  starting: "\u25CC",
-  stopped: "\u25A0",
-  waiting: "\u23F8",
-  queued: "\u25B8",
-  draft: "\u25CB"
-};
-var FILTERS = [
-  { filter: "all", label: "All" },
-  { filter: "needs_you", label: "Needs you" },
-  { filter: "in_review", label: "In review" },
-  { filter: "working", label: "Working" },
-  { filter: "queued", label: "Queued" },
-  { filter: "waiting", label: "Waiting" },
-  { filter: "draft", label: "Draft" }
-];
-var FILTER_STATES = {
-  needs_you: ["needs_you"],
-  in_review: ["in_review"],
-  working: ["working", "starting"],
-  queued: ["queued"],
-  waiting: ["waiting"],
-  draft: ["draft"]
-};
-function formatID(id) {
-  return `B-${id}`;
-}
-function isRecord(v) {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-function arr(v) {
-  return Array.isArray(v) ? v : [];
-}
-function parseItem(v) {
-  const it = isRecord(v) ? v : {};
-  return { ...it, waits_on: arr(it.waits_on), runs: arr(it.runs), thread: arr(it.thread) };
-}
-function parseBacklogView(d) {
-  const v = isRecord(d) ? d : {};
-  const b = isRecord(v.backlog) ? v.backlog : {};
-  const settings = isRecord(b.settings) ? b.settings : { runner: false, max_running: 1, on_done: "keep" };
-  const runner = isRecord(v.runner) ? v.runner : { state: "off", used: 0, max: 1 };
-  return {
-    backlog: {
-      schema_version: Number(b.schema_version) || 0,
-      next_id: Number(b.next_id) || 1,
-      settings,
-      items: arr(b.items).map(parseItem)
-    },
-    states: isRecord(v.states) ? v.states : {},
-    runner,
-    orchestrators: isRecord(v.orchestrators) ? v.orchestrators : {}
-  };
-}
-function itemByID(b, id) {
-  return b.items.find((it) => it.id === id);
-}
-function childrenOf(b, id) {
-  return b.items.filter((it) => (it.parent ?? 0) === id);
-}
-function isParent(b, id) {
-  return b.items.some((it) => it.parent === id);
-}
-function isAncestor(b, anc, id) {
-  const seen = /* @__PURE__ */ new Set();
-  for (let it = itemByID(b, id); it && it.parent && !seen.has(it.id); it = itemByID(b, it.parent)) {
-    seen.add(it.id);
-    if (it.parent === anc) return true;
-  }
-  return false;
-}
-function derivedOf(view, id) {
-  return view.states[String(id)] ?? { state: "draft" };
-}
-function openQuestions(it) {
-  const last = it.runs?.[it.runs.length - 1];
-  if (last?.state === "starting" && last.answer) return [];
-  const thread = it.thread ?? [];
-  const closes = (m) => m.kind === "answer" && m.answers && m.delivery !== "new_run" && m.delivery !== "superseded";
-  const answered = new Set(thread.filter(closes).map((m) => m.answers));
-  return thread.filter((m) => m.kind === "question" && !m.closed && !answered.has(m.id));
-}
-function openQuestion(it) {
-  return openQuestions(it)[0];
-}
-function rootOf(b, id) {
-  const seen = /* @__PURE__ */ new Set();
-  let it = itemByID(b, id);
-  while (it?.parent && !seen.has(it.id)) {
-    seen.add(it.id);
-    const up = itemByID(b, it.parent);
-    if (!up) break;
-    it = up;
-  }
-  return it?.id ?? id;
-}
-function withOrchestrator(b, id, q) {
-  return q.route === "orchestrator" && !!itemByID(b, rootOf(b, id))?.orchestrator;
-}
-function userQuestions(b, it) {
-  return openQuestions(it).filter((q) => !withOrchestrator(b, it.id, q));
-}
-function orchestratorQuestion(b, it) {
-  return openQuestions(it).find((q) => withOrchestrator(b, it.id, q));
-}
-function archivedBy(b, id) {
-  const seen = /* @__PURE__ */ new Set();
-  for (let it = itemByID(b, id); it && !seen.has(it.id); it = it.parent ? itemByID(b, it.parent) : void 0) {
-    if (it.archived) return it.id;
-    seen.add(it.id);
-  }
-  return 0;
-}
-function needsYouCount(views) {
-  let n = 0;
-  for (const v of views) {
-    for (const it of v.backlog.items) if (!archivedBy(v.backlog, it.id)) n += userQuestions(v.backlog, it).length;
-  }
-  return n;
-}
-function needsYouByRoot(views) {
-  const out = /* @__PURE__ */ new Map();
-  for (const [root2, v] of views) {
-    const n = needsYouCount([v]);
-    if (n > 0) out.set(root2, n);
-  }
-  return out;
-}
-function sources(b) {
-  return [...new Set(b.items.map((it) => it.source?.proposal ?? "").filter(Boolean))];
-}
-function sessionItems(views) {
-  const out = /* @__PURE__ */ new Map();
-  for (const [root2, v] of views) {
-    for (const it of v.backlog.items) {
-      for (const run of it.runs ?? []) {
-        if (run.session_id) out.set(run.session_id, { root: root2, id: it.id, title: it.title, state: derivedOf(v, it.id).state });
-      }
-    }
-  }
-  return out;
-}
-function closedState(s) {
-  return s === "done" || s === "dropped";
-}
-function listRows(view, opts) {
-  const b = view.backlog;
-  const kids = /* @__PURE__ */ new Map();
-  for (const it of b.items) {
-    const p = it.parent ?? 0;
-    kids.set(p, [...kids.get(p) ?? [], it.id]);
-  }
-  const wanted = opts.filter === "all" ? null : FILTER_STATES[opts.filter];
-  const matchMemo = /* @__PURE__ */ new Map();
-  const matches = (id) => {
-    const memo = matchMemo.get(id);
-    if (memo !== void 0) return memo;
-    matchMemo.set(id, false);
-    const it = itemByID(b, id);
-    const own = (wanted === null || wanted.includes(derivedOf(view, id).state)) && (!opts.source || it?.source?.proposal === opts.source);
-    const r = own || (kids.get(id) ?? []).some(matches);
-    matchMemo.set(id, r);
-    return r;
-  };
-  const needsBelow = (id) => (kids.get(id) ?? []).reduce((n, c) => {
-    const it = itemByID(b, c);
-    return n + (it && userQuestions(b, it).length > 0 ? 1 : 0) + needsBelow(c);
-  }, 0);
-  const rows = [];
-  const walk = (parent, depth) => {
-    for (const id of kids.get(parent) ?? []) {
-      const item = itemByID(b, id);
-      if (!item) continue;
-      const derived = derivedOf(view, id);
-      if (!opts.showDone && closedState(derived.state)) continue;
-      if (!opts.showArchived && item.archived) continue;
-      if (!matches(id)) continue;
-      const hasKids = (kids.get(id) ?? []).length > 0;
-      const folded = hasKids && opts.folded.has(id);
-      let reason = derived.reason ?? "";
-      if (hasKids) {
-        const n = needsBelow(id);
-        if (n > 0) reason = reason ? `${reason} \xB7 ${n} needs you` : `${n} needs you`;
-      }
-      rows.push({ item, depth, derived, parent: hasKids, folded, reason });
-      if (hasKids && !folded) walk(id, depth + 1);
-    }
-  };
-  walk(0, 0);
-  return rows;
-}
-function siblings(b, id) {
-  const it = itemByID(b, id);
-  return it ? childrenOf(b, it.parent ?? 0) : [];
-}
-function canBeParent(it) {
-  return it.status !== "running" && (it.runs ?? []).length === 0;
-}
-function keyboardMove(b, id, dir) {
-  const it = itemByID(b, id);
-  if (!it) return null;
-  const sibs = siblings(b, id);
-  const i = sibs.findIndex((s) => s.id === id);
-  switch (dir) {
-    case "up":
-      return i > 0 ? { before: sibs[i - 1].id } : null;
-    case "down":
-      return i >= 0 && i < sibs.length - 1 ? { after: sibs[i + 1].id } : null;
-    case "in": {
-      const prev = i > 0 ? sibs[i - 1] : void 0;
-      return prev && canBeParent(prev) ? { into: prev.id } : null;
-    }
-    case "out":
-      return it.parent ? { after: it.parent } : null;
-  }
-}
-function dropMove(b, dragId, targetId, zone) {
-  const target = itemByID(b, targetId);
-  if (!target || !itemByID(b, dragId) || dragId === targetId || isAncestor(b, dragId, targetId)) return null;
-  if (zone === "into") return canBeParent(target) ? { into: targetId } : null;
-  return zone === "before" ? { before: targetId } : { after: targetId };
-}
-function subtreeEnd(items, i, b) {
-  const root2 = items[i].id;
-  let j = i + 1;
-  while (j < items.length && isAncestor(b, root2, items[j].id)) j++;
-  return j;
-}
-function applyMove(b, id, to) {
-  const it = itemByID(b, id);
-  if (!it) return null;
-  let parent = it.parent ?? 0;
-  let anchor = 0;
-  if ("before" in to || "after" in to) {
-    anchor = "before" in to ? to.before : to.after;
-    const a = itemByID(b, anchor);
-    if (!a) return null;
-    parent = a.parent ?? 0;
-  } else if ("into" in to) {
-    anchor = to.into;
-    parent = to.into;
-  }
-  if (anchor === id || anchor !== 0 && isAncestor(b, id, anchor)) return null;
-  if (parent !== 0) {
-    const p = itemByID(b, parent);
-    if (!p || !canBeParent(p)) return null;
-  }
-  const items = b.items.map((x) => ({ ...x }));
-  const start2 = items.findIndex((x) => x.id === id);
-  const end = subtreeEnd(items, start2, b);
-  const block = items.splice(start2, end - start2);
-  block[0].parent = parent || void 0;
-  const moved = { ...b, items };
-  const indexOf = (x) => items.findIndex((y) => y.id === x);
-  const bottomOf = (p) => p === 0 ? items.length : subtreeEnd(items, indexOf(p), moved);
-  let at;
-  if ("before" in to) at = indexOf(to.before);
-  else if ("after" in to) at = subtreeEnd(items, indexOf(to.after), moved);
-  else if ("top" in to) at = parent === 0 ? 0 : indexOf(parent) + 1;
-  else at = bottomOf(parent);
-  items.splice(at, 0, ...block);
-  if (parent !== 0) {
-    const p = items.find((x) => x.id === parent);
-    if (p) p.status = "draft";
-  }
-  return moved;
-}
-function neededBy(b, id) {
-  return b.items.filter((it) => (it.waits_on ?? []).includes(id));
-}
-function blocking(b, id) {
-  return neededBy(b, id).filter((it) => it.status !== "done" && it.status !== "dropped");
-}
-function relatedIDs(b, id) {
-  const out = new Set((itemByID(b, id)?.waits_on ?? []).filter((w) => itemByID(b, w)));
-  for (const it of neededBy(b, id)) out.add(it.id);
-  out.delete(id);
-  return out;
-}
-function latestRun(it) {
-  return it.runs?.at(-1);
-}
-var ACTION_LABELS = {
-  queue: "Queue",
-  draft: "Back to draft",
-  start: "Start now",
-  review: "Send to review",
-  done: "Mark done",
-  drop: "Drop",
-  reopen: "Reopen",
-  delete: "Delete"
-};
-function itemActions(b, it, derived) {
-  if (isParent(b, it.id)) {
-    const out2 = [];
-    if (b.items.some((c) => isAncestor(b, it.id, c.id) && c.status === "draft" && !isParent(b, c.id))) out2.push("queue");
-    if (!closedState(derived.state)) out2.push("drop");
-    return out2;
-  }
-  const out = [];
-  const s = it.status;
-  if (s === "draft" || s === "review") out.push("queue");
-  if (s === "queued" || s === "review") out.push("draft");
-  if (s !== "done" && s !== "dropped" && derived.state !== "working" && derived.state !== "starting") out.push("start");
-  if (s === "running" && openQuestion(it)?.author === "af") out.push("review");
-  if (s !== "done" && s !== "dropped") out.push("done", "drop");
-  else out.push("reopen");
-  if (s === "draft" && (it.runs ?? []).length === 0 && (it.thread ?? []).length === 0) out.push("delete");
-  return out;
-}
+// src/url.ts
 function safeHttpUrl(raw) {
   if (!raw) return null;
   try {
@@ -10073,19 +9746,19 @@ function safeHttpUrl(raw) {
     return null;
   }
 }
-function topQueued(view) {
-  return view.backlog.items.find((it) => derivedOf(view, it.id).state === "queued" && !isParent(view.backlog, it.id));
-}
-function needsYouLabel(n) {
-  return n === 1 ? "1 needs you" : `${n} need you`;
-}
 
 // src/terminal_links.ts
-function terminalLinkHandler(open) {
+function terminalLinkHandler(open, setTooltip) {
   return {
     activate(_event, text) {
       const href = safeHttpUrl(text);
       if (href) open(href, "_blank", "noopener,noreferrer");
+    },
+    hover(_event, text) {
+      setTooltip(text);
+    },
+    leave() {
+      setTooltip("");
     }
   };
 }
@@ -10121,8 +9794,12 @@ var AttachTerminal = class {
       // platform. It also keeps Option out of xterm's block-select gesture, which
       // would otherwise fire on the inverted bit.
       macOptionClickForcesSelection: true,
-      // Opens OSC 8 links without xterm's default confirm() warning (terminal_links.ts).
-      linkHandler: terminalLinkHandler((url, target, features) => window.open(url, target, features))
+      // Opens OSC 8 links without xterm's default confirm() warning, and shows the
+      // real URL as a tooltip on hover (terminal_links.ts).
+      linkHandler: terminalLinkHandler(
+        (url, target, features) => window.open(url, target, features),
+        (tip) => tip ? container.setAttribute("title", tip) : container.removeAttribute("title")
+      )
     });
     this.fit = new import_addon_fit.FitAddon();
     this.term.loadAddon(this.fit);
@@ -16925,6 +16602,341 @@ function orderChildren(parent, children) {
     cursor.remove();
     cursor = next;
   }
+}
+
+// src/backlog_model.ts
+var STATE_LABELS = {
+  done: "Done",
+  dropped: "Dropped",
+  needs_you: "Needs you",
+  in_review: "In review",
+  working: "Working",
+  starting: "Starting",
+  stopped: "Stopped",
+  waiting: "Waiting",
+  queued: "Queued",
+  draft: "Draft"
+};
+var STATE_GLYPHS = {
+  done: "\u2713",
+  dropped: "\xD7",
+  needs_you: "?",
+  in_review: "\u270E",
+  working: "\u25CF",
+  starting: "\u25CC",
+  stopped: "\u25A0",
+  waiting: "\u23F8",
+  queued: "\u25B8",
+  draft: "\u25CB"
+};
+var FILTERS = [
+  { filter: "all", label: "All" },
+  { filter: "needs_you", label: "Needs you" },
+  { filter: "in_review", label: "In review" },
+  { filter: "working", label: "Working" },
+  { filter: "queued", label: "Queued" },
+  { filter: "waiting", label: "Waiting" },
+  { filter: "draft", label: "Draft" }
+];
+var FILTER_STATES = {
+  needs_you: ["needs_you"],
+  in_review: ["in_review"],
+  working: ["working", "starting"],
+  queued: ["queued"],
+  waiting: ["waiting"],
+  draft: ["draft"]
+};
+function formatID(id) {
+  return `B-${id}`;
+}
+function isRecord(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function arr(v) {
+  return Array.isArray(v) ? v : [];
+}
+function parseItem(v) {
+  const it = isRecord(v) ? v : {};
+  return { ...it, waits_on: arr(it.waits_on), runs: arr(it.runs), thread: arr(it.thread) };
+}
+function parseBacklogView(d) {
+  const v = isRecord(d) ? d : {};
+  const b = isRecord(v.backlog) ? v.backlog : {};
+  const settings = isRecord(b.settings) ? b.settings : { runner: false, max_running: 1, on_done: "keep" };
+  const runner = isRecord(v.runner) ? v.runner : { state: "off", used: 0, max: 1 };
+  return {
+    backlog: {
+      schema_version: Number(b.schema_version) || 0,
+      next_id: Number(b.next_id) || 1,
+      settings,
+      items: arr(b.items).map(parseItem)
+    },
+    states: isRecord(v.states) ? v.states : {},
+    runner,
+    orchestrators: isRecord(v.orchestrators) ? v.orchestrators : {}
+  };
+}
+function itemByID(b, id) {
+  return b.items.find((it) => it.id === id);
+}
+function childrenOf(b, id) {
+  return b.items.filter((it) => (it.parent ?? 0) === id);
+}
+function isParent(b, id) {
+  return b.items.some((it) => it.parent === id);
+}
+function isAncestor(b, anc, id) {
+  const seen = /* @__PURE__ */ new Set();
+  for (let it = itemByID(b, id); it && it.parent && !seen.has(it.id); it = itemByID(b, it.parent)) {
+    seen.add(it.id);
+    if (it.parent === anc) return true;
+  }
+  return false;
+}
+function derivedOf(view, id) {
+  return view.states[String(id)] ?? { state: "draft" };
+}
+function openQuestions(it) {
+  const last = it.runs?.[it.runs.length - 1];
+  if (last?.state === "starting" && last.answer) return [];
+  const thread = it.thread ?? [];
+  const closes = (m) => m.kind === "answer" && m.answers && m.delivery !== "new_run" && m.delivery !== "superseded";
+  const answered = new Set(thread.filter(closes).map((m) => m.answers));
+  return thread.filter((m) => m.kind === "question" && !m.closed && !answered.has(m.id));
+}
+function openQuestion(it) {
+  return openQuestions(it)[0];
+}
+function rootOf(b, id) {
+  const seen = /* @__PURE__ */ new Set();
+  let it = itemByID(b, id);
+  while (it?.parent && !seen.has(it.id)) {
+    seen.add(it.id);
+    const up = itemByID(b, it.parent);
+    if (!up) break;
+    it = up;
+  }
+  return it?.id ?? id;
+}
+function withOrchestrator(b, id, q) {
+  return q.route === "orchestrator" && !!itemByID(b, rootOf(b, id))?.orchestrator;
+}
+function userQuestions(b, it) {
+  return openQuestions(it).filter((q) => !withOrchestrator(b, it.id, q));
+}
+function orchestratorQuestion(b, it) {
+  return openQuestions(it).find((q) => withOrchestrator(b, it.id, q));
+}
+function archivedBy(b, id) {
+  const seen = /* @__PURE__ */ new Set();
+  for (let it = itemByID(b, id); it && !seen.has(it.id); it = it.parent ? itemByID(b, it.parent) : void 0) {
+    if (it.archived) return it.id;
+    seen.add(it.id);
+  }
+  return 0;
+}
+function needsYouCount(views) {
+  let n = 0;
+  for (const v of views) {
+    for (const it of v.backlog.items) if (!archivedBy(v.backlog, it.id)) n += userQuestions(v.backlog, it).length;
+  }
+  return n;
+}
+function needsYouByRoot(views) {
+  const out = /* @__PURE__ */ new Map();
+  for (const [root2, v] of views) {
+    const n = needsYouCount([v]);
+    if (n > 0) out.set(root2, n);
+  }
+  return out;
+}
+function sources(b) {
+  return [...new Set(b.items.map((it) => it.source?.proposal ?? "").filter(Boolean))];
+}
+function sessionItems(views) {
+  const out = /* @__PURE__ */ new Map();
+  for (const [root2, v] of views) {
+    for (const it of v.backlog.items) {
+      for (const run of it.runs ?? []) {
+        if (run.session_id) out.set(run.session_id, { root: root2, id: it.id, title: it.title, state: derivedOf(v, it.id).state });
+      }
+    }
+  }
+  return out;
+}
+function closedState(s) {
+  return s === "done" || s === "dropped";
+}
+function listRows(view, opts) {
+  const b = view.backlog;
+  const kids = /* @__PURE__ */ new Map();
+  for (const it of b.items) {
+    const p = it.parent ?? 0;
+    kids.set(p, [...kids.get(p) ?? [], it.id]);
+  }
+  const wanted = opts.filter === "all" ? null : FILTER_STATES[opts.filter];
+  const matchMemo = /* @__PURE__ */ new Map();
+  const matches = (id) => {
+    const memo = matchMemo.get(id);
+    if (memo !== void 0) return memo;
+    matchMemo.set(id, false);
+    const it = itemByID(b, id);
+    const own = (wanted === null || wanted.includes(derivedOf(view, id).state)) && (!opts.source || it?.source?.proposal === opts.source);
+    const r = own || (kids.get(id) ?? []).some(matches);
+    matchMemo.set(id, r);
+    return r;
+  };
+  const needsBelow = (id) => (kids.get(id) ?? []).reduce((n, c) => {
+    const it = itemByID(b, c);
+    return n + (it && userQuestions(b, it).length > 0 ? 1 : 0) + needsBelow(c);
+  }, 0);
+  const rows = [];
+  const walk = (parent, depth) => {
+    for (const id of kids.get(parent) ?? []) {
+      const item = itemByID(b, id);
+      if (!item) continue;
+      const derived = derivedOf(view, id);
+      if (!opts.showDone && closedState(derived.state)) continue;
+      if (!opts.showArchived && item.archived) continue;
+      if (!matches(id)) continue;
+      const hasKids = (kids.get(id) ?? []).length > 0;
+      const folded = hasKids && opts.folded.has(id);
+      let reason = derived.reason ?? "";
+      if (hasKids) {
+        const n = needsBelow(id);
+        if (n > 0) reason = reason ? `${reason} \xB7 ${n} needs you` : `${n} needs you`;
+      }
+      rows.push({ item, depth, derived, parent: hasKids, folded, reason });
+      if (hasKids && !folded) walk(id, depth + 1);
+    }
+  };
+  walk(0, 0);
+  return rows;
+}
+function siblings(b, id) {
+  const it = itemByID(b, id);
+  return it ? childrenOf(b, it.parent ?? 0) : [];
+}
+function canBeParent(it) {
+  return it.status !== "running" && (it.runs ?? []).length === 0;
+}
+function keyboardMove(b, id, dir) {
+  const it = itemByID(b, id);
+  if (!it) return null;
+  const sibs = siblings(b, id);
+  const i = sibs.findIndex((s) => s.id === id);
+  switch (dir) {
+    case "up":
+      return i > 0 ? { before: sibs[i - 1].id } : null;
+    case "down":
+      return i >= 0 && i < sibs.length - 1 ? { after: sibs[i + 1].id } : null;
+    case "in": {
+      const prev = i > 0 ? sibs[i - 1] : void 0;
+      return prev && canBeParent(prev) ? { into: prev.id } : null;
+    }
+    case "out":
+      return it.parent ? { after: it.parent } : null;
+  }
+}
+function dropMove(b, dragId, targetId, zone) {
+  const target = itemByID(b, targetId);
+  if (!target || !itemByID(b, dragId) || dragId === targetId || isAncestor(b, dragId, targetId)) return null;
+  if (zone === "into") return canBeParent(target) ? { into: targetId } : null;
+  return zone === "before" ? { before: targetId } : { after: targetId };
+}
+function subtreeEnd(items, i, b) {
+  const root2 = items[i].id;
+  let j = i + 1;
+  while (j < items.length && isAncestor(b, root2, items[j].id)) j++;
+  return j;
+}
+function applyMove(b, id, to) {
+  const it = itemByID(b, id);
+  if (!it) return null;
+  let parent = it.parent ?? 0;
+  let anchor = 0;
+  if ("before" in to || "after" in to) {
+    anchor = "before" in to ? to.before : to.after;
+    const a = itemByID(b, anchor);
+    if (!a) return null;
+    parent = a.parent ?? 0;
+  } else if ("into" in to) {
+    anchor = to.into;
+    parent = to.into;
+  }
+  if (anchor === id || anchor !== 0 && isAncestor(b, id, anchor)) return null;
+  if (parent !== 0) {
+    const p = itemByID(b, parent);
+    if (!p || !canBeParent(p)) return null;
+  }
+  const items = b.items.map((x) => ({ ...x }));
+  const start2 = items.findIndex((x) => x.id === id);
+  const end = subtreeEnd(items, start2, b);
+  const block = items.splice(start2, end - start2);
+  block[0].parent = parent || void 0;
+  const moved = { ...b, items };
+  const indexOf = (x) => items.findIndex((y) => y.id === x);
+  const bottomOf = (p) => p === 0 ? items.length : subtreeEnd(items, indexOf(p), moved);
+  let at;
+  if ("before" in to) at = indexOf(to.before);
+  else if ("after" in to) at = subtreeEnd(items, indexOf(to.after), moved);
+  else if ("top" in to) at = parent === 0 ? 0 : indexOf(parent) + 1;
+  else at = bottomOf(parent);
+  items.splice(at, 0, ...block);
+  if (parent !== 0) {
+    const p = items.find((x) => x.id === parent);
+    if (p) p.status = "draft";
+  }
+  return moved;
+}
+function neededBy(b, id) {
+  return b.items.filter((it) => (it.waits_on ?? []).includes(id));
+}
+function blocking(b, id) {
+  return neededBy(b, id).filter((it) => it.status !== "done" && it.status !== "dropped");
+}
+function relatedIDs(b, id) {
+  const out = new Set((itemByID(b, id)?.waits_on ?? []).filter((w) => itemByID(b, w)));
+  for (const it of neededBy(b, id)) out.add(it.id);
+  out.delete(id);
+  return out;
+}
+function latestRun(it) {
+  return it.runs?.at(-1);
+}
+var ACTION_LABELS = {
+  queue: "Queue",
+  draft: "Back to draft",
+  start: "Start now",
+  review: "Send to review",
+  done: "Mark done",
+  drop: "Drop",
+  reopen: "Reopen",
+  delete: "Delete"
+};
+function itemActions(b, it, derived) {
+  if (isParent(b, it.id)) {
+    const out2 = [];
+    if (b.items.some((c) => isAncestor(b, it.id, c.id) && c.status === "draft" && !isParent(b, c.id))) out2.push("queue");
+    if (!closedState(derived.state)) out2.push("drop");
+    return out2;
+  }
+  const out = [];
+  const s = it.status;
+  if (s === "draft" || s === "review") out.push("queue");
+  if (s === "queued" || s === "review") out.push("draft");
+  if (s !== "done" && s !== "dropped" && derived.state !== "working" && derived.state !== "starting") out.push("start");
+  if (s === "running" && openQuestion(it)?.author === "af") out.push("review");
+  if (s !== "done" && s !== "dropped") out.push("done", "drop");
+  else out.push("reopen");
+  if (s === "draft" && (it.runs ?? []).length === 0 && (it.thread ?? []).length === 0) out.push("delete");
+  return out;
+}
+function topQueued(view) {
+  return view.backlog.items.find((it) => derivedOf(view, it.id).state === "queued" && !isParent(view.backlog, it.id));
+}
+function needsYouLabel(n) {
+  return n === 1 ? "1 needs you" : `${n} need you`;
 }
 
 // src/backlog_usage.ts

@@ -572,16 +572,8 @@ export function itemActions(b: Backlog, it: Item, derived: Derived): ItemAction[
   return out;
 }
 
-/** href for an agent-supplied link: only http and https URLs, else null. */
-export function safeHttpUrl(raw: string | undefined): string | null {
-  if (!raw) return null;
-  try {
-    const u = new URL(raw);
-    return (u.protocol === "http:" || u.protocol === "https:") && u.host ? u.href : null;
-  } catch {
-    return null;
-  }
-}
+// safeHttpUrl lives in url.ts, shared with the web terminal's link handler.
+export { safeHttpUrl } from "./url.js";
 
 /** The item a Run next pass starts first: the top Queued leaf in tree order. */
 export function topQueued(view: BacklogView): Item | undefined {

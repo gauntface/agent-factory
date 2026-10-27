@@ -614,8 +614,12 @@ export class AttachTerminal {
       // platform. It also keeps Option out of xterm's block-select gesture, which
       // would otherwise fire on the inverted bit.
       macOptionClickForcesSelection: true,
-      // Opens OSC 8 links without xterm's default confirm() warning (terminal_links.ts).
-      linkHandler: terminalLinkHandler((url, target, features) => window.open(url, target, features)),
+      // Opens OSC 8 links without xterm's default confirm() warning, and shows the
+      // real URL as a tooltip on hover (terminal_links.ts).
+      linkHandler: terminalLinkHandler(
+        (url, target, features) => window.open(url, target, features),
+        (tip) => (tip ? container.setAttribute("title", tip) : container.removeAttribute("title")),
+      ),
     });
     this.fit = new FitAddon();
     this.term.loadAddon(this.fit);
