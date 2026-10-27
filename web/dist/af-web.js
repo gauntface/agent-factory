@@ -6302,11 +6302,26 @@ function parseRoute(hash) {
 function serializeRoute(route) {
   return route?.session ? `#/session/${encodeURIComponent(route.session)}` : "";
 }
+function parseProjectRoute(hash) {
+  const match = /^#\/project\/([^/]+)$/.exec(hash);
+  if (!match) return null;
+  try {
+    const project = decodeURIComponent(match[1]);
+    return project.trim() && !/[\x00-\x1f\x7f]/.test(project) ? { project } : null;
+  } catch {
+    return null;
+  }
+}
+function serializeProjectRoute(route) {
+  return route.project ? `#/project/${encodeURIComponent(route.project)}` : "";
+}
+function isRoute(hash) {
+  return parseRoute(hash) !== null || parseProjectRoute(hash) !== null;
+}
 var ROUTE_KEY = "af-session-route";
 function stashRoute(hash, storage) {
   try {
-    const route = parseRoute(hash);
-    if (route) storage.setItem(ROUTE_KEY, serializeRoute(route));
+    if (isRoute(hash)) storage.setItem(ROUTE_KEY, hash);
     else storage.removeItem(ROUTE_KEY);
   } catch {
   }
@@ -6315,7 +6330,7 @@ function restoreRoute(hash, storage) {
   try {
     const saved = storage.getItem(ROUTE_KEY);
     storage.removeItem(ROUTE_KEY);
-    return hash || serializeRoute(parseRoute(saved ?? ""));
+    return hash || (saved && isRoute(saved) ? saved : "");
   } catch {
     return hash;
   }
@@ -20763,15 +20778,37 @@ var AppShell = class {
       { class: "af-project-item-meta" },
       ...record && !record.path_exists ? [h("span", { class: "af-project-missing" }, "checkout missing"), ` \xB7 ${projectMeta(p)}`] : [projectMeta(p)]
     );
-    const item = h("button", { type: "button", class: cls }, check, label, meta);
+    const item = h("a", { class: cls, href: serializeProjectRoute({ project: p.root }) }, check, label, meta);
     item.dataset.projectFocus = `project:${p.root}`;
     item.setAttribute("role", "option");
     item.setAttribute("aria-selected", current ? "true" : "false");
-    item.addEventListener("click", (e) => {
+    const activate = (e) => {
+      e.preventDefault();
       e.stopPropagation();
       this.closeProjectMenu();
       this.appControls.dismiss();
       this.actions.switchProject(p.root);
+    };
+    item.addEventListener("click", (e) => {
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) {
+        e.stopPropagation();
+        return;
+      }
+      activate(e);
+    });
+    let spaceArmed = false;
+    item.addEventListener("keydown", (e) => {
+      if (e.key !== " " || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      e.preventDefault();
+      if (!e.repeat) spaceArmed = true;
+    });
+    item.addEventListener("keyup", (e) => {
+      if (e.key !== " " || !spaceArmed) return;
+      spaceArmed = false;
+      activate(e);
+    });
+    item.addEventListener("blur", () => {
+      spaceArmed = false;
     });
     return item;
   }
@@ -22103,6 +22140,7 @@ function resolveRoute() {
     return;
   }
   const route = parseRoute(location.hash);
+  const projectRoute = route ? null : parseProjectRoute(location.hash);
   resolvingRoute = true;
   try {
     const session = route && store.get().sessions.find((s) => s.id === route.session);
@@ -22110,6 +22148,15 @@ function resolveRoute() {
       if (session.worktree?.repo_path) switchProject(session.worktree.repo_path);
       setStatusFilter(operatorKind(session), true);
       openFromRail(session.id);
+    } else if (projectRoute) {
+      const { sessions, tasks, registeredProjects } = store.get();
+      const known = projectSummaries(sessions, tasks, projectRoots(registeredProjects)).some((p) => p.root === projectRoute.project);
+      if (known) {
+        switchProject(projectRoute.project);
+        store.set({ selectedId: null, view: "sessions", focus: "rail", activeTab: 0 });
+      } else {
+        showTransientNotice("No project at that path in this daemon");
+      }
     } else {
       store.set({ selectedId: null, view: "sessions", focus: "rail", activeTab: 0 });
       if (route) showTransientNotice("No session with that id in this daemon");
