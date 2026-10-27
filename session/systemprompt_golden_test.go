@@ -160,9 +160,14 @@ func TestAfUsageReferenceJoints(t *testing.T) {
 			want: "af keeps them outside the worktree.\n\nBacklog items: when af started",
 		},
 		{
-			// backlog + "\n\n" + outro: a blank line, a new paragraph.
-			name: "backlog to inside outro",
-			want: "does not count their use.\n\nFinishing up: when the user confirms",
+			// backlog + "\n\n" + orchestrator: a blank line, a new paragraph.
+			name: "backlog to orchestrator",
+			want: "does not count their use.\n\nEffort orchestrator: a session can own",
+		},
+		{
+			// orchestrator + "\n\n" + outro: a blank line, a new paragraph.
+			name: "orchestrator to inside outro",
+			want: "what waits, and why.\n\nFinishing up: when the user confirms",
 		},
 		{
 			// outro + "\n\n" + tail.

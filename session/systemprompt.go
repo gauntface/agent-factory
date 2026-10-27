@@ -33,7 +33,7 @@ import (
 // generated plugin artifacts must never carry a verbatim copy of the "you are
 // running inside af" opening, which is false for the audience that installed
 // them.
-const afUsageReference = afUsageIntroInside + "\n\n" + afUsageDispatched + "\n\n" + afUsageBody + "\n\n" + afUsageAttentionInside + "\n\n" + afUsageProposalsInside + "\n\n" + afUsageBacklogInside + "\n\n" + afUsageOutroInside + "\n\n" + afUsageOutro
+const afUsageReference = afUsageIntroInside + "\n\n" + afUsageDispatched + "\n\n" + afUsageBody + "\n\n" + afUsageAttentionInside + "\n\n" + afUsageProposalsInside + "\n\n" + afUsageBacklogInside + "\n\n" + afUsageOrchestratorInside + "\n\n" + afUsageOutroInside + "\n\n" + afUsageOutro
 
 // AfPluginUsageReference is afUsageReference reframed for an agent that is NOT
 // running inside af: the same body and the same command reference, but an
@@ -147,10 +147,30 @@ const afUsageProposalsInside = `Proposals: when the user asks you to make a prop
 // it works only in a session af started for a backlog item.
 const afUsageBacklogInside = `Backlog items: when af started your session for a backlog item (your first prompt says "You are working on backlog item B-12"), report through that item, not only in your reply:
   af backlog done --self [--pr <url>]                  The work is finished; the item goes to the user for review. Pass --pr when you opened a pull request
-  af backlog ask --self [--handoff-file <path|->] [--then archive|wait] <text>  Ask the user one question on the item, then end your turn at once. With --then archive (the default) af archives this session when the turn ends; the answer restores it and arrives as a prompt. --handoff-file stores notes (at most 8 KB) for a new session if this one is gone; write what the next agent needs to continue. --then wait keeps this session live until the answer
+  af backlog ask --self [--handoff-file <path|->] [--then archive|wait] <text>  Ask the user one question on the item, then end your turn at once. If the group has an orchestrator, the question goes to it first; it answers or sends it to the user. With --then archive (the default) af archives this session when the turn ends; the answer restores it and arrives as a prompt. --handoff-file stores notes (at most 8 KB) for a new session if this one is gone; write what the next agent needs to continue. --then wait keeps this session live until the answer
   af backlog add <title> --parent <id>                 Add more work you found as a draft under the item yours is part of (the "It is part of B-1" line of your first prompt); the user queues it
   af backlog note --self <text>                        Add a note to the item's thread; nobody is notified
 From an item session af refuses queue, draft, review, reopen, start, run, done <id>, drop, delete, answer, and changing the runner or budget: those are the user's. If you need one of them, ask with "af backlog ask --self". Do not create other af sessions from an item session; the cap per run does not count their use.`
+
+// afUsageOrchestratorInside is inside-only: binding and --self resolve the
+// calling session.
+const afUsageOrchestratorInside = `Effort orchestrator: a session can own one backlog group (a top-level parent, an "effort") as its orchestrator. Bind only when the user asks you to own or run the effort:
+  af backlog add --file <path or -> --orchestrate      Add the batch and bind this session to the batch's top-level parent
+  af backlog orchestrate <group> --self [--replace]     Bind this session to an existing group; --replace takes it over from another session
+  af backlog orchestrate <group> --clear               Unbind; open questions that wait for you go to the user
+  af backlog orchestrate --self --handoff-file <path|->  Save notes (at most 8 KB) for a session that replaces you
+  af backlog orchestrate --self --stay                 Keep this session live after this turn, once
+  af backlog escalate <id> [--note <text>]             Send the item's open question to the user's Inbox
+One session orchestrates one group, and an item session cannot orchestrate.
+
+af wakes you with a prompt that starts "Events in effort B-1:" and lists the group's events. You do not need a monitor or a watch task:
+  question: an item's agent asked a question; it goes to you, not to the user. Read it with "af backlog show <id>", then answer with "af backlog answer <id> <text>", or run "af backlog escalate <id>" when only the user can decide
+  review: an item went to review. Review its PR; if it is good, merge it, then run "af backlog done <id>" (af adds a note to the user's Inbox). If it is not good, send the changes to the item's session with "af sessions send-prompt <title> <prompt>" (the title is in its runs); af does not wake you when it pushes again, so run "af backlog orchestrate --self --stay" and check the PR yourself
+  stalled: an item's run sat idle 30 minutes with no done and no question, or its session stopped. Check it with "af backlog show <id>" and "af sessions preview <title>", then send it a prompt, restore it, or tell the user
+  finished: every item of the group is done or dropped; report to the user
+  escalation_answered: the user answered a question you escalated; continue from the answer
+  answered_in_session: the user answered the item's question in its own session; it no longer waits for you
+After a turn that af started ends with nothing pending, af archives you; the next event restores you. Run "af backlog orchestrate --self --stay" during the turn to stay live. If you are gone, af starts a new session with your handoff notes, so keep them current after each decision: what is merged, what waits, and why.`
 
 // afSkillDescriptionInside is AfSkillDescription for an agent inside an af
 // session, where proposal commands work.
