@@ -17148,6 +17148,9 @@ async function addNote(root2, id, text, token2) {
   const resp = await af("PostBacklogMessage", { repo_path: root2, id, kind: "note", text }, token2);
   return resp.message;
 }
+async function dismissNote(root2, id, noteId, token2) {
+  await af("DismissBacklogNote", { repo_path: root2, id, note_id: noteId }, token2);
+}
 async function openOrchestrator(root2, id, token2) {
   const resp = await af("OpenBacklogOrchestrator", { repo_path: root2, id }, token2);
   return { session_id: resp?.session_id ?? "", title: resp?.title ?? "", change: resp?.change ?? "" };
@@ -17513,6 +17516,11 @@ function pausedNotice(id) {
 
 // src/backlog_inbox.ts
 var EMPTY_INBOX = "No questions";
+function noteTime(at) {
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime())) return "an unknown time";
+  return date.toLocaleString(void 0, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" });
+}
 var QuestionBox = class {
   constructor(id, submit) {
     this.submit = submit;
@@ -17611,7 +17619,7 @@ ${age}`;
     if (want.length !== have.length || want.some((li, i) => li !== have[i])) this.list.replaceChildren(...want);
     this.empty.hidden = want.length > 0;
   }
-  /** A read-only note card. Its signature lets an unchanged note keep its node. */
+  /** A note card. Its signature lets an unchanged note keep its node. */
   note(item, note) {
     const label = `${formatID(item.id)} ${item.title}`;
     const sig = `note
@@ -17626,14 +17634,38 @@ ${item.pr ?? ""}`;
     open.addEventListener("click", () => this.actions.select(item.id));
     const pr = safeHttpUrl(item.pr);
     const text = h("p", { class: "af-backlog-inbox-note-text" }, note.text);
+    const dismiss = h("button", { type: "button" }, "Dismiss");
+    dismiss.setAttribute("aria-label", `Dismiss note on ${formatID(item.id)} from ${noteTime(note.at)}`);
     const li = h(
       "li",
       { class: "af-backlog-inbox-card af-backlog-inbox-note" },
       h("div", { class: "af-backlog-inbox-head" }, open, h("span", { class: "af-backlog-reason" }, `Noted ${formatTime(note.at)}`)),
       text,
-      ...pr ? [h("a", { class: "af-backlog-row-pr", href: pr, target: "_blank", rel: "noopener noreferrer" }, "Pull request", icon("external-link"))] : []
+      h(
+        "div",
+        { class: "af-backlog-inbox-note-actions" },
+        ...pr ? [h("a", { class: "af-backlog-row-pr", href: pr, target: "_blank", rel: "noopener noreferrer" }, "Pull request", icon("external-link"))] : [],
+        dismiss
+      )
     );
     li.dataset.sig = sig;
+    dismiss.addEventListener("click", () => {
+      if (dismiss.disabled) return;
+      dismiss.disabled = true;
+      const next = li.nextElementSibling;
+      const prev = li.previousElementSibling;
+      void this.actions.dismiss(item.id, note.id).then((ok) => {
+        if (!ok) {
+          dismiss.disabled = false;
+          return;
+        }
+        const active = document.activeElement;
+        if (active !== dismiss && active !== document.body && active !== null) return;
+        const target = [next, prev].find((c) => c !== null && this.list.contains(c))?.querySelector("button");
+        if (target) target.focus();
+        else this.actions.focusInbox();
+      });
+    });
     return li;
   }
   card(id) {
@@ -18651,7 +18683,9 @@ var BacklogPane = class {
     this.effort = new EffortSessions(host, () => this.render());
     this.inboxList = new InboxList({
       answer: (id, qid, text) => this.answer(this.root ?? "", id, qid, text),
-      select: (id) => this.select(id)
+      dismiss: (id, noteId) => this.dismiss(this.root ?? "", id, noteId),
+      select: (id) => this.select(id),
+      focusInbox: () => this.filterSlot.querySelector("button")?.focus()
     });
     this.newGroup = entryField("New group\u2026", "New group title", (title) => this.mutate((t) => addItem(this.root ?? "", { title }, t)));
     this.headSlot.append(h(
@@ -18894,6 +18928,19 @@ ${id}`;
       return false;
     }
   }
+  async dismiss(root2, id, noteId) {
+    const token2 = this.host.token();
+    if (token2 === null) return false;
+    try {
+      await dismissNote(root2, id, noteId, token2);
+      void this.host.refresh();
+      return true;
+    } catch (e) {
+      this.host.notify(errorText(e));
+      void this.host.refresh();
+      return false;
+    }
+  }
   runnerActions() {
     return {
       setRunner: (on) => this.mutate((t) => setSettings(this.root ?? "", { runner: on }, t)),
@@ -18984,7 +19031,10 @@ ${id}`;
     placeChildren(this.listEl, segments(rows).map((seg) => seg.kind === "group" ? this.card(v, seg.head, seg.rows) : this.loose(v, seg.rows)));
     this.overviewEl.textContent = overview(v);
     this.runner.update(v, this.data?.budget ?? null, this.data?.usage ?? null, this.running);
+    const chips = [...this.filterSlot.querySelectorAll("button")];
+    const focusedChip = chips.findIndex((b) => b === document.activeElement);
     this.filterSlot.replaceChildren(this.filters(v));
+    if (focusedChip >= 0) this.filterSlot.querySelectorAll("button")[focusedChip]?.focus();
     this.emptySlot.replaceChildren();
     if (this.inboxOn) {
       this.popover.hide();

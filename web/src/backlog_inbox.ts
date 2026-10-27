@@ -11,6 +11,12 @@ import type { SessionData } from "./types.js";
 
 export const EMPTY_INBOX = "No questions";
 
+function noteTime(at: string): string {
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime())) return "an unknown time";
+  return date.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" });
+}
+
 /** A question's text, the asking agent's handoff in full, what an answer
  *  does, and the answer box. */
 export class QuestionBox {
@@ -73,7 +79,10 @@ export class QuestionBox {
 
 export interface InboxActions {
   answer(id: number, questionId: number, text: string): Promise<boolean>;
+  dismiss(id: number, noteId: number): Promise<boolean>;
   select(id: number): void;
+  /** Focuses the Inbox filter chip, when a dismiss leaves no card to focus. */
+  focusInbox(): void;
 }
 
 interface Card {
@@ -84,7 +93,7 @@ interface Card {
 
 /** Each open question as a card: item, age, question, handoff, what an answer
  *  does, answer box. Cards are kept by item and question. Inbox notes, such
- *  as an effort session's done note, follow as read-only cards. */
+ *  as an effort session's done note, follow with a Dismiss button. */
 export class InboxList {
   readonly el = h("div", { class: "af-backlog-inbox" });
   private readonly list = h("ul", { class: "af-backlog-inbox-list" });
@@ -121,7 +130,7 @@ export class InboxList {
     this.empty.hidden = want.length > 0;
   }
 
-  /** A read-only note card. Its signature lets an unchanged note keep its node. */
+  /** A note card. Its signature lets an unchanged note keep its node. */
   private note(item: Item, note: Message): HTMLElement {
     const label = `${formatID(item.id)} ${item.title}`;
     const sig = `note\n${item.id}:${note.id}\n${label}\n${note.text}\n${note.at}\n${item.pr ?? ""}`;
@@ -131,10 +140,31 @@ export class InboxList {
     open.addEventListener("click", () => this.actions.select(item.id));
     const pr = safeHttpUrl(item.pr);
     const text = h("p", { class: "af-backlog-inbox-note-text" }, note.text);
+    const dismiss = h("button", { type: "button" }, "Dismiss");
+    dismiss.setAttribute("aria-label", `Dismiss note on ${formatID(item.id)} from ${noteTime(note.at)}`);
     const li = h("li", { class: "af-backlog-inbox-card af-backlog-inbox-note" },
       h("div", { class: "af-backlog-inbox-head" }, open, h("span", { class: "af-backlog-reason" }, `Noted ${formatTime(note.at)}`)), text,
-      ...(pr ? [h("a", { class: "af-backlog-row-pr", href: pr, target: "_blank", rel: "noopener noreferrer" }, "Pull request", icon("external-link"))] : []));
+      h("div", { class: "af-backlog-inbox-note-actions" },
+        ...(pr ? [h("a", { class: "af-backlog-row-pr", href: pr, target: "_blank", rel: "noopener noreferrer" }, "Pull request", icon("external-link"))] : []),
+        dismiss));
     li.dataset.sig = sig;
+    dismiss.addEventListener("click", () => {
+      if (dismiss.disabled) return;
+      dismiss.disabled = true;
+      const next = li.nextElementSibling as HTMLElement | null;
+      const prev = li.previousElementSibling as HTMLElement | null;
+      void this.actions.dismiss(item.id, note.id).then((ok) => {
+        if (!ok) {
+          dismiss.disabled = false;
+          return;
+        }
+        const active = document.activeElement;
+        if (active !== dismiss && active !== document.body && active !== null) return;
+        const target = [next, prev].find((c) => c !== null && this.list.contains(c))?.querySelector("button");
+        if (target) target.focus();
+        else this.actions.focusInbox();
+      });
+    });
     return li;
   }
 
