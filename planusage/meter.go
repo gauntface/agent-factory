@@ -208,11 +208,12 @@ func (s *MeterState) account(name string) *AccountMeter {
 }
 
 // Scan meters every Claude Code transcript under configDir for account. A
-// file under one of backlogDirs also counts as backlog cost. A file untouched
+// file that is one of backlogPaths, or under one of them, also counts as
+// backlog cost. A file untouched
 // for longer than the weekly window is not read and keeps no mark, and a file
 // whose size and modification time match its mark is not opened. It returns
 // whether anything changed.
-func (s *MeterState) Scan(account, configDir string, backlogDirs []string, overrides map[string]Price, now time.Time) bool {
+func (s *MeterState) Scan(account, configDir string, backlogPaths []string, overrides map[string]Price, now time.Time) bool {
 	a := s.account(account)
 	projects, _ := filepath.Glob(filepath.Join(configDir, "projects", "*"))
 	files := TranscriptFiles(projects)
@@ -242,7 +243,7 @@ func (s *MeterState) Scan(account, configDir string, backlogDirs []string, overr
 				a.Unpriced = append(a.Unpriced, m)
 			}
 		}
-		backlog := underAny(f, backlogDirs)
+		backlog := underAny(f, backlogPaths)
 		for _, e := range res.Entries {
 			if now.Sub(e.At) > keepFor {
 				continue
@@ -281,7 +282,10 @@ func (s *MeterState) Scan(account, configDir string, backlogDirs []string, overr
 
 func underAny(path string, dirs []string) bool {
 	for _, d := range dirs {
-		if d != "" && strings.HasPrefix(path, filepath.Clean(d)+string(filepath.Separator)) {
+		if d == "" {
+			continue
+		}
+		if d = filepath.Clean(d); path == d || strings.HasPrefix(path, d+string(filepath.Separator)) {
 			return true
 		}
 	}

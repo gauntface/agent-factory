@@ -31,13 +31,28 @@ func (m RunMeter) Cost() float64 { return RunRef{Meter: m.Meter}.Cost() }
 // transcript (resume, fork) counts once. A run with no files is unmeterable
 // once it has run for UnmeterableAfter.
 func MeterRun(id int, r RunRef, files []string, seen map[string]int64, overrides map[string]planusage.Price, now time.Time) RunMeter {
+	out := meterFiles(id, r, files, planusage.ReadOptions{Overrides: overrides, Seen: seen})
+	if len(files) == 0 && now.Sub(r.StartedAt) >= UnmeterableAfter {
+		out.Unmeterable = fmt.Sprintf("af cannot find the transcripts of %s's session; start %s by hand with \"af backlog start %d\"", FormatID(id), FormatID(id), id)
+	}
+	return out
+}
+
+// MeterOrchestrator reads the transcripts of group's orchestrator from their
+// stored offsets, like MeterRun, and counts only messages from after the
+// session was bound.
+func MeterOrchestrator(group int, o Orchestrator, files []string, seen map[string]int64, overrides map[string]planusage.Price) RunMeter {
+	return meterFiles(group, RunRef{Meter: o.Meter}, files, planusage.ReadOptions{Overrides: overrides, Seen: seen, Since: o.BoundAt})
+}
+
+func meterFiles(id int, r RunRef, files []string, opts planusage.ReadOptions) RunMeter {
 	out := RunMeter{Meter: maps.Clone(r.Meter)}
 	if out.Meter == nil {
 		out.Meter = map[string]Meter{}
 	}
 	for _, f := range files {
 		old := out.Meter[f]
-		res, err := planusage.ReadTranscript(f, planusage.FileMark{Offset: old.Offset, Last: old.Last}, planusage.ReadOptions{Overrides: overrides, Seen: seen})
+		res, err := planusage.ReadTranscript(f, planusage.FileMark{Offset: old.Offset, Last: old.Last}, opts)
 		out.Entries = append(out.Entries, res.Entries...)
 		next := Meter{Offset: res.Mark.Offset, Cost: old.Cost + res.Cost(), Last: res.Mark.Last}
 		if _, known := r.Meter[f]; next != old || !known {
@@ -51,9 +66,6 @@ func MeterRun(id int, r RunRef, files []string, seen map[string]int64, overrides
 		case err != nil && out.Unmeterable == "" && res.Mark.Offset == old.Offset:
 			out.Unmeterable = fmt.Sprintf("af cannot read a transcript of %s's session: %v", FormatID(id), err)
 		}
-	}
-	if len(files) == 0 && now.Sub(r.StartedAt) >= UnmeterableAfter {
-		out.Unmeterable = fmt.Sprintf("af cannot find the transcripts of %s's session; start %s by hand with \"af backlog start %d\"", FormatID(id), FormatID(id), id)
 	}
 	return out
 }

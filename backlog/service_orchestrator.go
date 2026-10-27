@@ -25,7 +25,15 @@ type SessionInfo struct {
 	Program string
 	Item    int
 	State   string
+	// TurnActive is whether a turn af started with the group's events is
+	// running in the session.
+	TurnActive bool
 }
+
+// ErrStayNoTurn refuses --stay when no turn af started is running: af archives
+// only after such a turn, so there is nothing to skip.
+var ErrStayNoTurn = errors.New("--stay applies only during a turn af started with the group's events, and none is running, " +
+	"so af will not archive this session now; run it again from the next turn af starts")
 
 // ErrOrchestrateFromItemSession refuses an item session as an orchestrator.
 var ErrOrchestrateFromItemSession = errors.New("run this from the session that should orchestrate, not from an item session")
@@ -253,7 +261,12 @@ func (s *Service) SetOrchestratorHandoff(req SetOrchestratorHandoffRequest) (*Or
 			}
 		}
 		if req.Stay {
-			id, err = b.SetOrchestratorStay(req.SessionID, s.now())
+			if id, err = b.SetOrchestratorStay(req.SessionID, s.now()); err != nil {
+				return nil, err
+			}
+			if info, ok := s.host.Session(p.id, strings.TrimSpace(req.SessionID)); !ok || !info.TurnActive {
+				return nil, ErrStayNoTurn
+			}
 		}
 		return []int{id}, err
 	})

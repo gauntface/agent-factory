@@ -95,3 +95,17 @@ func TestMeterFindsOrchestrators(t *testing.T) {
 	require.Same(t, inst, orchs[0].inst)
 	require.Zero(t, m.backlogSlotsUsed(repoID), "an orchestrator takes no max_running slot")
 }
+
+func TestOrchestratorWithoutAConversationIsNotMetered(t *testing.T) {
+	m, repoID := orchestratedGroup(t)
+	inst := liveOrchestrator(t, m, repoID)
+	_, _, ok := orchestratorConversation(inst)
+	require.False(t, ok, "with no conversation id af cannot tell its transcript from others in the dir")
+}
+
+func TestStayRefusedOutsideAnAfTurn(t *testing.T) {
+	m, repoID := orchestratedGroup(t)
+	liveOrchestrator(t, m, repoID)
+	_, err := m.backlogService().SetOrchestratorHandoff(backlog.SetOrchestratorHandoffRequest{RepoID: repoID, SessionID: "o1", Stay: true})
+	require.ErrorIs(t, err, backlog.ErrStayNoTurn)
+}

@@ -115,6 +115,12 @@ func TestBacklogOrchestrate(t *testing.T) {
 		t.Fatal(out)
 	}
 
+	if _, err := runBacklogCmd(t, "orchestrate", "--self", "--stay"); err == nil || err.Error() != backlog.ErrStayNoTurn.Error() {
+		t.Fatal(err)
+	}
+	info := backlogTestSessions["o1"]
+	info.TurnActive = true
+	backlogTestSessions["o1"] = info
 	out, err = runBacklogCmd(t, "orchestrate", "--self", "--stay")
 	if err != nil {
 		t.Fatal(err)

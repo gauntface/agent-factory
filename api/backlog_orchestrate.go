@@ -41,9 +41,9 @@ var backlogOrchestrateCmd = &cobra.Command{
 		"--handoff-file stores notes for a session that replaces this one as orchestrator (at " +
 		"most 8 KB), read from a file or from stdin with -. Without a group it updates the notes " +
 		"of the group this session orchestrates.\n\n" +
-		"When a turn af started in the orchestrator ends with no events left to send, af " +
-		"archives the session; the next event restores it. --stay keeps it live after the " +
-		"current turn, once.",
+		"af archives the session after an af-delivered turn that ends with nothing pending, " +
+		"including after you detach; the next event restores it. --stay, run during that turn, " +
+		"keeps it live after the turn, once.",
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runBacklog(func() (any, error) {

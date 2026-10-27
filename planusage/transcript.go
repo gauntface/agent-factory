@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -45,6 +46,9 @@ type ReadOptions struct {
 	// a new transcript on resume, fork and account swap; a key counts once.
 	// ReadTranscript adds what it counts. Nil counts per read only.
 	Seen map[string]int64
+	// Since, when set, reads past the messages from before it without
+	// counting them.
+	Since time.Time
 }
 
 // ReadResult is what one read of a transcript found.
@@ -208,6 +212,10 @@ func ReadTranscript(path string, mark FileMark, opts ReadOptions) (ReadResult, e
 		if at.IsZero() {
 			at = info.ModTime()
 		}
+		if at.Before(opts.Since) {
+			res.Mark.Offset = next
+			continue
+		}
 		res.Entries = append(res.Entries, Entry{At: at, Cost: msg.Usage.cost(pr)})
 		if key != "" {
 			seen[key] = at.Unix()
@@ -234,6 +242,49 @@ func TranscriptFiles(projectDirs []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// ConversationFiles lists the transcripts of one conversation in Claude
+// project directories: <dir>/<id>.jsonl and its subagents' files. An id that
+// is not a plain file name lists nothing.
+func ConversationFiles(projectDirs []string, id string) []string {
+	if !conversationIDOK(id) {
+		return nil
+	}
+	var out []string
+	for _, dir := range projectDirs {
+		if dir == "" {
+			continue
+		}
+		matches, _ := filepath.Glob(filepath.Join(dir, id, "subagents", "*.jsonl"))
+		for _, m := range append([]string{filepath.Join(dir, id+".jsonl")}, matches...) {
+			if info, err := os.Stat(m); err == nil && info.Mode().IsRegular() {
+				out = append(out, m)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ConversationPaths are the paths that hold one conversation's transcripts
+// in Claude project directories, for Scan's backlog paths: each file and the
+// directory of its subagents.
+func ConversationPaths(projectDirs []string, id string) []string {
+	if !conversationIDOK(id) {
+		return nil
+	}
+	var out []string
+	for _, dir := range projectDirs {
+		if dir != "" {
+			out = append(out, filepath.Join(dir, id+".jsonl"), filepath.Join(dir, id))
+		}
+	}
+	return out
+}
+
+func conversationIDOK(id string) bool {
+	return id != "" && id != "." && id != ".." && !strings.ContainsAny(id, `/\*?[`)
 }
 
 // PruneSeen drops the keys of messages older than the weekly window and a day.

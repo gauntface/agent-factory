@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -263,17 +264,16 @@ func (m *Manager) meterPassLocked(now time.Time) {
 		if r.inst == nil {
 			continue
 		}
-		_, dirs, err := r.inst.ClaudeRunTranscriptDirs()
-		if err != nil {
+		conv, dirs, ok := orchestratorConversation(r.inst)
+		if !ok {
 			continue
 		}
-		backlogDirs = append(backlogDirs, dirs...)
+		backlogDirs = append(backlogDirs, planusage.ConversationPaths(dirs, conv)...)
 		sessionID := r.orch.SessionID
 		metered[sessionID] = true
 		seen := state.RunSeenFor(sessionID)
 		planusage.PruneSeen(seen, now)
-		rm := backlog.MeterRun(r.group, backlog.RunRef{Meter: r.orch.Meter, StartedAt: r.orch.BoundAt},
-			planusage.TranscriptFiles(dirs), seen, overrides, now)
+		rm := backlog.MeterOrchestrator(r.group, r.orch, planusage.ConversationFiles(dirs, conv), seen, overrides)
 		if rm.Changed {
 			if orchUpdates[r.repoID] == nil {
 				orchUpdates[r.repoID] = map[string]map[string]backlog.Meter{}
@@ -314,6 +314,22 @@ func (m *Manager) meterPassLocked(now time.Time) {
 		st.published, st.lastSent = &spend, now
 		m.publishEvent(agentproto.EventBacklogSpend, spend)
 	}
+}
+
+// orchestratorConversation is the Claude conversation id of an orchestrator
+// session and the project dirs its transcripts are in. Only that conversation
+// is metered: the dirs also hold every other Claude session started in the
+// same directory, the user's own included when the session runs in place.
+func orchestratorConversation(inst *session.Instance) (string, []string, bool) {
+	conv := inst.AgentConversation()
+	if !conv.HasID() || conv.Agent != tmux.ProgramClaude {
+		return "", nil, false
+	}
+	_, dirs, err := inst.ClaudeRunTranscriptDirs()
+	if err != nil || len(dirs) == 0 {
+		return "", nil, false
+	}
+	return strings.TrimSpace(conv.ID), dirs, true
 }
 
 // meterAccounts meters every transcript under each Claude account's config
