@@ -59,9 +59,10 @@ func (b *Backlog) UserQuestionText(id int) string {
 }
 
 // Escalate sends item id's open question from the group's orchestrator to the
-// user, with the orchestrator's note when note is not empty. It returns the
-// question.
-func (b *Backlog) Escalate(id int, note string, now time.Time) (*Message, error) {
+// user, with a note when note is not empty. callerSessionID is the session
+// that escalates: the note is the orchestrator's when it is that session, and
+// the user's otherwise. It returns the question.
+func (b *Backlog) Escalate(id int, note, callerSessionID string, now time.Time) (*Message, error) {
 	it, err := b.get(id)
 	if err != nil {
 		return nil, err
@@ -73,26 +74,41 @@ func (b *Backlog) Escalate(id int, note string, now time.Time) (*Message, error)
 		}
 		return nil, fmt.Errorf("%s has no open question to escalate", FormatID(id))
 	}
-	o := b.orchestratorFor(id)
+	author := AuthorUser
+	if o := b.orchestratorFor(id); callerSessionID != "" && o.SessionID == callerSessionID {
+		author = "agent:" + callerSessionID
+	}
 	q.Route = RouteUser
 	it.UpdatedAt = now
 	out := *q
 	if note = strings.TrimSpace(note); note != "" {
-		it.appendMessage(Message{Kind: KindNote, Author: "agent:" + o.SessionID, Text: note}, now)
+		it.appendMessage(Message{Kind: KindNote, Author: author, Text: note}, now)
 	}
 	return &out, nil
 }
 
-// escalateStranded sends to the user every open question routed to an
-// orchestrator that its group no longer has, as after an unbind. It returns
-// the items it changed.
-func (b *Backlog) escalateStranded(now time.Time) []int {
+// escalateStranded sends to the user the open questions an orchestrator no
+// longer owns after a write: a question routed to an orchestrator its group
+// no longer has, as after an unbind, goes to the user as escalated. A routed
+// or escalated question whose item moved to another group since prev goes to
+// the user as a plain question, so the new group's orchestrator hears nothing
+// of a question it never had. It returns the items it changed.
+func (b *Backlog) escalateStranded(prev *Backlog, now time.Time) []int {
 	var ids []int
 	for i := range b.Items {
 		it := &b.Items[i]
+		moved := false
+		if prev != nil && prev.Item(it.ID) != nil {
+			moved = prev.rootOf(it.ID) != b.rootOf(it.ID)
+		}
 		changed := false
 		for _, q := range it.openQuestions() {
-			if q.Route == RouteOrchestrator && !b.withOrchestrator(it.ID, q) {
+			switch {
+			case q.Route == "":
+			case moved:
+				q.Route = ""
+				changed = true
+			case q.Route == RouteOrchestrator && !b.withOrchestrator(it.ID, q):
 				q.Route = RouteUser
 				changed = true
 			}

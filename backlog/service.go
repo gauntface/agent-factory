@@ -141,7 +141,7 @@ func (s *Service) update(p *project, fn func(*Backlog) ([]int, error)) (*Backlog
 			return err
 		}
 		if prev != nil {
-			for _, id := range b.escalateStranded(s.now()) {
+			for _, id := range b.escalateStranded(prev, s.now()) {
 				if last := b.Item(id).lastRun(); last != nil && last.SessionID != "" {
 					s.host.SetAttention(p.id, last.SessionID, b.UserQuestionText(id))
 				}

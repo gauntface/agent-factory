@@ -275,8 +275,11 @@ type EscalateRequest struct {
 	RepoID   string `json:"repo_id,omitempty"`
 	RepoPath string `json:"repo_path,omitempty"`
 	ID       int    `json:"id"`
-	// Note is the orchestrator's note for the user, added to the thread.
+	// Note is a note for the user, added to the thread.
 	Note string `json:"note,omitempty"`
+	// CallerSessionID is the af session the request comes from, if any; the
+	// note is the orchestrator's when it is the group's orchestrator.
+	CallerSessionID string `json:"caller_session_id,omitempty"`
 }
 
 // EscalateResponse is the item and the question now with the user.
@@ -294,7 +297,7 @@ func (s *Service) Escalate(req EscalateRequest) (*EscalateResponse, error) {
 	}
 	var q Message
 	_, err = s.update(p, func(b *Backlog) ([]int, error) {
-		m, err := b.Escalate(req.ID, req.Note, s.now())
+		m, err := b.Escalate(req.ID, req.Note, req.CallerSessionID, s.now())
 		if err != nil {
 			return nil, err
 		}

@@ -126,7 +126,8 @@ var backlogEscalateCmd = &cobra.Command{
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runBacklog(func() (any, error) {
-			if err := refuseFromItemSession("escalate"); err != nil {
+			caller, err := callerSession("escalate")
+			if err != nil {
 				return nil, err
 			}
 			id, err := backlog.ParseID(args[0])
@@ -139,7 +140,7 @@ var backlogEscalateCmd = &cobra.Command{
 			}
 			var resp daemon.EscalateBacklogQuestionResponse
 			if err := callBacklogRoute("EscalateBacklogQuestion", daemon.EscalateBacklogQuestionRequest{
-				RepoID: t.repoID, RepoPath: t.repoPath, ID: id, Note: backlogEscalateNote}, &resp); err != nil {
+				RepoID: t.repoID, RepoPath: t.repoPath, ID: id, Note: backlogEscalateNote, CallerSessionID: caller}, &resp); err != nil {
 				return nil, err
 			}
 			return &resp, nil

@@ -252,6 +252,8 @@ func (b *Backlog) orchEventLine(e OrchEvent) string {
 		return name + ": every item is done or dropped."
 	case EventEscalationAnswered:
 		return name + ": the user answered the question you escalated."
+	case EventAnsweredInSession:
+		return name + ": the user answered its question in the item session; it no longer waits for you."
 	}
 	return name + ": " + e.Kind + "."
 }

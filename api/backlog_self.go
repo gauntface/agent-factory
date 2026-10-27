@@ -52,10 +52,22 @@ const backlogSelfAskHint = "ask the user with \"af backlog ask --self\""
 // command that changes the backlog's plan. It stops a confused agent, not a
 // hostile one.
 func refuseFromItemSession(command string) error {
-	if inItemSession() == nil {
-		return nil
+	_, err := callerSession(command)
+	return err
+}
+
+// callerSession is the id of the af session this command runs in, or "" when
+// it runs outside one, from one whoami. An item session is refused as in
+// refuseFromItemSession.
+func callerSession(command string) (string, error) {
+	s, err := backlogSelfSession()
+	if err != nil || s == nil {
+		return "", nil
 	}
-	return fmt.Errorf("item sessions cannot run \"af backlog %s\"; %s", command, backlogSelfAskHint)
+	if s.BacklogItem != 0 {
+		return "", fmt.Errorf("item sessions cannot run \"af backlog %s\"; %s", command, backlogSelfAskHint)
+	}
+	return s.ID, nil
 }
 
 func refuseControlsFromItemSession() error {
@@ -166,16 +178,13 @@ var backlogDoneCmd = &cobra.Command{
 			if backlogDonePR != "" {
 				return nil, errors.New("--pr goes with --self")
 			}
-			if err := refuseFromItemSession("done <id>"); err != nil {
+			caller, err := callerSession("done <id>")
+			if err != nil {
 				return nil, err
 			}
 			id, err := backlog.ParseID(args[0])
 			if err != nil {
 				return nil, err
-			}
-			caller := ""
-			if s, err := backlogSelfSession(); err == nil && s != nil {
-				caller = s.ID
 			}
 			return setBacklogStatus(daemon.SetBacklogItemStatusRequest{RepoID: t.repoID, RepoPath: t.repoPath,
 				ID: id, Status: backlog.StatusDone, CallerSessionID: caller})

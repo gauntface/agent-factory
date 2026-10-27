@@ -197,14 +197,26 @@ func TestBacklogEscalateAndOrchestratorDone(t *testing.T) {
 	if _, err := runBacklogCmd(t, "escalate", "B-2", "--note", "your call"); err != nil {
 		t.Fatal(err)
 	}
+	b, err := backlog.Load(p.repoID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if th := b.Item(2).Thread; len(th) != 2 || th[1].Author != "agent:o1" || th[1].Text != "your call" {
+		t.Fatalf("thread %+v", th)
+	}
 	if out, err := runBacklogCmd(t, "inbox"); err != nil || !strings.Contains(out, "which db?") {
 		t.Fatalf("escalated question not in the inbox: %q %v", out, err)
 	}
 	if _, err := runBacklogCmd(t, "escalate", "B-2"); err == nil || !strings.Contains(err.Error(), "already with the user") {
 		t.Fatal(err)
 	}
+	whoami := 0
+	backlogSelfSession = func() (*session.InstanceData, error) { whoami++; return orchestrator, nil }
 	if _, err := runBacklogCmd(t, "done", "B-2"); err != nil {
 		t.Fatal(err)
+	}
+	if whoami != 1 {
+		t.Fatalf("done <id> resolved the session %d times", whoami)
 	}
 	if out, err := runBacklogCmd(t, "inbox"); err != nil || !strings.Contains(out, "Notes\nB-2  a  · ") ||
 		!strings.Contains(out, backlog.OrchestratorDoneNote("")) {
