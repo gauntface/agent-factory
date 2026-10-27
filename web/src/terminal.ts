@@ -73,6 +73,7 @@ import { TouchScroll } from "./touch-scroll.js";
 import type { StreamEndpoint } from "./stream_endpoint.js";
 import { terminalSurface } from "./components.js";
 import { currentXtermTheme } from "./theme.js";
+import { terminalLinkHandler } from "./terminal_links.js";
 
 /** The attach terminal's connection state, surfaced for a small status line. */
 export type TerminalStatus = "connecting" | "open" | "reconnecting" | "exited";
@@ -613,6 +614,8 @@ export class AttachTerminal {
       // platform. It also keeps Option out of xterm's block-select gesture, which
       // would otherwise fire on the inverted bit.
       macOptionClickForcesSelection: true,
+      // Opens OSC 8 links without xterm's default confirm() warning (terminal_links.ts).
+      linkHandler: terminalLinkHandler((url, target, features) => window.open(url, target, features)),
     });
     this.fit = new FitAddon();
     this.term.loadAddon(this.fit);
