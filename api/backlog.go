@@ -155,6 +155,9 @@ type backlogEntry struct {
 	NeededBy []int         `json:"needed_by"`
 	Children []int         `json:"children"`
 	Cost     float64       `json:"cost"`
+	// Orchestrator shadows Item's binding with its session state and the
+	// count of events not yet delivered.
+	Orchestrator *backlog.OrchestratorView `json:"orchestrator,omitempty"`
 }
 
 func entryFor(v *backlog.View, it backlog.Item) backlogEntry {
@@ -169,6 +172,9 @@ func entryFor(v *backlog.View, it backlog.Item) backlogEntry {
 	}
 	for _, r := range it.Runs {
 		e.Cost += r.Cost()
+	}
+	if o, ok := v.Orchestrators[it.ID]; ok {
+		e.Orchestrator = &o
 	}
 	return e
 }
@@ -296,6 +302,7 @@ var (
 	backlogAddAfter   string
 	backlogAddProgram string
 	backlogAddFile    string
+	backlogAddOrch    bool
 )
 
 var backlogAddCmd = &cobra.Command{
@@ -306,7 +313,9 @@ var backlogAddCmd = &cobra.Command{
 		"\"title\", \"body\", \"parent\", \"waits_on\", \"program\", \"sequential\"}]}. key is " +
 		"local to the file; parent and waits_on take a key or an item id. With proposal set, an " +
 		"item with the same proposal and key as an existing one is updated, not added again. The " +
-		"batch is all or nothing and prints each key's id.",
+		"batch is all or nothing and prints each key's id.\n\n" +
+		"With --orchestrate, also bind the session this runs in as the orchestrator of the one " +
+		"top-level parent the batch is under. An item session cannot orchestrate.",
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runBacklog(func() (any, error) {
@@ -327,6 +336,13 @@ func backlogAddBatch(cmd *cobra.Command, args []string) (any, error) {
 	if len(args) > 0 {
 		return nil, errors.New("--file takes the items from JSON; do not pass a title with it")
 	}
+	orchestrator := ""
+	if backlogAddOrch {
+		var err error
+		if orchestrator, err = orchestratorSelf(); err != nil {
+			return nil, err
+		}
+	}
 	raw, err := readFileOrStdin(cmd, backlogAddFile)
 	if err != nil {
 		return nil, err
@@ -344,13 +360,18 @@ func backlogAddBatch(cmd *cobra.Command, args []string) (any, error) {
 	var resp daemon.AddBacklogItemsResponse
 	if err := callBacklogRoute("AddBacklogItems", daemon.AddBacklogItemsRequest{
 		RepoID: t.repoID, RepoPath: t.repoPath, Proposal: batch.Proposal, Items: batch.Items,
+		Orchestrator: orchestrator,
 	}, &resp); err != nil {
 		return nil, err
 	}
 	if resp.IDs == nil {
 		resp.IDs = map[string]int{}
 	}
-	return map[string]any{"ids": resp.IDs}, nil
+	out := map[string]any{"ids": resp.IDs}
+	if resp.Orchestrator != nil {
+		out["orchestrator"] = resp.Orchestrator
+	}
+	return out, nil
 }
 
 func readFileOrStdin(cmd *cobra.Command, path string) (string, error) {
@@ -365,6 +386,9 @@ func readFileOrStdin(cmd *cobra.Command, path string) (string, error) {
 }
 
 func backlogAddOne(cmd *cobra.Command, args []string) (any, error) {
+	if backlogAddOrch {
+		return nil, errors.New("--orchestrate goes with --file")
+	}
 	if len(args) != 1 {
 		return nil, errors.New("af backlog add needs a title, or --file <path or -> for many items")
 	}
@@ -535,6 +559,7 @@ func init() {
 	f.StringVar(&backlogAddAfter, "after", "", "Place the item below this sibling `id`")
 	f.StringVar(&backlogAddProgram, "program", "", "Program to run the item with (default: the project's default)")
 	f.StringVar(&backlogAddFile, "file", "", "Add or update many items from this JSON `file`; - reads stdin")
+	f.BoolVar(&backlogAddOrch, "orchestrate", false, "With --file, bind the session this runs in as the orchestrator of the batch's top-level parent")
 
 	f = backlogEditCmd.Flags()
 	f.StringVar(&backlogEditTitle, "title", "", "New title")

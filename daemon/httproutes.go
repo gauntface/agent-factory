@@ -599,6 +599,20 @@ var httpRoutes = []HTTPRoute{
 	},
 	{
 		Method:      http.MethodPost,
+		Path:        "/v1/SetBacklogOrchestrator",
+		Description: "Bind a session as the orchestrator of a top-level parent, or with clear unbind it; an item session cannot orchestrate, and a session orchestrates at most one group. Returns the orchestrator with its session state and pending event count.",
+		requestType: reflect.TypeOf(SetBacklogOrchestratorRequest{}),
+		handler:     func(cs *controlServer) http.HandlerFunc { return rpcHandler(cs.SetBacklogOrchestrator) },
+	},
+	{
+		Method:      http.MethodPost,
+		Path:        "/v1/SetBacklogOrchestratorHandoff",
+		Description: "Store notes (at most 8 KB) for a session that replaces the orchestrator, on the group the session orchestrates.",
+		requestType: reflect.TypeOf(SetBacklogOrchestratorHandoffRequest{}),
+		handler:     func(cs *controlServer) http.HandlerFunc { return rpcHandler(cs.SetBacklogOrchestratorHandoff) },
+	},
+	{
+		Method:      http.MethodPost,
 		Path:        "/v1/GetBudget",
 		Description: "Read the global backlog budget: the limit, the total plan percent under which the runner starts items in both Claude plan windows, the cap per run, and the dollar limit for accounts with no plan readings, with each plan window's plan %, the metered cost of everything in it (all_cost) and its reset time, per Claude account, and each item session's cost in total (runs) and within its account's current 5-hour window (run_window). Usage comes from the last metering pass; before the first one ends, metering is true.",
 		requestType: reflect.TypeOf(GetBudgetRequest{}),

@@ -172,6 +172,10 @@ const (
 	EventBacklogSpend EventType = "backlog.spend"
 	// EventBacklogRunner signals that a project's runner state changed.
 	EventBacklogRunner EventType = "backlog.runner"
+	// EventBacklogOrchestratorBound signals that a session was bound as a
+	// group's orchestrator. Its Data is a marshaled
+	// backlog.OrchestratorBoundEvent.
+	EventBacklogOrchestratorBound EventType = "backlog.orchestrator.bound"
 )
 
 // Event is one message on the events plane. Data carries the same projection the
