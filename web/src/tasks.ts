@@ -263,6 +263,21 @@ export function taskArmingSummary(t: TaskData, now: Date = new Date()): string {
   return "";
 }
 
+// aria-disabled, not disabled: a disabled button drops keyboard focus, and the
+// rebuild after the refetch restores focus only from the active element.
+function paintSwitch(el: HTMLButtonElement, on: boolean, busy: boolean): void {
+  el.classList.toggle("af-task-switch-on", on);
+  el.setAttribute("aria-checked", on ? "true" : "false");
+  el.title = on ? "Enabled · click to disable" : "Disabled · click to enable";
+  if (busy) {
+    el.setAttribute("aria-busy", "true");
+    el.setAttribute("aria-disabled", "true");
+  } else {
+    el.removeAttribute("aria-busy");
+    el.removeAttribute("aria-disabled");
+  }
+}
+
 /**
  * The tasks pane: build once (its `el` mounts into the app body), then
  * update(tasks) re-renders on a change. A small stateful class like the projects
@@ -277,6 +292,9 @@ export class TasksPane {
   // Which list was last rendered, so a rebuild driven by a task event (a cron fire, a
   // next-run recalculation) keeps the reader's place (#2933).
   private lastToken: string | null = null;
+  // Task id -> the value an in-flight toggle is moving to. Rebuilds re-apply it so
+  // a refetch mid-request cannot hand back an enabled switch for the same task.
+  private readonly pending = new Map<string, boolean>();
 
   constructor(private readonly actions: TaskActions) {
     this.el = h("section", { class: "af-tasks" });
@@ -314,6 +332,25 @@ export class TasksPane {
         .find((button) => (button.getAttribute("aria-label") || button.textContent) === focusedName);
       control?.focus({ preventScroll: true });
     }
+  }
+
+  private flip(t: TaskData): void {
+    if (this.pending.has(t.id)) return;
+    const next = !t.enabled;
+    this.pending.set(t.id, next);
+    this.paintRowSwitch(t.id, next, true);
+    void this.actions.toggle(t).then(
+      (applied) => (applied ? next : t.enabled),
+      () => t.enabled,
+    ).then((on) => {
+      this.pending.delete(t.id);
+      this.paintRowSwitch(t.id, on, false);
+    });
+  }
+
+  private paintRowSwitch(id: string, on: boolean, busy: boolean): void {
+    const el = this.el.querySelector<HTMLButtonElement>(`[data-task-id="${CSS.escape(id)}"] .af-task-switch`);
+    if (el) paintSwitch(el, on, busy);
   }
 
   private render(tasks: TaskData[]): void {
@@ -409,25 +446,11 @@ export class TasksPane {
     toggle.setAttribute("aria-checked", t.enabled ? "true" : "false");
     toggle.setAttribute("aria-label", `Enabled: ${t.name}`);
     toggle.title = t.enabled ? "Enabled · click to disable" : "Disabled · click to enable";
-    const showEnabled = (on: boolean): void => {
-      toggle.classList.toggle("af-task-switch-on", on);
-      toggle.setAttribute("aria-checked", on ? "true" : "false");
-      toggle.title = on ? "Enabled · click to disable" : "Disabled · click to enable";
-    };
-    toggle.addEventListener("click", () => {
-      const next = !t.enabled;
-      showEnabled(next);
-      toggle.disabled = true;
-      toggle.setAttribute("aria-busy", "true");
-      void this.actions.toggle(t).then(
-        (applied) => (applied ? next : t.enabled),
-        () => t.enabled,
-      ).then((on) => {
-        showEnabled(on);
-        toggle.disabled = false;
-        toggle.removeAttribute("aria-busy");
-      });
-    });
+    const pending = this.pending.get(t.id);
+    if (pending !== undefined) {
+      paintSwitch(toggle, pending, true);
+    }
+    toggle.addEventListener("click", () => this.flip(t));
 
     const verbs: { label: string; glyph: IconName; run: () => void }[] = [
       { label: "Edit", glyph: "pencil", run: () => this.actions.edit(t) },
