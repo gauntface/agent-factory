@@ -34,7 +34,7 @@ func (m *Manager) startAnswerRun(ref backlog.ProjectRef, req backlog.AnswerRunRe
 		last = *r
 	}
 	prevItem := *it
-	if _, err := b.BeginAnswerRun(req.ID, req.QuestionID, req.Text, svc.Now()); err != nil {
+	if _, err := b.BeginAnswerRun(req.ID, req.QuestionID, req.Text, req.CallerSessionID, svc.Now()); err != nil {
 		return backlog.Message{}, err
 	}
 	root, err := backlogProjectRoot(ref.ID, req.RepoPath)
@@ -53,7 +53,7 @@ func (m *Manager) startAnswerRun(ref backlog.ProjectRef, req backlog.AnswerRunRe
 			return nil, fmt.Errorf("%s changed while answering; retry", backlog.FormatID(req.ID))
 		}
 		var err error
-		if out, err = b.BeginAnswerRun(req.ID, req.QuestionID, req.Text, svc.Now()); err != nil {
+		if out, err = b.BeginAnswerRun(req.ID, req.QuestionID, req.Text, req.CallerSessionID, svc.Now()); err != nil {
 			return nil, err
 		}
 		it := b.Item(req.ID)

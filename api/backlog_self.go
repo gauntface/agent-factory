@@ -303,7 +303,8 @@ var backlogAnswerCmd = &cobra.Command{
 	Args: cobra.MinimumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runBacklog(func() (any, error) {
-			if err := refuseFromItemSession("answer"); err != nil {
+			caller, err := callerSession("answer")
+			if err != nil {
 				return nil, err
 			}
 			id, err := backlog.ParseID(args[0])
@@ -315,7 +316,7 @@ var backlogAnswerCmd = &cobra.Command{
 				return nil, err
 			}
 			return postBacklogMessage(daemon.PostBacklogMessageRequest{RepoID: t.repoID, RepoPath: t.repoPath,
-				ID: id, Kind: backlog.KindAnswer, Text: strings.Join(args[1:], " "), QuestionID: backlogAnswerQuestion})
+				ID: id, Kind: backlog.KindAnswer, Text: strings.Join(args[1:], " "), QuestionID: backlogAnswerQuestion, CallerSessionID: caller})
 		})
 	},
 }

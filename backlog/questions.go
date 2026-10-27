@@ -7,9 +7,39 @@ import (
 	"time"
 )
 
-// AnswerPrompt is what af delivers to the item's session with an answer.
-func AnswerPrompt(it *Item, text string) string {
-	return fmt.Sprintf("The user answered your question on %s: %s", FormatID(it.ID), text)
+// AnswerPrompt is what af delivers to the item's session with answer a.
+func AnswerPrompt(it *Item, a Message) string {
+	return fmt.Sprintf("%s answered your question on %s: %s", upperFirst(a.answerer()), FormatID(it.ID), a.Text)
+}
+
+func upperFirst(s string) string { return strings.ToUpper(s[:1]) + s[1:] }
+
+// answerer names who wrote answer m, for the item agent.
+func (m Message) answerer() string {
+	if m.byAgent() {
+		return "the effort session"
+	}
+	return "the user"
+}
+
+// asked names who question m went to, for the item agent.
+func (m Message) asked() string {
+	if m.Route == RouteOrchestrator {
+		return "the effort session"
+	}
+	return "the user"
+}
+
+func (m Message) byAgent() bool { return strings.HasPrefix(m.Author, "agent:") }
+
+// answerAuthor is the author of an answer to a question on item id from
+// callerSessionID: the agent when that session orchestrates the item's
+// group, and the user otherwise.
+func (b *Backlog) answerAuthor(id int, callerSessionID string) string {
+	if o := b.orchestratorFor(id); o != nil && callerSessionID != "" && o.SessionID == callerSessionID {
+		return "agent:" + callerSessionID
+	}
+	return AuthorUser
 }
 
 // WithHandoff adds the asking agent's handoff to an answer prompt, for a
@@ -34,10 +64,10 @@ type AnswerRun struct {
 
 // BeginAnswerRun keeps the answer to a question whose session is gone and
 // sets the item running with a new starting run, started by the user, whose
-// first prompt carries it. The question stays open until the run starts; see
+// first prompt carries it. callerSessionID is as in Answer. The question stays open until the run starts; see
 // FinishStart. A kept answer to the same question is superseded. On error b is
 // unchanged.
-func (b *Backlog) BeginAnswerRun(id, questionID int, text string, now time.Time) (AnswerRun, error) {
+func (b *Backlog) BeginAnswerRun(id, questionID int, text, callerSessionID string, now time.Time) (AnswerRun, error) {
 	c := b.clone()
 	it, err := c.get(id)
 	if err != nil {
@@ -56,7 +86,7 @@ func (b *Backlog) BeginAnswerRun(id, questionID int, text string, now time.Time)
 			m.Delivery = DeliverySuperseded
 		}
 	}
-	answer := *it.appendMessage(Message{Kind: KindAnswer, Author: AuthorUser, Text: text, Answers: q.ID, Delivery: DeliveryNewRun}, now)
+	answer := *it.appendMessage(Message{Kind: KindAnswer, Author: c.answerAuthor(id, callerSessionID), Text: text, Answers: q.ID, Delivery: DeliveryNewRun}, now)
 	plan, err := c.BeginStart(id, StartedByUser, nil, now)
 	if err != nil {
 		return AnswerRun{}, err
@@ -128,11 +158,13 @@ type Answered struct {
 	Next *Message
 }
 
-// Answer appends the user's answer to question questionID, or to the oldest
-// open question when questionID is 0, and closes it. With deliver the item is
+// Answer appends an answer to question questionID, or to the oldest open
+// question when questionID is 0, and closes it. callerSessionID is the session
+// that answers: the answer is the agent's when that session orchestrates the
+// item's group, and the user's otherwise. With deliver the item is
 // set running and the answer is pending delivery to its session; the status
 // it replaced is kept on the answer for AnswerFailed. On error b is unchanged.
-func (b *Backlog) Answer(id, questionID int, text string, deliver bool, now time.Time) (Answered, error) {
+func (b *Backlog) Answer(id, questionID int, text, callerSessionID string, deliver bool, now time.Time) (Answered, error) {
 	it, err := b.get(id)
 	if err != nil {
 		return Answered{}, err
@@ -146,7 +178,7 @@ func (b *Backlog) Answer(id, questionID int, text string, deliver bool, now time
 		return Answered{}, err
 	}
 	q.Closed = ClosedAnswered
-	answer := Message{Kind: KindAnswer, Author: AuthorUser, Text: text, Answers: q.ID}
+	answer := Message{Kind: KindAnswer, Author: b.answerAuthor(id, callerSessionID), Text: text, Answers: q.ID}
 	if deliver && it.Status.Open() {
 		answer.Delivery, answer.PrevStatus = DeliveryPending, it.Status
 		it.Status = StatusRunning
@@ -267,7 +299,7 @@ func (b *Backlog) PendingAnswers() []PendingAnswer {
 			if m.Kind != KindAnswer || m.Delivery != DeliveryPending {
 				continue
 			}
-			p := PendingAnswer{ID: it.ID, AnswerID: m.ID, Prompt: AnswerPrompt(it, m.Text), Handoff: it.handoff(m.Answers)}
+			p := PendingAnswer{ID: it.ID, AnswerID: m.ID, Prompt: AnswerPrompt(it, m), Handoff: it.handoff(m.Answers)}
 			if last != nil {
 				p.SessionID = last.SessionID
 			}

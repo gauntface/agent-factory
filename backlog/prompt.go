@@ -36,7 +36,7 @@ func (b *Backlog) StartPrompt(it *Item, proposalDir string, prev PrevRun) string
 	}
 	var sb strings.Builder
 	b.writeItemHead(&sb, it, proposalDir)
-	sb.WriteString("An earlier session worked on this item, asked the user a question, and is gone now. This session continues its work.\n")
+	fmt.Fprintf(&sb, "An earlier session worked on this item, asked %s a question, and is gone now. This session continues its work.\n", q.asked())
 	if facts := prev.facts(); len(facts) > 0 {
 		sb.WriteString("\nFacts from af:\n")
 		for _, f := range facts {
@@ -49,7 +49,7 @@ func (b *Backlog) StartPrompt(it *Item, proposalDir string, prev PrevRun) string
 	}
 	sb.WriteString("\nThe question the previous agent asked:\n\n")
 	writeFenced(&sb, q.Text)
-	sb.WriteString("\nThe user's answer:\n\n")
+	fmt.Fprintf(&sb, "\n%s's answer:\n\n", upperFirst(a.answerer()))
 	writeFenced(&sb, a.Text)
 	sb.WriteString("\n")
 	b.writeRules(&sb, it)

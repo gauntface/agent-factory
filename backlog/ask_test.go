@@ -31,7 +31,7 @@ func TestAskOneOpenQuestion(t *testing.T) {
 	if err == nil || err.Error() != "B-1 already has an open question; wait for the answer" {
 		t.Fatal(err)
 	}
-	if _, err := b.Answer(1, 0, "a", false, time.Now()); err != nil {
+	if _, err := b.Answer(1, 0, "a", "", false, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := b.Ask(1, "s1", Question{Text: "r"}, time.Now()); err != nil {
@@ -88,7 +88,7 @@ func TestArchiveOwed(t *testing.T) {
 		t.Fatal("an older run is owed an archive")
 	}
 	b.Item(1).Runs = b.Item(1).Runs[:1]
-	if _, err := b.Answer(1, 0, "a", true, time.Now()); err != nil {
+	if _, err := b.Answer(1, 0, "a", "", true, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if b.ArchiveOwed("s1", ArchiveAsk) {
@@ -133,7 +133,7 @@ func TestKeptLiveQuietAfterAnswer(t *testing.T) {
 	if _, err := b.Ask(1, "s1", Question{Text: "q", Then: ThenArchive}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Answer(1, 0, "a", true, time.Now()); err != nil {
+	if _, err := b.Answer(1, 0, "a", "", true, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	n := len(b.Item(1).Thread)
@@ -177,6 +177,12 @@ func TestServiceThenOnlyOnQuestions(t *testing.T) {
 	withRun(t, 1, StatusRunning)
 	if _, err := s.PostMessage(PostMessageRequest{RepoID: repoID, ID: 1, Kind: KindNote, Text: "x", Then: ThenArchive}); err == nil {
 		t.Fatal("then on a note accepted")
+	}
+	for _, kind := range []string{KindNote, KindQuestion} {
+		if _, err := s.PostMessage(PostMessageRequest{RepoID: repoID, ID: 1, Kind: kind, Text: "x", SessionID: "s1",
+			CallerSessionID: "o"}); err == nil || !strings.Contains(err.Error(), "caller_session_id goes with an answer") {
+			t.Fatalf("caller_session_id on a %s: %v", kind, err)
+		}
 	}
 	out, err := s.PostMessage(PostMessageRequest{RepoID: repoID, ID: 1, Kind: KindQuestion, Text: "q", SessionID: "s1",
 		Then: ThenArchive, Handoff: "h"})

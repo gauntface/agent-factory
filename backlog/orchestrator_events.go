@@ -65,7 +65,7 @@ func (b *Backlog) queueOrchChanges(prev *Backlog, now time.Time) []int {
 			if was == nil || !was.questionOpen(m.ID) {
 				continue
 			}
-			if m.Route == RouteUser && (m.Closed == ClosedAnswered || m.Closed == ClosedAnsweredInSession) {
+			if m.Route == RouteUser && (m.Closed == ClosedAnswered || m.Closed == ClosedAnsweredInSession) && !b.orchestratorAnswered(it, m.ID) {
 				queue(OrchEvent{Kind: EventEscalationAnswered, Item: it.ID, Message: m.ID})
 			}
 			if m.Route == RouteOrchestrator && m.Closed == ClosedAnsweredInSession {
@@ -155,4 +155,19 @@ func (b *Backlog) QueueOrchStalls(activity func(sessionID string) (RunActivity, 
 		}
 	}
 	return groups
+}
+
+// orchestratorAnswered is whether the answer that closed question questionID
+// of it came from its group's orchestrator.
+func (b *Backlog) orchestratorAnswered(it *Item, questionID int) bool {
+	o := b.orchestratorFor(it.ID)
+	if o == nil || o.SessionID == "" {
+		return false
+	}
+	for _, m := range it.Thread {
+		if m.closesQuestion() && m.Answers == questionID {
+			return m.Author == "agent:"+o.SessionID
+		}
+	}
+	return false
 }

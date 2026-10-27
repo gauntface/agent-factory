@@ -76,7 +76,7 @@ func TestAnswerCancelsOwedArchive(t *testing.T) {
 	idleItemSession(t, inst)
 	inst.SetOwedArchive(&session.OwedArchiveData{Reason: backlog.ArchiveAsk, FiledAt: time.Now()})
 	if _, err := backlog.Update(repoID, func(b *backlog.Backlog) error {
-		_, err := b.Answer(1, 0, "postgres", false, time.Now())
+		_, err := b.Answer(1, 0, "postgres", "", false, time.Now())
 		return err
 	}); err != nil {
 		t.Fatal(err)
@@ -216,7 +216,7 @@ func TestAnswerBeforeFencedGuardCancelsQuietly(t *testing.T) {
 	prev := archiveSessionForLifecycle
 	archiveSessionForLifecycle = func(_ *Manager, _ ArchiveSessionRequest, guard sessionTeardownGuard) error {
 		if _, err := backlog.Update(repoID, func(b *backlog.Backlog) error {
-			_, err := b.Answer(1, 0, "postgres", true, time.Now())
+			_, err := b.Answer(1, 0, "postgres", "", true, time.Now())
 			return err
 		}); err != nil {
 			t.Fatal(err)
