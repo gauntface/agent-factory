@@ -107,6 +107,22 @@ func TestQueueOrchChangesEscalationAnswered(t *testing.T) {
 	}
 }
 
+func TestQueueOrchChangesEscalationAnsweredByOrchestrator(t *testing.T) {
+	b := eventsGroup(t)
+	q, err := b.Ask(2, "s2", Question{Text: "which?"}, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q.Route = RouteUser
+	prev := b.clone()
+	if _, err := b.Answer(2, 0, "this one", b.Item(1).Orchestrator.SessionID, false, t0); err != nil {
+		t.Fatal(err)
+	}
+	if got := b.queueOrchChanges(prev, t0); got != nil {
+		t.Fatalf("queued on %v: %+v", got, kinds(b, 1))
+	}
+}
+
 func TestQueueOrchChangesRoutedAnswerIsNotEscalation(t *testing.T) {
 	b := eventsGroup(t)
 	q, err := b.Ask(2, "s2", Question{Text: "which?"}, t0)

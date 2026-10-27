@@ -178,6 +178,12 @@ func TestServiceThenOnlyOnQuestions(t *testing.T) {
 	if _, err := s.PostMessage(PostMessageRequest{RepoID: repoID, ID: 1, Kind: KindNote, Text: "x", Then: ThenArchive}); err == nil {
 		t.Fatal("then on a note accepted")
 	}
+	for _, kind := range []string{KindNote, KindQuestion} {
+		if _, err := s.PostMessage(PostMessageRequest{RepoID: repoID, ID: 1, Kind: kind, Text: "x", SessionID: "s1",
+			CallerSessionID: "o"}); err == nil || !strings.Contains(err.Error(), "caller_session_id goes with an answer") {
+			t.Fatalf("caller_session_id on a %s: %v", kind, err)
+		}
+	}
 	out, err := s.PostMessage(PostMessageRequest{RepoID: repoID, ID: 1, Kind: KindQuestion, Text: "q", SessionID: "s1",
 		Then: ThenArchive, Handoff: "h"})
 	if err != nil || out.Message.Then != ThenArchive || out.Message.Handoff != "h" {

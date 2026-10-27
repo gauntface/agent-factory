@@ -354,3 +354,22 @@ func TestAnswerRunFromOrchestrator(t *testing.T) {
 		t.Fatalf("names the user:\n%s", p)
 	}
 }
+
+func TestAnswerRunEscalatedFromOrchestrator(t *testing.T) {
+	b := eventsGroup(t)
+	if _, err := b.Ask(2, "s2", Question{Text: "which?"}, t0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Escalate(2, "", "o", t0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.BeginAnswerRun(2, 0, "postgres", "o", t0); err != nil {
+		t.Fatal(err)
+	}
+	p := b.StartPrompt(b.Item(2), "", PrevRun{})
+	for _, want := range []string{"asked the user a question", "The effort session's answer:"} {
+		if !strings.Contains(p, want) {
+			t.Fatalf("no %q in\n%s", want, p)
+		}
+	}
+}

@@ -21,6 +21,9 @@ func (s *Service) PostMessage(req PostMessageRequest) (*MessageResponse, error) 
 	if req.Kind != KindQuestion && (req.Then != "" || req.Handoff != "") {
 		return nil, errors.New("then and handoff go with a question")
 	}
+	if req.Kind != KindAnswer && req.CallerSessionID != "" {
+		return nil, errors.New("caller_session_id goes with an answer")
+	}
 	switch req.Kind {
 	case KindQuestion:
 		return s.ask(p, req)

@@ -36,7 +36,7 @@ func (b *Backlog) StartPrompt(it *Item, proposalDir string, prev PrevRun) string
 	}
 	var sb strings.Builder
 	b.writeItemHead(&sb, it, proposalDir)
-	fmt.Fprintf(&sb, "An earlier session worked on this item, asked %s a question, and is gone now. This session continues its work.\n", a.answerer())
+	fmt.Fprintf(&sb, "An earlier session worked on this item, asked %s a question, and is gone now. This session continues its work.\n", q.asked())
 	if facts := prev.facts(); len(facts) > 0 {
 		sb.WriteString("\nFacts from af:\n")
 		for _, f := range facts {

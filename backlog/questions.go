@@ -22,6 +22,14 @@ func (m Message) answerer() string {
 	return "the user"
 }
 
+// asked names who question m went to, for the item agent.
+func (m Message) asked() string {
+	if m.Route == RouteOrchestrator {
+		return "the effort session"
+	}
+	return "the user"
+}
+
 func (m Message) byAgent() bool { return strings.HasPrefix(m.Author, "agent:") }
 
 // answerAuthor is the author of an answer to a question on item id from
