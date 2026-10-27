@@ -9736,6 +9736,33 @@ var TouchScroll = (now) => {
   };
 };
 
+// src/url.ts
+function safeHttpUrl(raw) {
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    return (u.protocol === "http:" || u.protocol === "https:") && u.host ? u.href : null;
+  } catch {
+    return null;
+  }
+}
+
+// src/terminal_links.ts
+function terminalLinkHandler(open, setTooltip) {
+  return {
+    activate(_event, text) {
+      const href = safeHttpUrl(text);
+      if (href) open(href, "_blank", "noopener,noreferrer");
+    },
+    hover(_event, text) {
+      setTooltip(safeHttpUrl(text) ?? "");
+    },
+    leave() {
+      setTooltip("");
+    }
+  };
+}
+
 // src/terminal.ts
 function holdClockMs() {
   return typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
@@ -9766,7 +9793,13 @@ var AttachTerminal = class {
       // choice elsewhere), giving onMouseDownCapture ONE bit to invert on every
       // platform. It also keeps Option out of xterm's block-select gesture, which
       // would otherwise fire on the inverted bit.
-      macOptionClickForcesSelection: true
+      macOptionClickForcesSelection: true,
+      // Opens OSC 8 links without xterm's default confirm() warning, and shows the
+      // real URL as a tooltip on hover (terminal_links.ts).
+      linkHandler: terminalLinkHandler(
+        (url, target, features) => window.open(url, target, features),
+        (tip) => tip ? container.setAttribute("title", tip) : container.removeAttribute("title")
+      )
     });
     this.fit = new import_addon_fit.FitAddon();
     this.term.loadAddon(this.fit);
@@ -10188,6 +10221,7 @@ var AttachTerminal = class {
     this.container.removeEventListener("copy", this.onCopy);
     this.endHandedOffDrag();
     this.closeSocket();
+    this.container.removeAttribute("title");
     this.term.dispose();
   }
   applicationOwnsMouse() {
@@ -16904,15 +16938,6 @@ function itemActions(b, it, derived) {
   else out.push("reopen");
   if (s === "draft" && (it.runs ?? []).length === 0 && (it.thread ?? []).length === 0) out.push("delete");
   return out;
-}
-function safeHttpUrl(raw) {
-  if (!raw) return null;
-  try {
-    const u = new URL(raw);
-    return (u.protocol === "http:" || u.protocol === "https:") && u.host ? u.href : null;
-  } catch {
-    return null;
-  }
 }
 function topQueued(view) {
   return view.backlog.items.find((it) => derivedOf(view, it.id).state === "queued" && !isParent(view.backlog, it.id));
