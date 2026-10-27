@@ -37,6 +37,7 @@ import {
 import { projectMeta, projectName, type ProjectSummary, projectSummaries, scopeToProject } from "./project.js";
 import type { RegisteredProject } from "./api.js";
 import { replaceProjectMenuChildren } from "./project-menu-focus.js";
+import { serializeProjectRoute } from "./route.js";
 import { applyProjectColor, applyProjectFavicon, projectColor, projectColorRow } from "./project_color.js";
 import {
   archiveWarningText,
@@ -2017,11 +2018,16 @@ export class AppShell {
         ? [h("span", { class: "af-project-missing" }, "checkout missing"), ` · ${projectMeta(p)}`]
         : [projectMeta(p)]),
     );
-    const item = h("button", { type: "button", class: cls }, check, label, meta);
+    // An anchor, not a button, so the browser's link affordances work: right-click
+    // "Open in new tab", middle-click, and Ctrl/Cmd-click open the project in a new
+    // tab via its #/project/ route. A plain left click still switches in place.
+    const item = h("a", { class: cls, href: serializeProjectRoute({ project: p.root }) }, check, label, meta);
     item.dataset.projectFocus = `project:${p.root}`;
     item.setAttribute("role", "option");
     item.setAttribute("aria-selected", current ? "true" : "false");
     item.addEventListener("click", (e) => {
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      e.preventDefault();
       e.stopPropagation();
       this.closeProjectMenu();
       this.appControls.dismiss();
