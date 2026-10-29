@@ -278,7 +278,7 @@ test("the runner bar shows the window closest to the limit, and both windows on 
     "Weekly · plan 40% of 50% limit · resets Mon 09:00\nread 7 min ago · all projects");
   assert.equal(bar.querySelector('select[aria-label="Max running"]')!.value, "2");
   assert.deepEqual(bar.querySelector('select[aria-label="Max running"]')!.children.map((o) => o.textContent).slice(0, 3),
-    ["1 of 1 working", "1 of 2 working", "1 of 3 working"]);
+    ["Up to 1 at once", "Up to 2 at once", "Up to 3 at once"]);
 });
 
 test("the switch, max running and when-done change this project's runner", async () => {
@@ -320,12 +320,16 @@ test("budget fields send one change each and refuse values out of range", async 
 
 test("a paused runner says why and offers the main action ui.md names", () => {
   const pane = mount(host());
-  const paused = (gate: string, reason: string, items: Item[] = [item(1)]): void =>
-    pane.update(data(view(items, {}, { state: gate === "no_reading" ? "waiting" : "stopped", gate, reason })), "/a", []);
+  const paused = (gate: string, reason: string, items: Item[] = [item(1)]): void => {
+    const v = view(items, {}, { state: gate === "no_reading" ? "waiting" : "stopped", gate, reason });
+    v.backlog.settings.runner = true;
+    pane.update(data(v), "/a", []);
+  };
   const bar = (): FakeElement => el(pane).querySelector(".af-backlog-head")!;
   paused("limit", "Plan at 52% of the 5-hour window (limit 50%) · resumes 14:00");
-  assert.equal(bar().querySelector('[role="switch"]')!.textContent, "Runner paused");
-  assert.ok(bar().querySelector(".af-backlog-runner-state")!.classList.contains("af-backlog-warn"));
+  assert.equal(bar().querySelector('[role="switch"]')!.textContent, "Runner on");
+  assert.equal(bar().querySelector(".af-backlog-runner-status-word")!.textContent, "Blocked");
+  assert.ok(bar().querySelector(".af-backlog-runner-status")!.classList.contains("af-backlog-warn"));
   assert.match(bar().textContent, /· Plan at 52% of the 5-hour window \(limit 50%\) · resumes 14:00/);
   buttonNamed(bar(), "Change limit")!.click();
   assert.equal(bar().querySelector("details.af-backlog-settings")!.open, true);
@@ -334,11 +338,13 @@ test("a paused runner says why and offers the main action ui.md names", () => {
   assert.equal(buttonNamed(bar(), "Change limit"), undefined);
   assert.equal(buttonNamed(bar(), "Run next")!.className, "af-ghost");
   paused("no_reading", "No plan usage seen yet · start an item by hand once to take a reading");
-  assert.equal(bar().querySelector('[role="switch"]')!.textContent, "Runner waiting");
+  assert.equal(bar().querySelector('[role="switch"]')!.textContent, "Runner on");
+  assert.equal(bar().querySelector(".af-backlog-runner-status-word")!.textContent, "Waiting");
   assert.equal(buttonNamed(bar(), "Run next")!.className, "af-primary");
   const run = { session_id: "s7", title: "B-7 runner", state: "started", prev_status: "queued" as const, started_by: "runner", started_at: "" };
-  pane.update(data(view([item(7, { status: "running", runs: [run] })], {}, { state: "stopped", gate: "unmeterable", reason: "The runner can't meter aider" }),
-    1, usage({ unmeterable: { s7: "the runner can't meter aider" } })), "/a", []);
+  const unmeterable = view([item(7, { status: "running", runs: [run] })], {}, { state: "stopped", gate: "unmeterable", reason: "The runner can't meter aider" });
+  unmeterable.backlog.settings.runner = true;
+  pane.update(data(unmeterable, 1, usage({ unmeterable: { s7: "the runner can't meter aider" } })), "/a", []);
   buttonNamed(bar(), "Open B-7")!.click();
   assert.equal(el(pane).querySelector(".af-backlog-panel")?.getAttribute("aria-label"), "Item B-7");
 });
@@ -417,7 +423,9 @@ test("when Start now goes away its focus moves to the next action", async () => 
 
 test("the plan use opens its detail on tap, and daemon reasons lose their CLI hints", () => {
   const pane = mount(host());
-  pane.update(data(view([item(1)], {}, { state: "stopped", gate: "limit", reason: 'Plan limit is 0% · raise it with "af backlog budget --limit 50"' })), "/a", []);
+  const stopped = view([item(1)], {}, { state: "stopped", gate: "limit", reason: 'Plan limit is 0% · raise it with "af backlog budget --limit 50"' });
+  stopped.backlog.settings.runner = true;
+  pane.update(data(stopped), "/a", []);
   const bar = el(pane).querySelector(".af-backlog-head")!;
   assert.match(bar.textContent, /· Plan limit is 0%/);
   assert.doesNotMatch(bar.textContent, /af backlog/);
