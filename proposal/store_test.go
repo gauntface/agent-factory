@@ -500,9 +500,18 @@ func TestRulesExplainPushedEdits(t *testing.T) {
 
 func TestRulesMakeBacklogItemsKeyedByTheProposal(t *testing.T) {
 	r := Rules("p", "/x/p")
-	for _, want := range []string{`"af backlog add --file -"`, `{"proposal": "p"`, `key "p" and "sequential": true`, `"parent": "p"`, "Every item is a draft", `"af backlog add --file - --orchestrate"`, `"af backlog orchestrate <id> --self"`, "--replace", "you are now the orchestrator", "the user or the runner still queues and starts items", "updated, not added again", `needs a "title"`, "the proposal path, /x/p"} {
+	for _, want := range []string{`"af backlog add --file -"`, `{"proposal": "p"`, `key "p" and "sequential": true`, `"parent": "p"`, "Every item is a draft", "updated, not added again", `needs a "title"`, "the proposal path, /x/p"} {
 		if !strings.Contains(r, want) {
 			t.Fatalf("rule 9 must say %s:\n%s", want, r)
+		}
+	}
+}
+
+func TestRulesBindTheProposalParentWhenAskedToManage(t *testing.T) {
+	r := Rules("p", "/x/p")
+	for _, want := range []string{"10. When the user asks you to manage, run, own or drive this proposal's items", `bind its parent item (key "p")`, `add --orchestrate to "af backlog add --file -"`, `"af backlog orchestrate <parent id> --self"`, "Add --replace to either command", "you are now the orchestrator", "The user queues items and the runner starts them; you do neither.", "Without that ask, do not bind."} {
+		if !strings.Contains(r, want) {
+			t.Fatalf("rule 10 must say %s:\n%s", want, r)
 		}
 	}
 }
