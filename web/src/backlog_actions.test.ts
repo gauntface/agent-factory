@@ -434,3 +434,20 @@ test("the plan use opens its detail on tap, and daemon reasons lose their CLI hi
   plan.click();
   assert.equal(detail.hidden, true);
 });
+
+test("a budget confirm that fails releases the start button", async () => {
+  const h = host();
+  const pane = mount(h);
+  const v = view([item(12)], { 12: "queued" });
+  pane.update(data(v, 1, usage({ seven_day: { plan: 60, resets_at: iso("2000-01-10T09:00:00"), all_cost: 1 } })), "/a", []);
+  pane.select(12);
+  h.confirm = async () => { throw new Error("dialog closed"); };
+  buttonNamed(el(pane), "Start now")!.click();
+  await settle();
+  assert.deepEqual(h.notices, ["dialog closed"]);
+  assert.equal(buttonNamed(el(pane), "Start now")!.getAttribute("aria-disabled"), null);
+  h.confirm = async () => true;
+  buttonNamed(el(pane), "Start now")!.click();
+  await settle();
+  assert.equal(sent("StartBacklogItem").length, 1);
+});
