@@ -9,7 +9,7 @@ import { errorText } from "./api.js";
 import {
   addItem, addNote, answerQuestion, deleteItem, dismissNote, moveItem, runNext, setBudget, setItemStatus, setSettings, startItem, updateItem,
 } from "./backlog_api.js";
-import { Busy, itemScope, paintBusy, projectScope } from "./backlog_busy.js";
+import { BUDGET_SCOPE, Busy, itemScope, paintBusy, projectScope } from "./backlog_busy.js";
 import type { BacklogData } from "./backlog_data.js";
 import {
   type Backlog, type BacklogView, type DropZone, FILTERS, type Filter, type Item, type ListRow, type MoveTarget,
@@ -314,6 +314,10 @@ export class BacklogPane {
         this.render();
         void this.host.refresh();
       });
+    }).catch((e: unknown) => {
+      this.asking.delete(key);
+      this.busy.end(scope);
+      this.host.notify(errorText(e));
     });
   }
 
@@ -343,6 +347,10 @@ export class BacklogPane {
         this.host.notify(errorText(e));
         void this.host.refresh();
       }).finally(() => this.render());
+    }).catch((e: unknown) => {
+      this.running = false;
+      this.host.notify(errorText(e));
+      this.render();
     });
   }
 
@@ -387,7 +395,7 @@ export class BacklogPane {
       setRunner: (on: boolean) => this.mutate((t) => setSettings(this.root ?? "", { runner: on }, t), "runner"),
       setMaxRunning: (n: number) => this.mutate((t) => setSettings(this.root ?? "", { max_running: n }, t), "slots"),
       setOnDone: (onDone: string) => this.mutate((t) => setSettings(this.root ?? "", { on_done: onDone }, t), "on-done"),
-      setBudget: (u: Parameters<typeof setBudget>[0]) => this.mutate((t) => setBudget(u, t), "budget"),
+      setBudget: (u: Parameters<typeof setBudget>[0]) => this.write((t) => setBudget(u, t), BUDGET_SCOPE, "budget"),
       runNext: () => this.runNext(),
       openItem: (id: number) => this.select(id),
     };
@@ -490,7 +498,8 @@ export class BacklogPane {
     for (const id of this.cards.keys()) if (!rows.some((r) => r.item.id === id && r.depth === 0)) this.cards.delete(id);
     placeChildren(this.listEl, segments(rows).map((seg) => seg.kind === "group" ? this.card(v, seg.head, seg.rows) : this.loose(v, seg.rows)));
     this.overviewEl.textContent = overview(v);
-    this.runner.update(v, this.data?.budget ?? null, this.data?.usage ?? null, this.running, this.busy.by(projectScope(this.root)));
+    this.runner.update(v, this.data?.budget ?? null, this.data?.usage ?? null, this.running,
+      this.busy.by(projectScope(this.root)), this.busy.by(BUDGET_SCOPE));
     paintBusy(this.newGroupBox, this.busy.by(projectScope(this.root)));
     const chips = [...this.filterSlot.querySelectorAll("button")];
     const focusedChip = chips.findIndex((b) => b === document.activeElement);

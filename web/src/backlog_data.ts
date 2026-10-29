@@ -45,13 +45,27 @@ export class BacklogLoader {
     return this.generation;
   }
 
-  /** Refetches every project. A later call wins over one still in flight. */
+  private latest: Promise<boolean> | null = null;
+
+  /** Refetches every project. A later call wins over one still in flight; the
+   *  superseded call resolves only once a newer refresh has committed, so a
+   *  caller that waits on it never sees the old state. */
   async refresh(): Promise<void> {
     const token = this.opts.token();
     if (token === null) return;
     const gen = ++this.generation;
     const budgetGen = ++this.budgetGeneration;
     const spendGen = this.spendGeneration;
+    let p = this.fetchAndCommit(token, gen, budgetGen, spendGen);
+    this.latest = p;
+    while (!await p) {
+      if (this.latest === p || this.latest === null) return;
+      p = this.latest;
+    }
+  }
+
+  /** Whether this refresh committed. */
+  private async fetchAndCommit(token: string, gen: number, budgetGen: number, spendGen: number): Promise<boolean> {
     const roots = [...new Set(this.opts.roots().filter(Boolean))];
     const [results, budget] = await Promise.all([
       Promise.all(roots.map((root) => getBacklog(root, token)
@@ -59,7 +73,7 @@ export class BacklogLoader {
         .catch((e: unknown) => ({ root, view: null, error: errorText(e) })))),
       getBudget(token).catch(() => null),
     ]);
-    if (gen !== this.generation || this.opts.token() !== token) return;
+    if (gen !== this.generation || this.opts.token() !== token) return false;
     const cur = this.opts.current();
     const prev = cur.views;
     const views = new Map<string, BacklogView>();
@@ -81,6 +95,7 @@ export class BacklogLoader {
       usage = { ...cur.usage, unmeterable: fresh.usage.unmeterable };
     }
     this.opts.commit({ views, errors, budget: fresh?.budget ?? cur.budget, usage, generation: gen });
+    return true;
   }
 
   /** Applies a backlog.spend payload. A GetBudget still in flight was read
@@ -104,6 +119,7 @@ export class BacklogLoader {
   }
 
   reset(): void {
+    this.latest = null;
     this.generation++;
     this.budgetGeneration++;
     this.spendGeneration++;

@@ -130,6 +130,7 @@ export class ItemPanel {
   private readonly closeButton: HTMLButtonElement;
   private pickerQuery = "";
   private pickerOpen = false;
+  private sequentialWant: boolean | null = null;
   private moveOpen = false;
   private view: BacklogView | null = null;
   private sessions: SessionData[] = [];
@@ -195,6 +196,7 @@ export class ItemPanel {
     this.usage = usage;
     const it = this.item();
     if (!it) return;
+    if (this.actions.busy?.(it.id) === undefined) this.sequentialWant = null;
     if (document.activeElement !== this.title) this.title.value = it.title;
     this.body.setText(it.body ?? "");
     const restore = this.keepField();
@@ -352,6 +354,7 @@ export class ItemPanel {
         return h("li", {}, opt);
       }));
       if (options.length === 0) list.append(h("li", { class: "af-backlog-reason" }, "No matching items"));
+      paintBusy(list, this.actions.busy?.(it.id));
     };
     input.addEventListener("input", () => {
       this.pickerQuery = input.value;
@@ -383,12 +386,15 @@ export class ItemPanel {
     if (parent) {
       parts.push(h("ul", { class: "af-backlog-children" },
         ...childrenOf(b, it.id).map((c) => h("li", {}, this.itemLink(c), stateChip(view, c.id, "")))));
-      const sw = h("input", { type: "checkbox", checked: it.sequential === true });
+      const sw = h("input", { type: "checkbox", checked: this.sequentialWant ?? it.sequential === true });
       sw.setAttribute("role", "switch");
       sw.dataset.busy = "sequential";
       sw.addEventListener("change", () => {
         if (locked(sw)) sw.checked = !sw.checked;
-        else this.actions.update(it.id, { sequential: sw.checked });
+        else {
+          this.sequentialWant = sw.checked;
+          this.actions.update(it.id, { sequential: sw.checked });
+        }
       });
       parts.push(h("label", { class: "af-backlog-switch" }, sw, "Run children in order"));
     }

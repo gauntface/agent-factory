@@ -48,15 +48,15 @@ export function locked(el: Element): boolean {
 
 /** Marks every data-busy control under `root` for a held scope started by
  *  `source`, or clears the marks when `source` is undefined. */
-export function paintBusy(root: ParentNode, source: string | undefined): void {
-  for (const el of root.querySelectorAll<HTMLElement>("[data-busy]")) {
+export function paintBusy(root: ParentNode, source: string | undefined, attr = "busy"): void {
+  for (const el of root.querySelectorAll<HTMLElement>(`[data-${attr}]`)) {
     if (source === undefined) {
       el.removeAttribute("aria-disabled");
       el.removeAttribute("aria-busy");
       continue;
     }
     el.setAttribute("aria-disabled", "true");
-    if (el.dataset.busy === source) el.setAttribute("aria-busy", "true");
+    if (el.getAttribute(`data-${attr}`) === source) el.setAttribute("aria-busy", "true");
     else el.removeAttribute("aria-busy");
   }
 }

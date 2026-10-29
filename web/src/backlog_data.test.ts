@@ -162,3 +162,35 @@ test("unmeterable runs follow the newest source that names them", async () => {
   await settle();
   assert.deepEqual(state.usage?.unmeterable, { s8: "new" });
 });
+
+test("a superseded refresh resolves only once the newer one has committed", async () => {
+  const l = loader();
+  let first = false;
+  void l.refresh().then(() => { first = true; });
+  void l.refresh();
+  await settle();
+  const [a, b] = pending.filter((p) => p.method === "GetBacklog");
+  a.resolve(backlogOf("old"));
+  answer("GetBudget", budgetOf(1));
+  await settle();
+  assert.equal(first, false);
+  assert.equal(commits, 0);
+  b.resolve(backlogOf("new"));
+  answer("GetBudget", budgetOf(2));
+  await settle();
+  assert.equal(first, true);
+  assert.equal(state.generation, 2);
+});
+
+test("a refresh cut off by a reset resolves without waiting", async () => {
+  const l = loader();
+  let done = false;
+  void l.refresh().then(() => { done = true; });
+  await settle();
+  l.reset();
+  answer("GetBacklog", backlogOf("old"));
+  answer("GetBudget", budgetOf(1));
+  await settle();
+  assert.equal(done, true);
+  assert.equal(commits, 0);
+});

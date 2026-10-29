@@ -159,10 +159,14 @@ export class RunnerBar {
     const fields = BUDGET_FIELDS.map((f) => {
       const input = h("input", { type: "number", class: "af-backlog-number", min: "0", max: String(f.max), step: String(f.step) });
       input.setAttribute("aria-label", f.label);
-      input.dataset.busy = "budget";
+      input.dataset.busyBudget = "budget";
       input.addEventListener("change", () => {
         const v = Number(input.value);
-        if (locked(input) || input.value.trim() === "" || !Number.isFinite(v) || v < 0 || v > f.max) {
+        if (locked(input)) {
+          input.value = String(this.budget?.[f.key] ?? "");
+          return;
+        }
+        if (input.value.trim() === "" || !Number.isFinite(v) || v < 0 || v > f.max) {
           this.fill();
           return;
         }
@@ -190,8 +194,8 @@ export class RunnerBar {
     }
   }
 
-  /** `busy` is Run next in flight; `held` is what started the request that holds the project's settings. */
-  update(view: BacklogView, budget: Budget | null, usage: Usage | null, busy: boolean, held?: string): void {
+  /** `busy` is Run next in flight; `held` is what started the request that holds the project's settings, `heldBudget` the one that holds the budget. */
+  update(view: BacklogView, budget: Budget | null, usage: Usage | null, busy: boolean, held?: string, heldBudget?: string): void {
     this.view = view;
     this.budget = budget;
     this.usage = usage;
@@ -214,6 +218,7 @@ export class RunnerBar {
     else this.run.removeAttribute("aria-busy");
     this.fill();
     paintBusy(this.el, held);
+    paintBusy(this.el, heldBudget, "busy-budget");
   }
 
   /** Rebuilds the options only when their words change: replacing them

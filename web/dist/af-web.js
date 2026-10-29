@@ -17247,6 +17247,7 @@ ${root2}
 ${id}`;
 var projectScope = (root2) => `project
 ${root2}`;
+var BUDGET_SCOPE = "budget";
 var Busy = class {
   constructor(changed) {
     this.changed = changed;
@@ -17279,15 +17280,15 @@ var Busy = class {
 function locked(el2) {
   return el2.getAttribute("aria-disabled") === "true";
 }
-function paintBusy(root2, source) {
-  for (const el2 of root2.querySelectorAll("[data-busy]")) {
+function paintBusy(root2, source, attr = "busy") {
+  for (const el2 of root2.querySelectorAll(`[data-${attr}]`)) {
     if (source === void 0) {
       el2.removeAttribute("aria-disabled");
       el2.removeAttribute("aria-busy");
       continue;
     }
     el2.setAttribute("aria-disabled", "true");
-    if (el2.dataset.busy === source) el2.setAttribute("aria-busy", "true");
+    if (el2.getAttribute(`data-${attr}`) === source) el2.setAttribute("aria-busy", "true");
     else el2.removeAttribute("aria-busy");
   }
 }
@@ -18106,6 +18107,7 @@ var ItemPanel = class {
   closeButton;
   pickerQuery = "";
   pickerOpen = false;
+  sequentialWant = null;
   moveOpen = false;
   view = null;
   sessions = [];
@@ -18122,6 +18124,7 @@ var ItemPanel = class {
     this.usage = usage;
     const it = this.item();
     if (!it) return;
+    if (this.actions.busy?.(it.id) === void 0) this.sequentialWant = null;
     if (document.activeElement !== this.title) this.title.value = it.title;
     this.body.setText(it.body ?? "");
     const restore = this.keepField();
@@ -18302,6 +18305,7 @@ var ItemPanel = class {
         return h("li", {}, opt);
       }));
       if (options.length === 0) list.append(h("li", { class: "af-backlog-reason" }, "No matching items"));
+      paintBusy(list, this.actions.busy?.(it.id));
     };
     input.addEventListener("input", () => {
       this.pickerQuery = input.value;
@@ -18334,12 +18338,15 @@ var ItemPanel = class {
         { class: "af-backlog-children" },
         ...childrenOf(b, it.id).map((c) => h("li", {}, this.itemLink(c), stateChip(view, c.id, "")))
       ));
-      const sw = h("input", { type: "checkbox", checked: it.sequential === true });
+      const sw = h("input", { type: "checkbox", checked: this.sequentialWant ?? it.sequential === true });
       sw.setAttribute("role", "switch");
       sw.dataset.busy = "sequential";
       sw.addEventListener("change", () => {
         if (locked(sw)) sw.checked = !sw.checked;
-        else this.actions.update(it.id, { sequential: sw.checked });
+        else {
+          this.sequentialWant = sw.checked;
+          this.actions.update(it.id, { sequential: sw.checked });
+        }
       });
       parts.push(h("label", { class: "af-backlog-switch" }, sw, "Run children in order"));
     }
@@ -18711,10 +18718,14 @@ var RunnerBar = class {
     const fields2 = BUDGET_FIELDS.map((f) => {
       const input = h("input", { type: "number", class: "af-backlog-number", min: "0", max: String(f.max), step: String(f.step) });
       input.setAttribute("aria-label", f.label);
-      input.dataset.busy = "budget";
+      input.dataset.busyBudget = "budget";
       input.addEventListener("change", () => {
         const v = Number(input.value);
-        if (locked(input) || input.value.trim() === "" || !Number.isFinite(v) || v < 0 || v > f.max) {
+        if (locked(input)) {
+          input.value = String(this.budget?.[f.key] ?? "");
+          return;
+        }
+        if (input.value.trim() === "" || !Number.isFinite(v) || v < 0 || v > f.max) {
           this.fill();
           return;
         }
@@ -18749,8 +18760,8 @@ var RunnerBar = class {
       this.inputs.get("limit")?.focus();
     }
   }
-  /** `busy` is Run next in flight; `held` is what started the request that holds the project's settings. */
-  update(view, budget, usage, busy, held) {
+  /** `busy` is Run next in flight; `held` is what started the request that holds the project's settings, `heldBudget` the one that holds the budget. */
+  update(view, budget, usage, busy, held, heldBudget) {
     this.view = view;
     this.budget = budget;
     this.usage = usage;
@@ -18773,6 +18784,7 @@ var RunnerBar = class {
     else this.run.removeAttribute("aria-busy");
     this.fill();
     paintBusy(this.el, held);
+    paintBusy(this.el, heldBudget, "busy-budget");
   }
   /** Rebuilds the options only when their words change: replacing them
    *  closes a native select the user has open. */
@@ -19077,6 +19089,10 @@ ${id}`;
         this.render();
         void this.host.refresh();
       });
+    }).catch((e) => {
+      this.asking.delete(key);
+      this.busy.end(scope);
+      this.host.notify(errorText(e));
     });
   }
   runNext() {
@@ -19105,6 +19121,10 @@ ${id}`;
         this.host.notify(errorText(e));
         void this.host.refresh();
       }).finally(() => this.render());
+    }).catch((e) => {
+      this.running = false;
+      this.host.notify(errorText(e));
+      this.render();
     });
   }
   async answer(root2, id, questionId, text) {
@@ -19146,7 +19166,7 @@ ${id}`;
       setRunner: (on) => this.mutate((t) => setSettings(this.root ?? "", { runner: on }, t), "runner"),
       setMaxRunning: (n) => this.mutate((t) => setSettings(this.root ?? "", { max_running: n }, t), "slots"),
       setOnDone: (onDone) => this.mutate((t) => setSettings(this.root ?? "", { on_done: onDone }, t), "on-done"),
-      setBudget: (u) => this.mutate((t) => setBudget(u, t), "budget"),
+      setBudget: (u) => this.write((t) => setBudget(u, t), BUDGET_SCOPE, "budget"),
       runNext: () => this.runNext(),
       openItem: (id) => this.select(id)
     };
@@ -19250,7 +19270,14 @@ ${id}`;
     for (const id of this.cards.keys()) if (!rows.some((r) => r.item.id === id && r.depth === 0)) this.cards.delete(id);
     placeChildren(this.listEl, segments(rows).map((seg) => seg.kind === "group" ? this.card(v, seg.head, seg.rows) : this.loose(v, seg.rows)));
     this.overviewEl.textContent = overview(v);
-    this.runner.update(v, this.data?.budget ?? null, this.data?.usage ?? null, this.running, this.busy.by(projectScope(this.root)));
+    this.runner.update(
+      v,
+      this.data?.budget ?? null,
+      this.data?.usage ?? null,
+      this.running,
+      this.busy.by(projectScope(this.root)),
+      this.busy.by(BUDGET_SCOPE)
+    );
     paintBusy(this.newGroupBox, this.busy.by(projectScope(this.root)));
     const chips = [...this.filterSlot.querySelectorAll("button")];
     const focusedChip = chips.findIndex((b) => b === document.activeElement);
@@ -21947,19 +21974,31 @@ var BacklogLoader = class {
   started() {
     return this.generation;
   }
-  /** Refetches every project. A later call wins over one still in flight. */
+  latest = null;
+  /** Refetches every project. A later call wins over one still in flight; the
+   *  superseded call resolves only once a newer refresh has committed, so a
+   *  caller that waits on it never sees the old state. */
   async refresh() {
     const token2 = this.opts.token();
     if (token2 === null) return;
     const gen = ++this.generation;
     const budgetGen = ++this.budgetGeneration;
     const spendGen = this.spendGeneration;
+    let p = this.fetchAndCommit(token2, gen, budgetGen, spendGen);
+    this.latest = p;
+    while (!await p) {
+      if (this.latest === p || this.latest === null) return;
+      p = this.latest;
+    }
+  }
+  /** Whether this refresh committed. */
+  async fetchAndCommit(token2, gen, budgetGen, spendGen) {
     const roots = [...new Set(this.opts.roots().filter(Boolean))];
     const [results, budget] = await Promise.all([
       Promise.all(roots.map((root2) => getBacklog(root2, token2).then((view) => ({ root: root2, view, error: "" })).catch((e) => ({ root: root2, view: null, error: errorText(e) })))),
       getBudget(token2).catch(() => null)
     ]);
-    if (gen !== this.generation || this.opts.token() !== token2) return;
+    if (gen !== this.generation || this.opts.token() !== token2) return false;
     const cur = this.opts.current();
     const prev = cur.views;
     const views = /* @__PURE__ */ new Map();
@@ -21981,6 +22020,7 @@ var BacklogLoader = class {
       usage = { ...cur.usage, unmeterable: fresh.usage.unmeterable };
     }
     this.opts.commit({ views, errors, budget: fresh?.budget ?? cur.budget, usage, generation: gen });
+    return true;
   }
   /** Applies a backlog.spend payload. A GetBudget still in flight was read
    *  before it, so that reply's plan use is dropped. */
@@ -22001,6 +22041,7 @@ var BacklogLoader = class {
     }, DEBOUNCE_MS);
   }
   reset() {
+    this.latest = null;
     this.generation++;
     this.budgetGeneration++;
     this.spendGeneration++;

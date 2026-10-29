@@ -6,6 +6,7 @@ import { bodyEditorLoader } from "./backlog_body.js";
 import { Busy, itemScope, locked as lockedEl, paintBusy } from "./backlog_busy.js";
 import type { BacklogData } from "./backlog_data.js";
 import type { BacklogView, Item } from "./backlog_model.js";
+import { BacklogLoader } from "./backlog_data.js";
 import { BacklogPane, type BacklogHost } from "./backlog_pane.js";
 
 interface Call {
@@ -328,4 +329,122 @@ test("Send answer holds the item until the daemon replies", async () => {
   await settle();
   assert.ok(!locked(named(pane, "Add note")));
   assert.equal(answer.value, "30%");
+});
+
+test("the item stays held while a superseded refresh resolves, until the newer one commits", async () => {
+  const h = host();
+  const pane = mount(h, view([item(1)], { 1: "draft" }));
+  const fetches: { method: string; gate: Gate }[] = [];
+  reply = (method) => {
+    if (method === "SetBacklogItemStatus") return Promise.resolve({});
+    const g = gate();
+    fetches.push({ method, gate: g });
+    return g.promise;
+  };
+  const latest = view([item(1, { status: "queued" })], { 1: "queued" });
+  let current = data(view([item(1)], { 1: "draft" }));
+  const loader = new BacklogLoader({
+    token: () => "t",
+    roots: () => ["/a"],
+    current: () => current,
+    commit: (d) => {
+      current = d;
+      pane.update(d, "/a", []);
+    },
+  });
+  h.refresh = () => loader.refresh();
+  h.started = () => loader.started();
+  const reply2 = { backlog: latest.backlog, states: { 1: { state: "queued" } }, runner: latest.runner };
+  const answerFetches = (n: number): void => {
+    for (const f of fetches.splice(0, n)) f.gate.resolve(f.method === "GetBacklog" ? reply2 : { budget: { limit: 1, max_per_run: 1, usd_limit: 0, usd_spent: 0 } });
+  };
+  action(pane, "queue").click();
+  await settle();
+  assert.equal(fetches.length, 2, "refresh A is fetching");
+  loader.request();
+  mock.timers.tick(150);
+  await settle();
+  assert.equal(fetches.length, 4, "refresh B started while A was fetching");
+  answerFetches(2);
+  await settle();
+  assert.ok(locked(action(pane, "delete")), "A resolved early, the old state still shows, the item stays held");
+  action(pane, "delete").click();
+  action(pane, "queue").click();
+  await settle();
+  assert.equal(calls.filter((c) => c.method !== "GetBacklog" && c.method !== "GetBudget").length, 1);
+  answerFetches(2);
+  await settle();
+  assert.equal(el(pane).querySelectorAll('.af-backlog-panel [aria-disabled="true"]').length, 0, "the newer refresh committed");
+});
+
+test("a locked Delete button is aria-disabled and refuses", async () => {
+  const pane = mount(host(), view([item(1)], { 1: "draft" }));
+  const g = gate();
+  reply = () => g.promise;
+  action(pane, "queue").click();
+  await settle();
+  const del = action(pane, "delete");
+  assert.equal(del.getAttribute("aria-disabled"), "true");
+  del.click();
+  await settle();
+  assert.equal(sent("DeleteBacklogItem").length, 0);
+  g.resolve();
+});
+
+test("a refused budget edit puts the stored value back, even in the focused box, and the budget is not the project's scope", async () => {
+  const h = host();
+  const pane = new BacklogPane(h);
+  doc.body.append(pane.el as unknown as FakeElement);
+  const d = { ...data(view([item(1)], { 1: "draft" })), budget: { limit: 50, max_per_run: 10, usd_limit: 0, usd_spent: 0 } };
+  pane.update(d, "/a", []);
+  const g = gate();
+  reply = () => g.promise;
+  const input = (label: string): FakeElement => el(pane).querySelector(`input[aria-label="${label}"]`)!;
+  input("Plan limit").value = "30";
+  input("Plan limit").dispatchEvent(new FakeEvent("change"));
+  await settle();
+  assert.ok(locked(input("Cap per run")));
+  assert.ok(!locked(el(pane).querySelector('select[aria-label="Max running"]')!), "settings are the project's, not the budget's");
+  input("Cap per run").focus();
+  input("Cap per run").value = "20";
+  input("Cap per run").dispatchEvent(new FakeEvent("change"));
+  assert.equal(input("Cap per run").value, "10");
+  assert.equal(sent("SetBudget").length, 1);
+  g.resolve();
+});
+
+test("filtering the wait picker keeps its options locked while the item is held", async () => {
+  const pane = mount(host(), view([item(1), item(2), item(3)], { 1: "draft", 2: "draft", 3: "draft" }));
+  named(pane, "Add").click();
+  const g = gate();
+  reply = () => g.promise;
+  action(pane, "queue").click();
+  await settle();
+  const search = el(pane).querySelector(".af-backlog-picker input")!;
+  search.value = "2";
+  search.dispatchEvent(new FakeEvent("input"));
+  const options = el(pane).querySelectorAll(".af-backlog-option");
+  assert.equal(options.length, 1);
+  assert.ok(locked(options[0]));
+  options[0].click();
+  await settle();
+  assert.equal(sent("UpdateBacklogItem").length, 0);
+  g.resolve();
+});
+
+test("Run children in order keeps the user's value while its request is out", async () => {
+  const pane = mount(host(), view([item(1), item(2, { parent: 1 })], { 1: "draft", 2: "draft" }));
+  const g = gate();
+  reply = () => g.promise;
+  const sw = (): FakeElement => el(pane).querySelector(".af-backlog-switch input")!;
+  assert.equal(sw().checked, false);
+  sw().checked = true;
+  sw().dispatchEvent(new FakeEvent("change"));
+  await settle();
+  assert.equal(sent("UpdateBacklogItem").length, 1);
+  assert.equal(sw().checked, true);
+  assert.ok(locked(sw()));
+  g.reject("refused");
+  await settle();
+  assert.equal(sw().checked, false, "a failed request shows the daemon's value again");
 });
