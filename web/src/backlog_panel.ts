@@ -13,6 +13,7 @@ import { answerEffect, answerEffectText, isGroup } from "./backlog_groups.js";
 import { QuestionBox } from "./backlog_inbox.js";
 import { waitsOnBlock } from "./backlog_cycle.js";
 import type { ItemUpdate } from "./backlog_api.js";
+import { locked, paintBusy } from "./backlog_busy.js";
 import {
   ACTION_LABELS, type BacklogView, type Item, type ItemAction, type MoveTarget, type RunRef, STATE_GLYPHS, STATE_LABELS, type Status,
   authorLabel, childrenOf, derivedOf, formatID, isAncestor, isParent, itemActions, itemByID, latestRun, neededBy, orchestratorQuestion, safeHttpUrl,
@@ -27,7 +28,7 @@ import type { SessionData } from "./types.js";
 
 export interface PanelActions {
   update(id: number, update: ItemUpdate): void;
-  status(id: number, status: Status): void;
+  status(id: number, status: Status, source: string): void;
   remove(id: number): void;
   move(id: number, to: MoveTarget): void;
   note(id: number, text: string): void;
@@ -41,6 +42,8 @@ export interface PanelActions {
   archiveSession(id: string): void;
   restoreSession(id: string): void;
   group(id: number, change: GroupChange): void;
+  /** What started the request that holds this item, or undefined when none does. */
+  busy?(id: number): string | undefined;
   orchestrator: OrchestratorActions;
 }
 
@@ -86,23 +89,28 @@ function section(title: string, ...children: (Node | string)[]): HTMLElement {
   return h("section", { class: "af-backlog-section" }, h("h3", { class: "af-backlog-section-title" }, title), ...children);
 }
 
-function button(label: string, run: () => void, cls = "af-ghost"): HTMLButtonElement {
+function button(label: string, run: () => void, cls = "af-ghost", busy?: string): HTMLButtonElement {
   const b = h("button", { type: "button", class: cls }, label);
-  b.addEventListener("click", run);
+  if (busy) b.dataset.busy = busy;
+  b.addEventListener("click", () => {
+    if (!locked(b)) run();
+  });
   return b;
 }
 
 /** A one-line input that runs `submit` on Enter and clears itself. */
-export function entryField(placeholder: string, label: string, submit: (text: string) => void): HTMLInputElement {
+export function entryField(placeholder: string, label: string, submit: (text: string) => boolean | void, busy?: string): HTMLInputElement {
   const input = h("input", { type: "text", class: "af-backlog-entry", placeholder });
   input.setAttribute("aria-label", label);
+  if (busy) input.dataset.busy = busy;
   input.addEventListener("keydown", (e) => {
     if (e.key !== "Enter" || e.isComposing) return;
     const text = input.value.trim();
     if (!text) return;
     e.preventDefault();
+    if (locked(input)) return;
     input.value = "";
-    submit(text);
+    if (submit(text) === false) input.value = text;
   });
   return input;
 }
@@ -122,6 +130,7 @@ export class ItemPanel {
   private readonly closeButton: HTMLButtonElement;
   private pickerQuery = "";
   private pickerOpen = false;
+  private sequentialWant: boolean | null = null;
   private moveOpen = false;
   private view: BacklogView | null = null;
   private sessions: SessionData[] = [];
@@ -150,7 +159,7 @@ export class ItemPanel {
       if (!text) return;
       this.note.value = "";
       actions.note(id, text);
-    });
+    }, "af-ghost", "note");
     this.head = h("div", { class: "af-backlog-panel-state", tabIndex: -1 });
     this.question = new QuestionBox(id, (qid, text) => actions.answer(id, qid, text));
     this.above = h("div", { class: "af-backlog-panel-rest" });
@@ -187,6 +196,7 @@ export class ItemPanel {
     this.usage = usage;
     const it = this.item();
     if (!it) return;
+    if (this.actions.busy?.(it.id) === undefined) this.sequentialWant = null;
     if (document.activeElement !== this.title) this.title.value = it.title;
     this.body.setText(it.body ?? "");
     const restore = this.keepField();
@@ -213,6 +223,7 @@ export class ItemPanel {
         authorLabel(view.backlog, it.id, m.author), formatTime(m.at),
         ...(m.closed ? [m.closed === "answered in session" ? "Answered in session" : `Closed · ${m.closed}`] : [])].join(" · ")),
       h("div", { class: "af-backlog-msg-text" }, m.text))));
+    paintBusy(this.el, this.actions.busy?.(it.id));
     restore();
   }
 
@@ -252,8 +263,8 @@ export class ItemPanel {
       const b = button(ACTION_LABELS[a], () => {
         if (a === "delete") this.actions.remove(it.id);
         else if (a === "start") this.actions.start(it.id);
-        else this.actions.status(it.id, ACTION_STATUS[a]);
-      }, a === "queue" || a === "start" ? "af-primary" : "af-ghost");
+        else this.actions.status(it.id, ACTION_STATUS[a], a);
+      }, a === "queue" || a === "start" ? "af-primary" : "af-ghost", a);
       b.dataset.action = a;
       row.append(b);
     }
@@ -269,14 +280,16 @@ export class ItemPanel {
       const sel = h("select", { class: "af-backlog-move-select" },
         h("option", { value: "" }, label), ...opts.map((o) => h("option", { value: String(o.id) }, `${formatID(o.id)} ${o.title}`)));
       sel.setAttribute("aria-label", label);
+      sel.dataset.busy = "move";
       sel.addEventListener("change", () => {
-        if (sel.value) this.actions.move(it.id, to(Number(sel.value)));
+        if (locked(sel)) sel.value = "";
+        else if (sel.value) this.actions.move(it.id, to(Number(sel.value)));
       });
       return sel;
     };
     const panel = h("div", { class: "af-backlog-move-panel" },
-      button("Top", () => this.actions.move(it.id, { top: true })),
-      button("Bottom", () => this.actions.move(it.id, { bottom: true })),
+      button("Top", () => this.actions.move(it.id, { top: true }), "af-ghost", "move"),
+      button("Bottom", () => this.actions.move(it.id, { bottom: true }), "af-ghost", "move"),
       pick("Above…", others, (id) => ({ before: id })),
       pick("Into…", others.filter((o) => o.id !== it.parent && o.status !== "running" && (o.runs ?? []).length === 0),
         (id) => ({ into: id })));
@@ -292,7 +305,10 @@ export class ItemPanel {
       const target = itemByID(b, w);
       const remove = h("button", { type: "button", class: "af-backlog-chip-x", title: `Remove ${formatID(w)}` }, icon("x"));
       remove.setAttribute("aria-label", `Remove ${formatID(w)}`);
-      remove.addEventListener("click", () => this.actions.update(it.id, { waits_on: (it.waits_on ?? []).filter((x) => x !== w) }));
+      remove.dataset.busy = "waits";
+      remove.addEventListener("click", () => {
+        if (!locked(remove)) this.actions.update(it.id, { waits_on: (it.waits_on ?? []).filter((x) => x !== w) });
+      });
       const state = target ? STATE_LABELS[derivedOf(view, w).state] : "missing";
       chips.append(h("span", { class: "af-backlog-link" },
         h("span", {}, `${formatID(w)} ${target?.title ?? ""}`), h("span", { class: "af-backlog-reason" }, state), remove));
@@ -328,7 +344,9 @@ export class ItemPanel {
         const block = waitsOnBlock(b, it.id, o.id);
         const opt = h("button", { type: "button", class: "af-backlog-option", disabled: block !== null },
           h("span", {}, `${formatID(o.id)} ${o.title}`), ...(block ? [h("span", { class: "af-backlog-reason" }, block)] : []));
+        opt.dataset.busy = "waits";
         opt.addEventListener("click", () => {
+          if (locked(opt)) return;
           this.pickerOpen = false;
           this.pickerQuery = "";
           this.actions.update(it.id, { waits_on: [...(it.waits_on ?? []), o.id] });
@@ -336,6 +354,7 @@ export class ItemPanel {
         return h("li", {}, opt);
       }));
       if (options.length === 0) list.append(h("li", { class: "af-backlog-reason" }, "No matching items"));
+      paintBusy(list, this.actions.busy?.(it.id));
     };
     input.addEventListener("input", () => {
       this.pickerQuery = input.value;
@@ -367,12 +386,19 @@ export class ItemPanel {
     if (parent) {
       parts.push(h("ul", { class: "af-backlog-children" },
         ...childrenOf(b, it.id).map((c) => h("li", {}, this.itemLink(c), stateChip(view, c.id, "")))));
-      const sw = h("input", { type: "checkbox", checked: it.sequential === true });
+      const sw = h("input", { type: "checkbox", checked: this.sequentialWant ?? it.sequential === true });
       sw.setAttribute("role", "switch");
-      sw.addEventListener("change", () => this.actions.update(it.id, { sequential: sw.checked }));
+      sw.dataset.busy = "sequential";
+      sw.addEventListener("change", () => {
+        if (locked(sw)) sw.checked = !sw.checked;
+        else {
+          this.sequentialWant = sw.checked;
+          this.actions.update(it.id, { sequential: sw.checked });
+        }
+      });
       parts.push(h("label", { class: "af-backlog-switch" }, sw, "Run children in order"));
     }
-    parts.push(entryField("Add child…", `Add a child to ${formatID(it.id)}`, (title) => this.actions.addChild(it.id, title)));
+    parts.push(entryField("Add child…", `Add a child to ${formatID(it.id)}`, (title) => this.actions.addChild(it.id, title), "child"));
     return section("Children", ...parts);
   }
 
@@ -396,7 +422,7 @@ export class ItemPanel {
     if (facts.firstChild) out.push(facts);
     const btns = s ? this.sessionButtons(s) : h("div", { class: "af-backlog-run-actions" });
     if (latest && itemActions(view.backlog, it, derivedOf(view, it.id)).includes("start")) {
-      btns.append(button("Start again", () => this.actions.start(it.id)));
+      btns.append(button("Start again", () => this.actions.start(it.id), "af-ghost", "start"));
     }
     if (btns.firstChild) out.push(btns);
     const earlier = runs.slice(0, -1).reverse();

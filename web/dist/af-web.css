@@ -3243,6 +3243,10 @@ textarea[class] {
   right: calc(var(--af-space-1) / 2);
   background: var(--af-surface);
 }
+.af-task-switch[aria-disabled=true] {
+  cursor: default;
+  opacity: 0.6;
+}
 .af-task-switch:focus-visible {
   outline: none;
 }
@@ -4618,6 +4622,58 @@ textarea[class] {
   flex-wrap: wrap;
   align-items: baseline;
   gap: var(--af-space-1);
+}
+.af-backlog :is(.af-ghost, .af-primary, .af-backlog-toggle, .af-backlog-filter, .af-backlog-option, .af-backlog-chip-x, .af-backlog-plan, button:not([class])) {
+  transition:
+    border-color 0.1s,
+    background-color 0.1s,
+    filter 0.1s;
+}
+.af-backlog .af-ghost:hover:not(:disabled, [aria-disabled=true]),
+.af-backlog .af-backlog-toggle:hover:not([aria-disabled=true]),
+.af-backlog .af-backlog-filter:hover,
+.af-backlog .af-backlog-plan:hover {
+  border-color: var(--af-accent);
+  background: var(--af-surface-raised);
+}
+.af-backlog .af-primary:hover:not(:disabled, [aria-disabled=true]) {
+  filter: brightness(1.15);
+}
+.af-backlog :is(.af-ghost, .af-backlog-toggle, .af-backlog-filter, .af-backlog-plan):active:not(:disabled, [aria-disabled=true]) {
+  background: var(--af-border);
+}
+.af-backlog .af-primary:active:not(:disabled, [aria-disabled=true]) {
+  filter: brightness(0.85);
+}
+.af-backlog :is(button, select, summary, input):focus-visible {
+  outline: calc(var(--af-space-1) / 2) solid var(--af-accent);
+  outline-offset: calc(var(--af-space-1) / 2);
+}
+.af-backlog [aria-disabled=true] {
+  opacity: 0.6;
+  cursor: not-allowed;
+  filter: none;
+}
+.af-backlog [aria-busy=true] {
+  cursor: progress;
+}
+.af-backlog button[aria-busy=true]::after {
+  content: "";
+  display: inline-block;
+  box-sizing: border-box;
+  width: var(--af-space-3);
+  height: var(--af-space-3);
+  margin-left: var(--af-space-1);
+  vertical-align: text-bottom;
+  border: calc(var(--af-space-1) / 4) solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: af-working-spin 1s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .af-backlog button[aria-busy=true]::after {
+    animation: none;
+  }
 }
 
 /* src/tokens.css */

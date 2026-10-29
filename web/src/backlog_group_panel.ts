@@ -2,6 +2,7 @@
 // Pause / Unpause and Archive / Unarchive, Dependencies and History, and the
 // Orchestrator row (effort orchestrator proposal, ui.md "Layout").
 
+import { locked } from "./backlog_busy.js";
 import { h } from "./dom.js";
 import { type BacklogView, type Item, STATE_GLYPHS, STATE_LABELS, derivedOf, formatID } from "./backlog_model.js";
 import { groupDependencies, groupHistory } from "./backlog_groups.js";
@@ -15,10 +16,19 @@ export interface GroupChange {
 
 export const PAUSED_GLYPH = "‖";
 
+/** The button that makes this change, as groupButtons keys it. */
+export function groupSource(c: GroupChange): string {
+  if (c.archived !== undefined) return c.archived ? "archive" : "unarchive";
+  return c.paused ? "pause" : "unpause";
+}
+
 function action(label: string, key: string, run: () => void): HTMLButtonElement {
   const b = h("button", { type: "button", class: "af-ghost" }, label);
   b.dataset.action = key;
-  b.addEventListener("click", run);
+  b.dataset.busy = key;
+  b.addEventListener("click", () => {
+    if (!locked(b)) run();
+  });
   return b;
 }
 
