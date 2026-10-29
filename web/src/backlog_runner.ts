@@ -7,6 +7,7 @@
 import type { BudgetUpdate } from "./backlog_api.js";
 import { type BacklogView, type Budget, formatID } from "./backlog_model.js";
 import { type Usage, WINDOW_LABELS, pct, tighterWindow, usageHover, usageLines, usd, webReason } from "./backlog_usage.js";
+import { locked, paintBusy } from "./backlog_busy.js";
 import { h } from "./dom.js";
 
 export interface RunnerActions {
@@ -111,12 +112,17 @@ export class RunnerBar {
       h("span", { class: "af-backlog-toggle-knob", ariaHidden: "true" }), this.toggleLabel);
     this.toggle.setAttribute("role", "switch");
     this.toggle.setAttribute("aria-label", "Runner");
+    this.toggle.dataset.busy = "runner";
     this.toggle.addEventListener("click", () => {
-      if (this.view) actions.setRunner(!this.view.backlog.settings.runner);
+      if (this.view && !locked(this.toggle)) actions.setRunner(!this.view.backlog.settings.runner);
     });
     this.slots = h("select", { class: "af-backlog-slots" });
     this.slots.setAttribute("aria-label", "Max running");
-    this.slots.addEventListener("change", () => actions.setMaxRunning(Number(this.slots.value)));
+    this.slots.dataset.busy = "slots";
+    this.slots.addEventListener("change", () => {
+      if (locked(this.slots)) this.slots.value = String(Math.max(1, this.view?.backlog.settings.max_running ?? 1));
+      else actions.setMaxRunning(Number(this.slots.value));
+    });
     const hover = (): void => { if (this.usage && this.budget) this.plan.title = usageHover(this.usage, this.budget, this.now()); };
     this.plan.addEventListener("pointerenter", hover);
     this.plan.setAttribute("aria-expanded", "false");
@@ -132,7 +138,11 @@ export class RunnerBar {
     this.onDone = h("select", { class: "af-backlog-move-select" },
       h("option", { value: "keep" }, "Keep session"), h("option", { value: "archive" }, "Archive session"));
     this.onDone.setAttribute("aria-label", "When an item is done");
-    this.onDone.addEventListener("change", () => actions.setOnDone(this.onDone.value));
+    this.onDone.dataset.busy = "on-done";
+    this.onDone.addEventListener("change", () => {
+      if (locked(this.onDone)) this.fill(true);
+      else actions.setOnDone(this.onDone.value);
+    });
     this.menu = h("details", { class: "af-backlog-settings" }, this.menuSummary(), this.menuPanel());
     this.el = h("div", { class: "af-backlog-head" },
       h("div", { class: "af-backlog-runner" }, this.toggle, this.reason, this.slots, this.plan),
@@ -149,9 +159,10 @@ export class RunnerBar {
     const fields = BUDGET_FIELDS.map((f) => {
       const input = h("input", { type: "number", class: "af-backlog-number", min: "0", max: String(f.max), step: String(f.step) });
       input.setAttribute("aria-label", f.label);
+      input.dataset.busy = "budget";
       input.addEventListener("change", () => {
         const v = Number(input.value);
-        if (input.value.trim() === "" || !Number.isFinite(v) || v < 0 || v > f.max) {
+        if (locked(input) || input.value.trim() === "" || !Number.isFinite(v) || v < 0 || v > f.max) {
           this.fill();
           return;
         }
@@ -179,7 +190,8 @@ export class RunnerBar {
     }
   }
 
-  update(view: BacklogView, budget: Budget | null, usage: Usage | null, busy: boolean): void {
+  /** `busy` is Run next in flight; `held` is what started the request that holds the project's settings. */
+  update(view: BacklogView, budget: Budget | null, usage: Usage | null, busy: boolean, held?: string): void {
     this.view = view;
     this.budget = budget;
     this.usage = usage;
@@ -198,7 +210,10 @@ export class RunnerBar {
     this.main.textContent = a?.kind === "open" ? `Open ${formatID(a.id)}` : "Change limit";
     this.run.className = a?.kind === "run" ? "af-primary" : "af-ghost";
     this.run.disabled = busy;
+    if (busy) this.run.setAttribute("aria-busy", "true");
+    else this.run.removeAttribute("aria-busy");
     this.fill();
+    paintBusy(this.el, held);
   }
 
   /** Rebuilds the options only when their words change: replacing them
@@ -249,10 +264,10 @@ export class RunnerBar {
     this.plan.replaceChildren(`Plan ${pct(w.plan)} of ${WINDOW_LABELS[k].bar} `, meter, ` limit ${pct(b.limit)}`);
   }
 
-  private fill(): void {
+  private fill(force = false): void {
     for (const [key, input] of this.inputs) {
       if (document.activeElement !== input && this.budget) input.value = String(this.budget[key]);
     }
-    if (this.view && document.activeElement !== this.onDone) this.onDone.value = this.view.backlog.settings.on_done || "keep";
+    if (this.view && (force || document.activeElement !== this.onDone)) this.onDone.value = this.view.backlog.settings.on_done || "keep";
   }
 }

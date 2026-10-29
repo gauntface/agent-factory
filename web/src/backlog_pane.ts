@@ -9,6 +9,7 @@ import { errorText } from "./api.js";
 import {
   addItem, addNote, answerQuestion, deleteItem, dismissNote, moveItem, runNext, setBudget, setItemStatus, setSettings, startItem, updateItem,
 } from "./backlog_api.js";
+import { Busy, itemScope, paintBusy, projectScope } from "./backlog_busy.js";
 import type { BacklogData } from "./backlog_data.js";
 import {
   type Backlog, type BacklogView, type DropZone, FILTERS, type Filter, type Item, type ListRow, type MoveTarget,
@@ -16,7 +17,7 @@ import {
   safeHttpUrl, sources, topQueued,
 } from "./backlog_model.js";
 import { groupCounts, metaLine, overview, pausedNotice, positions, progress, segments } from "./backlog_cards.js";
-import { PAUSED_GLYPH, groupButtons } from "./backlog_group_panel.js";
+import { PAUSED_GLYPH, groupButtons, groupSource } from "./backlog_group_panel.js";
 import { EffortSessions, routedTag } from "./backlog_effort.js";
 import { inbox } from "./backlog_groups.js";
 import { InboxList } from "./backlog_inbox.js";
@@ -115,6 +116,7 @@ export class BacklogPane {
   private readonly requested = new Set<string>();
   private rowEls = new Map<number, HTMLElement>();
   private readonly newGroup: HTMLInputElement;
+  private readonly newGroupBox: HTMLElement;
   private readonly overviewEl = h("p", { class: "af-backlog-overview" });
   private readonly cards = new Map<number, Card>();
   private readonly listEl = h("div", { class: "af-backlog-list" });
@@ -126,6 +128,7 @@ export class BacklogPane {
   // while the confirm or the request is out does nothing.
   private readonly asking = new Set<string>();
   private readonly confirmed = new Set<string>();
+  private readonly busy = new Busy(() => this.render());
   private readonly runner: RunnerBar;
   private readonly headSlot = h("div", {});
   private readonly filterSlot = h("div", {});
@@ -142,6 +145,7 @@ export class BacklogPane {
     this.el = h("section", { class: "af-backlog" });
     this.el.setAttribute("aria-label", "Backlog");
     this.runner = new RunnerBar(this.runnerActions());
+    this.newGroupBox = h("div", { class: "af-backlog-new af-backlog-new-group" }, icon("plus"));
     this.previews = new PreviewCache((id) => {
       const token = this.host.token();
       return token === null ? Promise.reject(new Error("not signed in")) : previewSession(id, PREVIEW_LINES, token);
@@ -151,13 +155,16 @@ export class BacklogPane {
     this.inboxList = new InboxList({
       answer: (id, qid, text) => this.answer(this.root ?? "", id, qid, text),
       dismiss: (id, noteId) => this.dismiss(this.root ?? "", id, noteId),
+      busy: (id) => this.busy.by(itemScope(this.root ?? "", id)),
       select: (id) => this.select(id),
       focusInbox: () => (this.filterSlot.querySelector("button") as HTMLElement | null)?.focus(),
     });
-    this.newGroup = entryField("New group…", "New group title", (title) => this.mutate((t) => addItem(this.root ?? "", { title }, t)));
+    this.newGroup = entryField("New group…", "New group title",
+      (title) => this.mutate((t) => addItem(this.root ?? "", { title }, t), "new-group"), "new-group");
+    this.newGroupBox.append(this.newGroup);
     this.headSlot.append(h("div", { class: "af-backlog-top" },
       h("div", { class: "af-backlog-titles" }, h("h2", { class: "af-backlog-heading" }, "Backlog"), this.overviewEl),
-      h("div", { class: "af-backlog-new af-backlog-new-group" }, icon("plus"), this.newGroup)), this.runner.el);
+      this.newGroupBox), this.runner.el);
     const listWrap = h("div", { class: "af-backlog-listwrap" }, this.filterSlot, this.listSlot, this.emptySlot);
     this.main = h("div", { class: "af-backlog-main" }, listWrap);
     const endDrag = (): void => { this.dragId = null; };
@@ -283,21 +290,25 @@ export class BacklogPane {
   private start(root: string, id: number): void {
     const v = this.root === root ? this.view() : undefined;
     const key = `${root}\n${id}`;
-    if (!v || this.asking.has(key)) return;
+    const scope = itemScope(root, id);
+    if (!v || this.asking.has(key) || !this.busy.begin(scope, "start")) return;
     this.asking.add(key);
     void this.gateOK(v, "Start", id).then((ok) => {
       const token = this.host.token();
       if (!ok || token === null) {
         this.asking.delete(key);
+        this.busy.end(scope);
         return;
       }
       const entry = this.markStarting(root, id);
       this.render();
       startItem(root, id, token).then(() => {
         this.asking.delete(key);
+        this.busy.end(scope);
         return this.settle(root, [entry]);
       }, (e: unknown) => {
         this.asking.delete(key);
+        this.busy.end(scope);
         this.starts.delete(key);
         this.host.notify(errorText(e));
         this.render();
@@ -336,72 +347,96 @@ export class BacklogPane {
   }
 
   private async answer(root: string, id: number, questionId: number, text: string): Promise<boolean> {
-    const v = this.root === root ? this.view() : this.data?.views.get(root);
-    if (v && !await this.gateOK(v, "Answer", id)) return false;
-    const token = this.host.token();
-    if (token === null) return false;
-    try {
-      await answerQuestion(root, id, questionId, text, token);
-      void this.host.refresh();
-      return true;
-    } catch (e) {
-      this.host.notify(errorText(e));
-      void this.host.refresh();
-      return false;
-    }
+    const done = await this.busy.run(itemScope(root, id), "answer", async () => {
+      const v = this.root === root ? this.view() : this.data?.views.get(root);
+      if (v && !await this.gateOK(v, "Answer", id)) return false;
+      const token = this.host.token();
+      if (token === null) return false;
+      try {
+        await answerQuestion(root, id, questionId, text, token);
+        void this.host.refresh();
+        return true;
+      } catch (e) {
+        this.host.notify(errorText(e));
+        void this.host.refresh();
+        return false;
+      }
+    });
+    return done === true;
   }
 
   private async dismiss(root: string, id: number, noteId: number): Promise<boolean> {
-    const token = this.host.token();
-    if (token === null) return false;
-    try {
-      await dismissNote(root, id, noteId, token);
-      void this.host.refresh();
-      return true;
-    } catch (e) {
-      this.host.notify(errorText(e));
-      void this.host.refresh();
-      return false;
-    }
+    const done = await this.busy.run(itemScope(root, id), "dismiss", async () => {
+      const token = this.host.token();
+      if (token === null) return false;
+      try {
+        await dismissNote(root, id, noteId, token);
+        void this.host.refresh();
+        return true;
+      } catch (e) {
+        this.host.notify(errorText(e));
+        void this.host.refresh();
+        return false;
+      }
+    });
+    return done === true;
   }
 
   private runnerActions() {
     return {
-      setRunner: (on: boolean) => this.mutate((t) => setSettings(this.root ?? "", { runner: on }, t)),
-      setMaxRunning: (n: number) => this.mutate((t) => setSettings(this.root ?? "", { max_running: n }, t)),
-      setOnDone: (onDone: string) => this.mutate((t) => setSettings(this.root ?? "", { on_done: onDone }, t)),
-      setBudget: (u: Parameters<typeof setBudget>[0]) => this.write((t) => setBudget(u, t)),
+      setRunner: (on: boolean) => this.mutate((t) => setSettings(this.root ?? "", { runner: on }, t), "runner"),
+      setMaxRunning: (n: number) => this.mutate((t) => setSettings(this.root ?? "", { max_running: n }, t), "slots"),
+      setOnDone: (onDone: string) => this.mutate((t) => setSettings(this.root ?? "", { on_done: onDone }, t), "on-done"),
+      setBudget: (u: Parameters<typeof setBudget>[0]) => this.mutate((t) => setBudget(u, t), "budget"),
       runNext: () => this.runNext(),
       openItem: (id: number) => this.select(id),
     };
   }
 
-  private mutate(run: (token: string) => Promise<unknown>): void {
-    if (this.root) this.write(run);
+  /** A write to the open project's settings, held by the project's scope. */
+  private mutate(run: (token: string) => Promise<unknown>, source: string): boolean {
+    return this.root !== null && this.write(run, projectScope(this.root), source);
   }
 
-  private write(run: (token: string) => Promise<unknown>): void {
+  /** Sends a write. With a scope, the scope stays held until the refresh that
+   *  follows has landed, and a write for a held scope is refused: false. */
+  private write(run: (token: string) => Promise<unknown>, scope?: string, source = ""): boolean {
     const token = this.host.token();
-    if (token === null) return;
-    run(token).then(() => this.host.refresh(), (e: unknown) => {
+    if (token === null) return false;
+    const go = (): Promise<void> => run(token).then(() => this.host.refresh(), (e: unknown) => {
       this.host.notify(errorText(e));
-      void this.host.refresh();
+      return this.host.refresh();
     });
+    if (scope === undefined) {
+      void go();
+      return true;
+    }
+    if (this.busy.by(scope) !== undefined) return false;
+    void this.busy.run(scope, source, go);
+    return true;
   }
 
-  private move(id: number, to: MoveTarget): void {
+  /** `hold` marks the item busy for the request; the panel's move menu does,
+   *  while drags and Alt+arrows stay free to repeat. */
+  private move(id: number, to: MoveTarget, hold = false): void {
     const v = this.view();
     const root = this.root;
     if (!v || !root) return;
+    const scope = itemScope(root, id);
+    if (hold && this.busy.by(scope) !== undefined) return;
     const next = applyMove(v.backlog, id, to);
     const pending = next ? { root, backlog: next, gen: Infinity } : null;
     if (pending) {
       this.pending = pending;
       this.focusId = id;
-      this.render();
     }
+    const held = hold && this.busy.begin(scope, "move");
+    if (!held && pending) this.render();
     const token = this.host.token();
-    if (token === null) return;
+    if (token === null) {
+      if (held) this.busy.end(scope);
+      return;
+    }
     moveItem(root, id, to, token).then(() => {
       if (pending) pending.gen = this.host.started();
       return this.host.refresh();
@@ -413,6 +448,8 @@ export class BacklogPane {
       }
       this.host.notify(errorText(e));
       void this.host.refresh();
+    }).finally(() => {
+      if (held) this.busy.end(scope);
     });
   }
 
@@ -453,7 +490,8 @@ export class BacklogPane {
     for (const id of this.cards.keys()) if (!rows.some((r) => r.item.id === id && r.depth === 0)) this.cards.delete(id);
     placeChildren(this.listEl, segments(rows).map((seg) => seg.kind === "group" ? this.card(v, seg.head, seg.rows) : this.loose(v, seg.rows)));
     this.overviewEl.textContent = overview(v);
-    this.runner.update(v, this.data?.budget ?? null, this.data?.usage ?? null, this.running);
+    this.runner.update(v, this.data?.budget ?? null, this.data?.usage ?? null, this.running, this.busy.by(projectScope(this.root)));
+    paintBusy(this.newGroupBox, this.busy.by(projectScope(this.root)));
     const chips = [...this.filterSlot.querySelectorAll("button")];
     const focusedChip = chips.findIndex((b) => b === document.activeElement);
     this.filterSlot.replaceChildren(this.filters(v));
@@ -562,7 +600,7 @@ export class BacklogPane {
     if (!c) {
       const root = this.root ?? "";
       const input = entryField("Add item…", `Add item to ${formatID(g.id)}`,
-        (title) => this.write((t) => addItem(root, { title, parent: g.id }, t)));
+        (title) => this.write((t) => addItem(root, { title, parent: g.id }, t), itemScope(root, g.id), "child"), "child");
       const tree = h("ul", { class: "af-backlog-group-list" });
       tree.setAttribute("role", "tree");
       const add = h("div", { class: "af-backlog-new af-backlog-group-add" }, icon("plus"), input);
@@ -578,6 +616,7 @@ export class BacklogPane {
     headEl.setAttribute("aria-describedby", lines.map((l) => l.id).join(" "));
     c.tree.replaceChildren(headEl, ...lines, ...rows.map((r) => this.row(v, r, { pos })));
     c.add.hidden = head.folded || g.archived === true;
+    paintBusy(c.el, this.busy.by(itemScope(this.root ?? "", g.id)));
     return c.el;
   }
 
@@ -647,7 +686,7 @@ export class BacklogPane {
   private headActions(v: BacklogView, it: Item): HTMLElement[] {
     const root = this.root ?? "";
     const out: HTMLElement[] = it.archived && !it.orchestrator ? [] : [this.effort.button(root, v, it)];
-    out.push(...groupButtons(it, false, (id, c) => this.write((t) => updateItem(root, id, c, t))));
+    out.push(...groupButtons(it, false, (id, c) => this.write((t) => updateItem(root, id, c, t), itemScope(root, id), groupSource(c))));
     const open = h("button", { type: "button", class: "af-ghost" }, "Details");
     open.setAttribute("aria-label", `Open ${formatID(it.id)}`);
     open.addEventListener("click", () => this.select(it.id));
@@ -876,19 +915,26 @@ export class BacklogPane {
   private panelActions(root: string) {
     const here = (): boolean => this.root === root;
     return {
-      update: (id: number, u: Parameters<typeof updateItem>[2]) => this.write((t) => updateItem(root, id, u, t)),
-      status: (id: number, s: Parameters<typeof setItemStatus>[2]) => this.write((t) => setItemStatus(root, id, s, t)),
+      update: (id: number, u: Parameters<typeof updateItem>[2]) => {
+        const field = u.waits_on !== undefined ? "waits" : u.sequential !== undefined ? "sequential" : null;
+        this.write((t) => updateItem(root, id, u, t), field ? itemScope(root, id) : undefined, field ?? "");
+      },
+      status: (id: number, s: Parameters<typeof setItemStatus>[2], source: string) =>
+        this.write((t) => setItemStatus(root, id, s, t), itemScope(root, id), source),
       remove: (id: number) => {
+        const scope = itemScope(root, id);
+        if (this.busy.by(scope) !== undefined) return;
         if (here()) this.selected = null;
-        this.write((t) => deleteItem(root, id, t));
+        this.write((t) => deleteItem(root, id, t), scope, "delete");
       },
       move: (id: number, to: MoveTarget) => {
-        if (here()) this.move(id, to);
+        if (here()) this.move(id, to, true);
       },
-      note: (id: number, text: string) => this.write((t) => addNote(root, id, text, t)),
+      note: (id: number, text: string) => this.write((t) => addNote(root, id, text, t), itemScope(root, id), "note"),
       start: (id: number) => this.start(root, id),
       answer: (id: number, questionId: number, text: string) => this.answer(root, id, questionId, text),
-      addChild: (parent: number, title: string) => this.write((t) => addItem(root, { title, parent }, t)),
+      addChild: (parent: number, title: string) => this.write((t) => addItem(root, { title, parent }, t), itemScope(root, parent), "child"),
+      busy: (id: number) => this.busy.by(itemScope(root, id)),
       select: (id: number) => this.select(id, root),
       close: () => {
         if (!here()) return;
@@ -900,13 +946,14 @@ export class BacklogPane {
       openSession: (id: string) => this.host.openSession(id),
       archiveSession: (id: string) => this.host.archiveSession(id),
       restoreSession: (id: string) => this.host.restoreSession(id),
-      group: (id: number, c: { paused?: boolean; archived?: boolean }) => this.write((t) => updateItem(root, id, c, t)),
+      group: (id: number, c: { paused?: boolean; archived?: boolean }) =>
+        this.write((t) => updateItem(root, id, c, t), itemScope(root, id), groupSource(c)),
       orchestrator: {
         open: (id: number) => {
           const v = this.view();
           if (v && here()) void this.effort.open(root, v, id);
         },
-        unbind: (id: number) => void this.effort.unbind(root, id),
+        unbind: (id: number) => void this.busy.run(itemScope(root, id), "unbind-orchestrator", () => this.effort.unbind(root, id)),
         start: (v: BacklogView, g: Item) => this.effort.button(root, v, g),
       },
     };

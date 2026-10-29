@@ -15648,6 +15648,18 @@ function taskArmingSummary(t, now = /* @__PURE__ */ new Date()) {
   }
   return "";
 }
+function paintSwitch(el2, on, busy) {
+  el2.classList.toggle("af-task-switch-on", on);
+  el2.setAttribute("aria-checked", on ? "true" : "false");
+  el2.title = on ? "Enabled \xB7 click to disable" : "Disabled \xB7 click to enable";
+  if (busy) {
+    el2.setAttribute("aria-busy", "true");
+    el2.setAttribute("aria-disabled", "true");
+  } else {
+    el2.removeAttribute("aria-busy");
+    el2.removeAttribute("aria-disabled");
+  }
+}
 var TasksPane = class {
   constructor(actions2) {
     this.actions = actions2;
@@ -15662,6 +15674,9 @@ var TasksPane = class {
   // Which list was last rendered, so a rebuild driven by a task event (a cron fire, a
   // next-run recalculation) keeps the reader's place (#2933).
   lastToken = null;
+  // Task id -> the value an in-flight toggle is moving to. Rebuilds re-apply it so
+  // a refetch mid-request cannot hand back an enabled switch for the same task.
+  pending = /* @__PURE__ */ new Map();
   /** Re-renders the tasks list SCOPED to the selected project (redesign PR2): only
    *  tasks whose project_path matches, so the tasks view operates within the same
    *  project the rail is scoped to. A null project (none exist) shows no tasks. */
@@ -15691,6 +15706,23 @@ var TasksPane = class {
       const control = [...row?.querySelectorAll("button") ?? []].find((button2) => (button2.getAttribute("aria-label") || button2.textContent) === focusedName);
       control?.focus({ preventScroll: true });
     }
+  }
+  flip(t) {
+    if (this.pending.has(t.id)) return;
+    const next = !t.enabled;
+    this.pending.set(t.id, next);
+    this.paintRowSwitch(t.id, next, true);
+    void this.actions.toggle(t).then(
+      (applied) => applied ? next : t.enabled,
+      () => t.enabled
+    ).then((on) => {
+      this.pending.delete(t.id);
+      this.paintRowSwitch(t.id, on, false);
+    });
+  }
+  paintRowSwitch(id, on, busy) {
+    const el2 = this.el.querySelector(`[data-task-id="${CSS.escape(id)}"] .af-task-switch`);
+    if (el2) paintSwitch(el2, on, busy);
   }
   render(tasks) {
     if (this.lastError) {
@@ -15771,7 +15803,11 @@ var TasksPane = class {
     toggle.setAttribute("aria-checked", t.enabled ? "true" : "false");
     toggle.setAttribute("aria-label", `Enabled: ${t.name}`);
     toggle.title = t.enabled ? "Enabled \xB7 click to disable" : "Disabled \xB7 click to enable";
-    toggle.addEventListener("click", () => this.actions.toggle(t));
+    const pending = this.pending.get(t.id);
+    if (pending !== void 0) {
+      paintSwitch(toggle, pending, true);
+    }
+    toggle.addEventListener("click", () => this.flip(t));
     const verbs = [
       { label: "Edit", glyph: "pencil", run: () => this.actions.edit(t) }
     ];
@@ -17205,6 +17241,57 @@ async function unbindOrchestrator(root2, id, token2) {
   await af("SetBacklogOrchestrator", { repo_path: root2, id, clear: true }, token2);
 }
 
+// src/backlog_busy.ts
+var itemScope = (root2, id) => `item
+${root2}
+${id}`;
+var projectScope = (root2) => `project
+${root2}`;
+var Busy = class {
+  constructor(changed) {
+    this.changed = changed;
+  }
+  active = /* @__PURE__ */ new Map();
+  /** What started the request that holds the scope, or undefined when none does. */
+  by(scope) {
+    return this.active.get(scope);
+  }
+  /** Takes the scope for `source`; false when a request already holds it. */
+  begin(scope, source) {
+    if (this.active.has(scope)) return false;
+    this.active.set(scope, source);
+    this.changed();
+    return true;
+  }
+  end(scope) {
+    if (this.active.delete(scope)) this.changed();
+  }
+  /** Runs `fn` holding the scope; undefined without calling it when the scope is held. */
+  async run(scope, source, fn) {
+    if (!this.begin(scope, source)) return void 0;
+    try {
+      return await fn();
+    } finally {
+      this.end(scope);
+    }
+  }
+};
+function locked(el2) {
+  return el2.getAttribute("aria-disabled") === "true";
+}
+function paintBusy(root2, source) {
+  for (const el2 of root2.querySelectorAll("[data-busy]")) {
+    if (source === void 0) {
+      el2.removeAttribute("aria-disabled");
+      el2.removeAttribute("aria-busy");
+      continue;
+    }
+    el2.setAttribute("aria-disabled", "true");
+    if (el2.dataset.busy === source) el2.setAttribute("aria-busy", "true");
+    else el2.removeAttribute("aria-busy");
+  }
+}
+
 // src/backlog_groups.ts
 function isGroup(b, it) {
   return !it.parent && isParent(b, it.id);
@@ -17382,10 +17469,17 @@ var EffortSessions = class {
 
 // src/backlog_group_panel.ts
 var PAUSED_GLYPH = "\u2016";
+function groupSource(c) {
+  if (c.archived !== void 0) return c.archived ? "archive" : "unarchive";
+  return c.paused ? "pause" : "unpause";
+}
 function action(label, key, run) {
   const b = h("button", { type: "button", class: "af-ghost" }, label);
   b.dataset.action = key;
-  b.addEventListener("click", run);
+  b.dataset.busy = key;
+  b.addEventListener("click", () => {
+    if (!locked(b)) run();
+  });
   return b;
 }
 function groupButtons(it, group, change) {
@@ -17573,6 +17667,7 @@ var QuestionBox = class {
     this.answer = h("textarea", { class: "af-backlog-note", rows: 2, placeholder: `Answer ${formatID(id)}\u2026` });
     this.answer.setAttribute("aria-label", "Answer");
     this.send = h("button", { type: "button", class: "af-primary" }, "Send answer");
+    this.send.dataset.busy = "answer";
     this.send.addEventListener("click", () => this.sendAnswer());
     this.answer.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.isComposing) {
@@ -17621,7 +17716,7 @@ var QuestionBox = class {
   sendAnswer() {
     const text = this.answer.value.trim();
     const qid = this.qid;
-    if (!text || !qid || this.send.disabled) return;
+    if (!text || !qid || this.send.disabled || locked(this.send)) return;
     this.send.disabled = true;
     void this.submit(qid, text).then((ok) => {
       this.send.disabled = false;
@@ -17642,6 +17737,7 @@ var InboxList = class {
   render(view, sessions) {
     const entries = inbox(view);
     const next = /* @__PURE__ */ new Map();
+    const painted = [];
     for (const { item, question } of entries) {
       const key = `${item.id}:${question.id}`;
       const card = this.cards.get(key) ?? this.card(item.id);
@@ -17657,13 +17753,19 @@ ${age}`;
       }
       card.box.set(question, answerEffectText(answerEffect(item, sessions)));
       next.set(key, card);
+      painted.push([card.li, item.id]);
     }
     this.cards = next;
-    const notes = inboxNotes(view).map(({ item, note }) => this.note(item, note));
+    const notes = inboxNotes(view).map(({ item, note }) => {
+      const li = this.note(item, note);
+      painted.push([li, item.id]);
+      return li;
+    });
     const want = [...[...next.values()].map((c) => c.li), ...notes];
     const have = [...this.list.children];
     if (want.length !== have.length || want.some((li, i) => li !== have[i])) this.list.replaceChildren(...want);
     this.empty.hidden = want.length > 0;
+    for (const [li, id] of painted) paintBusy(li, this.actions.busy?.(id));
   }
   /** A note card. Its signature lets an unchanged note keep its node. */
   note(item, note) {
@@ -17681,6 +17783,7 @@ ${item.pr ?? ""}`;
     const pr = safeHttpUrl(item.pr);
     const text = h("p", { class: "af-backlog-inbox-note-text" }, note.text);
     const dismiss = h("button", { type: "button" }, "Dismiss");
+    dismiss.dataset.busy = "dismiss";
     dismiss.setAttribute("aria-label", `Dismiss note on ${formatID(item.id)} from ${noteTime(note.at)}`);
     const li = h(
       "li",
@@ -17696,7 +17799,7 @@ ${item.pr ?? ""}`;
     );
     li.dataset.sig = sig;
     dismiss.addEventListener("click", () => {
-      if (dismiss.disabled) return;
+      if (dismiss.disabled || locked(dismiss)) return;
       dismiss.disabled = true;
       const next = li.nextElementSibling;
       const prev = li.previousElementSibling;
@@ -17902,21 +18005,26 @@ function stateChip(view, id, reason = derivedOf(view, id).reason ?? "", link2) {
 function section2(title, ...children) {
   return h("section", { class: "af-backlog-section" }, h("h3", { class: "af-backlog-section-title" }, title), ...children);
 }
-function button(label, run, cls = "af-ghost") {
+function button(label, run, cls = "af-ghost", busy) {
   const b = h("button", { type: "button", class: cls }, label);
-  b.addEventListener("click", run);
+  if (busy) b.dataset.busy = busy;
+  b.addEventListener("click", () => {
+    if (!locked(b)) run();
+  });
   return b;
 }
-function entryField(placeholder, label, submit) {
+function entryField(placeholder, label, submit, busy) {
   const input = h("input", { type: "text", class: "af-backlog-entry", placeholder });
   input.setAttribute("aria-label", label);
+  if (busy) input.dataset.busy = busy;
   input.addEventListener("keydown", (e) => {
     if (e.key !== "Enter" || e.isComposing) return;
     const text = input.value.trim();
     if (!text) return;
     e.preventDefault();
+    if (locked(input)) return;
     input.value = "";
-    submit(text);
+    if (submit(text) === false) input.value = text;
   });
   return input;
 }
@@ -17947,7 +18055,7 @@ var ItemPanel = class {
       if (!text) return;
       this.note.value = "";
       actions2.note(id, text);
-    });
+    }, "af-ghost", "note");
     this.head = h("div", { class: "af-backlog-panel-state", tabIndex: -1 });
     this.question = new QuestionBox(id, (qid, text) => actions2.answer(id, qid, text));
     this.above = h("div", { class: "af-backlog-panel-rest" });
@@ -18046,6 +18154,7 @@ var ItemPanel = class {
       ].join(" \xB7 ")),
       h("div", { class: "af-backlog-msg-text" }, m.text)
     )));
+    paintBusy(this.el, this.actions.busy?.(it.id));
     restore();
   }
   /** Keeps the focus, and a field's value, across a rebuild: the same control
@@ -18081,8 +18190,8 @@ var ItemPanel = class {
       const b = button(ACTION_LABELS[a], () => {
         if (a === "delete") this.actions.remove(it.id);
         else if (a === "start") this.actions.start(it.id);
-        else this.actions.status(it.id, ACTION_STATUS[a]);
-      }, a === "queue" || a === "start" ? "af-primary" : "af-ghost");
+        else this.actions.status(it.id, ACTION_STATUS[a], a);
+      }, a === "queue" || a === "start" ? "af-primary" : "af-ghost", a);
       b.dataset.action = a;
       row.append(b);
     }
@@ -18101,16 +18210,18 @@ var ItemPanel = class {
         ...opts.map((o) => h("option", { value: String(o.id) }, `${formatID(o.id)} ${o.title}`))
       );
       sel.setAttribute("aria-label", label);
+      sel.dataset.busy = "move";
       sel.addEventListener("change", () => {
-        if (sel.value) this.actions.move(it.id, to(Number(sel.value)));
+        if (locked(sel)) sel.value = "";
+        else if (sel.value) this.actions.move(it.id, to(Number(sel.value)));
       });
       return sel;
     };
     const panel = h(
       "div",
       { class: "af-backlog-move-panel" },
-      button("Top", () => this.actions.move(it.id, { top: true })),
-      button("Bottom", () => this.actions.move(it.id, { bottom: true })),
+      button("Top", () => this.actions.move(it.id, { top: true }), "af-ghost", "move"),
+      button("Bottom", () => this.actions.move(it.id, { bottom: true }), "af-ghost", "move"),
       pick("Above\u2026", others, (id) => ({ before: id })),
       pick(
         "Into\u2026",
@@ -18131,7 +18242,10 @@ var ItemPanel = class {
       const target = itemByID(b, w);
       const remove = h("button", { type: "button", class: "af-backlog-chip-x", title: `Remove ${formatID(w)}` }, icon("x"));
       remove.setAttribute("aria-label", `Remove ${formatID(w)}`);
-      remove.addEventListener("click", () => this.actions.update(it.id, { waits_on: (it.waits_on ?? []).filter((x) => x !== w) }));
+      remove.dataset.busy = "waits";
+      remove.addEventListener("click", () => {
+        if (!locked(remove)) this.actions.update(it.id, { waits_on: (it.waits_on ?? []).filter((x) => x !== w) });
+      });
       const state = target ? STATE_LABELS[derivedOf(view, w).state] : "missing";
       chips.append(h(
         "span",
@@ -18178,7 +18292,9 @@ var ItemPanel = class {
           h("span", {}, `${formatID(o.id)} ${o.title}`),
           ...block ? [h("span", { class: "af-backlog-reason" }, block)] : []
         );
+        opt.dataset.busy = "waits";
         opt.addEventListener("click", () => {
+          if (locked(opt)) return;
           this.pickerOpen = false;
           this.pickerQuery = "";
           this.actions.update(it.id, { waits_on: [...it.waits_on ?? [], o.id] });
@@ -18220,10 +18336,14 @@ var ItemPanel = class {
       ));
       const sw = h("input", { type: "checkbox", checked: it.sequential === true });
       sw.setAttribute("role", "switch");
-      sw.addEventListener("change", () => this.actions.update(it.id, { sequential: sw.checked }));
+      sw.dataset.busy = "sequential";
+      sw.addEventListener("change", () => {
+        if (locked(sw)) sw.checked = !sw.checked;
+        else this.actions.update(it.id, { sequential: sw.checked });
+      });
       parts.push(h("label", { class: "af-backlog-switch" }, sw, "Run children in order"));
     }
-    parts.push(entryField("Add child\u2026", `Add a child to ${formatID(it.id)}`, (title) => this.actions.addChild(it.id, title)));
+    parts.push(entryField("Add child\u2026", `Add a child to ${formatID(it.id)}`, (title) => this.actions.addChild(it.id, title), "child"));
     return section2("Children", ...parts);
   }
   /** The latest run: its preview, branch and PR, its session actions, Start
@@ -18246,7 +18366,7 @@ var ItemPanel = class {
     if (facts.firstChild) out.push(facts);
     const btns = s ? this.sessionButtons(s) : h("div", { class: "af-backlog-run-actions" });
     if (latest && itemActions(view.backlog, it, derivedOf(view, it.id)).includes("start")) {
-      btns.append(button("Start again", () => this.actions.start(it.id)));
+      btns.append(button("Start again", () => this.actions.start(it.id), "af-ghost", "start"));
     }
     if (btns.firstChild) out.push(btns);
     const earlier = runs.slice(0, -1).reverse();
@@ -18519,12 +18639,17 @@ var RunnerBar = class {
     );
     this.toggle.setAttribute("role", "switch");
     this.toggle.setAttribute("aria-label", "Runner");
+    this.toggle.dataset.busy = "runner";
     this.toggle.addEventListener("click", () => {
-      if (this.view) actions2.setRunner(!this.view.backlog.settings.runner);
+      if (this.view && !locked(this.toggle)) actions2.setRunner(!this.view.backlog.settings.runner);
     });
     this.slots = h("select", { class: "af-backlog-slots" });
     this.slots.setAttribute("aria-label", "Max running");
-    this.slots.addEventListener("change", () => actions2.setMaxRunning(Number(this.slots.value)));
+    this.slots.dataset.busy = "slots";
+    this.slots.addEventListener("change", () => {
+      if (locked(this.slots)) this.slots.value = String(Math.max(1, this.view?.backlog.settings.max_running ?? 1));
+      else actions2.setMaxRunning(Number(this.slots.value));
+    });
     const hover = () => {
       if (this.usage && this.budget) this.plan.title = usageHover(this.usage, this.budget, this.now());
     };
@@ -18546,7 +18671,11 @@ var RunnerBar = class {
       h("option", { value: "archive" }, "Archive session")
     );
     this.onDone.setAttribute("aria-label", "When an item is done");
-    this.onDone.addEventListener("change", () => actions2.setOnDone(this.onDone.value));
+    this.onDone.dataset.busy = "on-done";
+    this.onDone.addEventListener("change", () => {
+      if (locked(this.onDone)) this.fill(true);
+      else actions2.setOnDone(this.onDone.value);
+    });
     this.menu = h("details", { class: "af-backlog-settings" }, this.menuSummary(), this.menuPanel());
     this.el = h(
       "div",
@@ -18582,9 +18711,10 @@ var RunnerBar = class {
     const fields2 = BUDGET_FIELDS.map((f) => {
       const input = h("input", { type: "number", class: "af-backlog-number", min: "0", max: String(f.max), step: String(f.step) });
       input.setAttribute("aria-label", f.label);
+      input.dataset.busy = "budget";
       input.addEventListener("change", () => {
         const v = Number(input.value);
-        if (input.value.trim() === "" || !Number.isFinite(v) || v < 0 || v > f.max) {
+        if (locked(input) || input.value.trim() === "" || !Number.isFinite(v) || v < 0 || v > f.max) {
           this.fill();
           return;
         }
@@ -18619,7 +18749,8 @@ var RunnerBar = class {
       this.inputs.get("limit")?.focus();
     }
   }
-  update(view, budget, usage, busy) {
+  /** `busy` is Run next in flight; `held` is what started the request that holds the project's settings. */
+  update(view, budget, usage, busy, held) {
     this.view = view;
     this.budget = budget;
     this.usage = usage;
@@ -18638,7 +18769,10 @@ var RunnerBar = class {
     this.main.textContent = a?.kind === "open" ? `Open ${formatID(a.id)}` : "Change limit";
     this.run.className = a?.kind === "run" ? "af-primary" : "af-ghost";
     this.run.disabled = busy;
+    if (busy) this.run.setAttribute("aria-busy", "true");
+    else this.run.removeAttribute("aria-busy");
     this.fill();
+    paintBusy(this.el, held);
   }
   /** Rebuilds the options only when their words change: replacing them
    *  closes a native select the user has open. */
@@ -18685,11 +18819,11 @@ var RunnerBar = class {
     meter.setAttribute("aria-label", `${pct(w.plan)} of a ${pct(b.limit)} limit`);
     this.plan.replaceChildren(`Plan ${pct(w.plan)} of ${WINDOW_LABELS[k].bar} `, meter, ` limit ${pct(b.limit)}`);
   }
-  fill() {
+  fill(force = false) {
     for (const [key, input] of this.inputs) {
       if (document.activeElement !== input && this.budget) input.value = String(this.budget[key]);
     }
-    if (this.view && document.activeElement !== this.onDone) this.onDone.value = this.view.backlog.settings.on_done || "keep";
+    if (this.view && (force || document.activeElement !== this.onDone)) this.onDone.value = this.view.backlog.settings.on_done || "keep";
   }
 };
 
@@ -18721,6 +18855,7 @@ var BacklogPane = class {
     this.el = h("section", { class: "af-backlog" });
     this.el.setAttribute("aria-label", "Backlog");
     this.runner = new RunnerBar(this.runnerActions());
+    this.newGroupBox = h("div", { class: "af-backlog-new af-backlog-new-group" }, icon("plus"));
     this.previews = new PreviewCache((id) => {
       const token2 = this.host.token();
       return token2 === null ? Promise.reject(new Error("not signed in")) : previewSession(id, PREVIEW_LINES, token2);
@@ -18730,15 +18865,22 @@ var BacklogPane = class {
     this.inboxList = new InboxList({
       answer: (id, qid, text) => this.answer(this.root ?? "", id, qid, text),
       dismiss: (id, noteId) => this.dismiss(this.root ?? "", id, noteId),
+      busy: (id) => this.busy.by(itemScope(this.root ?? "", id)),
       select: (id) => this.select(id),
       focusInbox: () => this.filterSlot.querySelector("button")?.focus()
     });
-    this.newGroup = entryField("New group\u2026", "New group title", (title) => this.mutate((t) => addItem(this.root ?? "", { title }, t)));
+    this.newGroup = entryField(
+      "New group\u2026",
+      "New group title",
+      (title) => this.mutate((t) => addItem(this.root ?? "", { title }, t), "new-group"),
+      "new-group"
+    );
+    this.newGroupBox.append(this.newGroup);
     this.headSlot.append(h(
       "div",
       { class: "af-backlog-top" },
       h("div", { class: "af-backlog-titles" }, h("h2", { class: "af-backlog-heading" }, "Backlog"), this.overviewEl),
-      h("div", { class: "af-backlog-new af-backlog-new-group" }, icon("plus"), this.newGroup)
+      this.newGroupBox
     ), this.runner.el);
     const listWrap = h("div", { class: "af-backlog-listwrap" }, this.filterSlot, this.listSlot, this.emptySlot);
     this.main = h("div", { class: "af-backlog-main" }, listWrap);
@@ -18777,6 +18919,7 @@ var BacklogPane = class {
   requested = /* @__PURE__ */ new Set();
   rowEls = /* @__PURE__ */ new Map();
   newGroup;
+  newGroupBox;
   overviewEl = h("p", { class: "af-backlog-overview" });
   cards = /* @__PURE__ */ new Map();
   listEl = h("div", { class: "af-backlog-list" });
@@ -18788,6 +18931,7 @@ var BacklogPane = class {
   // while the confirm or the request is out does nothing.
   asking = /* @__PURE__ */ new Set();
   confirmed = /* @__PURE__ */ new Set();
+  busy = new Busy(() => this.render());
   runner;
   headSlot = h("div", {});
   filterSlot = h("div", {});
@@ -18909,21 +19053,25 @@ ${id}`, entry);
     const v = this.root === root2 ? this.view() : void 0;
     const key = `${root2}
 ${id}`;
-    if (!v || this.asking.has(key)) return;
+    const scope = itemScope(root2, id);
+    if (!v || this.asking.has(key) || !this.busy.begin(scope, "start")) return;
     this.asking.add(key);
     void this.gateOK(v, "Start", id).then((ok) => {
       const token2 = this.host.token();
       if (!ok || token2 === null) {
         this.asking.delete(key);
+        this.busy.end(scope);
         return;
       }
       const entry = this.markStarting(root2, id);
       this.render();
       startItem(root2, id, token2).then(() => {
         this.asking.delete(key);
+        this.busy.end(scope);
         return this.settle(root2, [entry]);
       }, (e) => {
         this.asking.delete(key);
+        this.busy.end(scope);
         this.starts.delete(key);
         this.host.notify(errorText(e));
         this.render();
@@ -18960,67 +19108,91 @@ ${id}`;
     });
   }
   async answer(root2, id, questionId, text) {
-    const v = this.root === root2 ? this.view() : this.data?.views.get(root2);
-    if (v && !await this.gateOK(v, "Answer", id)) return false;
-    const token2 = this.host.token();
-    if (token2 === null) return false;
-    try {
-      await answerQuestion(root2, id, questionId, text, token2);
-      void this.host.refresh();
-      return true;
-    } catch (e) {
-      this.host.notify(errorText(e));
-      void this.host.refresh();
-      return false;
-    }
+    const done2 = await this.busy.run(itemScope(root2, id), "answer", async () => {
+      const v = this.root === root2 ? this.view() : this.data?.views.get(root2);
+      if (v && !await this.gateOK(v, "Answer", id)) return false;
+      const token2 = this.host.token();
+      if (token2 === null) return false;
+      try {
+        await answerQuestion(root2, id, questionId, text, token2);
+        void this.host.refresh();
+        return true;
+      } catch (e) {
+        this.host.notify(errorText(e));
+        void this.host.refresh();
+        return false;
+      }
+    });
+    return done2 === true;
   }
   async dismiss(root2, id, noteId) {
-    const token2 = this.host.token();
-    if (token2 === null) return false;
-    try {
-      await dismissNote(root2, id, noteId, token2);
-      void this.host.refresh();
-      return true;
-    } catch (e) {
-      this.host.notify(errorText(e));
-      void this.host.refresh();
-      return false;
-    }
+    const done2 = await this.busy.run(itemScope(root2, id), "dismiss", async () => {
+      const token2 = this.host.token();
+      if (token2 === null) return false;
+      try {
+        await dismissNote(root2, id, noteId, token2);
+        void this.host.refresh();
+        return true;
+      } catch (e) {
+        this.host.notify(errorText(e));
+        void this.host.refresh();
+        return false;
+      }
+    });
+    return done2 === true;
   }
   runnerActions() {
     return {
-      setRunner: (on) => this.mutate((t) => setSettings(this.root ?? "", { runner: on }, t)),
-      setMaxRunning: (n) => this.mutate((t) => setSettings(this.root ?? "", { max_running: n }, t)),
-      setOnDone: (onDone) => this.mutate((t) => setSettings(this.root ?? "", { on_done: onDone }, t)),
-      setBudget: (u) => this.write((t) => setBudget(u, t)),
+      setRunner: (on) => this.mutate((t) => setSettings(this.root ?? "", { runner: on }, t), "runner"),
+      setMaxRunning: (n) => this.mutate((t) => setSettings(this.root ?? "", { max_running: n }, t), "slots"),
+      setOnDone: (onDone) => this.mutate((t) => setSettings(this.root ?? "", { on_done: onDone }, t), "on-done"),
+      setBudget: (u) => this.mutate((t) => setBudget(u, t), "budget"),
       runNext: () => this.runNext(),
       openItem: (id) => this.select(id)
     };
   }
-  mutate(run) {
-    if (this.root) this.write(run);
+  /** A write to the open project's settings, held by the project's scope. */
+  mutate(run, source) {
+    return this.root !== null && this.write(run, projectScope(this.root), source);
   }
-  write(run) {
+  /** Sends a write. With a scope, the scope stays held until the refresh that
+   *  follows has landed, and a write for a held scope is refused: false. */
+  write(run, scope, source = "") {
     const token2 = this.host.token();
-    if (token2 === null) return;
-    run(token2).then(() => this.host.refresh(), (e) => {
+    if (token2 === null) return false;
+    const go = () => run(token2).then(() => this.host.refresh(), (e) => {
       this.host.notify(errorText(e));
-      void this.host.refresh();
+      return this.host.refresh();
     });
+    if (scope === void 0) {
+      void go();
+      return true;
+    }
+    if (this.busy.by(scope) !== void 0) return false;
+    void this.busy.run(scope, source, go);
+    return true;
   }
-  move(id, to) {
+  /** `hold` marks the item busy for the request; the panel's move menu does,
+   *  while drags and Alt+arrows stay free to repeat. */
+  move(id, to, hold = false) {
     const v = this.view();
     const root2 = this.root;
     if (!v || !root2) return;
+    const scope = itemScope(root2, id);
+    if (hold && this.busy.by(scope) !== void 0) return;
     const next = applyMove(v.backlog, id, to);
     const pending = next ? { root: root2, backlog: next, gen: Infinity } : null;
     if (pending) {
       this.pending = pending;
       this.focusId = id;
-      this.render();
     }
+    const held = hold && this.busy.begin(scope, "move");
+    if (!held && pending) this.render();
     const token2 = this.host.token();
-    if (token2 === null) return;
+    if (token2 === null) {
+      if (held) this.busy.end(scope);
+      return;
+    }
     moveItem(root2, id, to, token2).then(() => {
       if (pending) pending.gen = this.host.started();
       return this.host.refresh();
@@ -19032,6 +19204,8 @@ ${id}`;
       }
       this.host.notify(errorText(e));
       void this.host.refresh();
+    }).finally(() => {
+      if (held) this.busy.end(scope);
     });
   }
   render() {
@@ -19076,7 +19250,8 @@ ${id}`;
     for (const id of this.cards.keys()) if (!rows.some((r) => r.item.id === id && r.depth === 0)) this.cards.delete(id);
     placeChildren(this.listEl, segments(rows).map((seg) => seg.kind === "group" ? this.card(v, seg.head, seg.rows) : this.loose(v, seg.rows)));
     this.overviewEl.textContent = overview(v);
-    this.runner.update(v, this.data?.budget ?? null, this.data?.usage ?? null, this.running);
+    this.runner.update(v, this.data?.budget ?? null, this.data?.usage ?? null, this.running, this.busy.by(projectScope(this.root)));
+    paintBusy(this.newGroupBox, this.busy.by(projectScope(this.root)));
     const chips = [...this.filterSlot.querySelectorAll("button")];
     const focusedChip = chips.findIndex((b) => b === document.activeElement);
     this.filterSlot.replaceChildren(this.filters(v));
@@ -19191,7 +19366,8 @@ ${id}`;
       const input = entryField(
         "Add item\u2026",
         `Add item to ${formatID(g.id)}`,
-        (title) => this.write((t) => addItem(root2, { title, parent: g.id }, t))
+        (title) => this.write((t) => addItem(root2, { title, parent: g.id }, t), itemScope(root2, g.id), "child"),
+        "child"
       );
       const tree = h("ul", { class: "af-backlog-group-list" });
       tree.setAttribute("role", "tree");
@@ -19208,6 +19384,7 @@ ${id}`;
     headEl.setAttribute("aria-describedby", lines.map((l) => l.id).join(" "));
     c.tree.replaceChildren(headEl, ...lines, ...rows.map((r) => this.row(v, r, { pos })));
     c.add.hidden = head.folded || g.archived === true;
+    paintBusy(c.el, this.busy.by(itemScope(this.root ?? "", g.id)));
     return c.el;
   }
   row(v, row, spot) {
@@ -19289,7 +19466,7 @@ ${id}`;
   headActions(v, it) {
     const root2 = this.root ?? "";
     const out = it.archived && !it.orchestrator ? [] : [this.effort.button(root2, v, it)];
-    out.push(...groupButtons(it, false, (id, c) => this.write((t) => updateItem(root2, id, c, t))));
+    out.push(...groupButtons(it, false, (id, c) => this.write((t) => updateItem(root2, id, c, t), itemScope(root2, id), groupSource(c))));
     const open = h("button", { type: "button", class: "af-ghost" }, "Details");
     open.setAttribute("aria-label", `Open ${formatID(it.id)}`);
     open.addEventListener("click", () => this.select(it.id));
@@ -19520,19 +19697,25 @@ ${id}`;
   panelActions(root2) {
     const here = () => this.root === root2;
     return {
-      update: (id, u) => this.write((t) => updateItem(root2, id, u, t)),
-      status: (id, s) => this.write((t) => setItemStatus(root2, id, s, t)),
+      update: (id, u) => {
+        const field2 = u.waits_on !== void 0 ? "waits" : u.sequential !== void 0 ? "sequential" : null;
+        this.write((t) => updateItem(root2, id, u, t), field2 ? itemScope(root2, id) : void 0, field2 ?? "");
+      },
+      status: (id, s, source) => this.write((t) => setItemStatus(root2, id, s, t), itemScope(root2, id), source),
       remove: (id) => {
+        const scope = itemScope(root2, id);
+        if (this.busy.by(scope) !== void 0) return;
         if (here()) this.selected = null;
-        this.write((t) => deleteItem(root2, id, t));
+        this.write((t) => deleteItem(root2, id, t), scope, "delete");
       },
       move: (id, to) => {
-        if (here()) this.move(id, to);
+        if (here()) this.move(id, to, true);
       },
-      note: (id, text) => this.write((t) => addNote(root2, id, text, t)),
+      note: (id, text) => this.write((t) => addNote(root2, id, text, t), itemScope(root2, id), "note"),
       start: (id) => this.start(root2, id),
       answer: (id, questionId, text) => this.answer(root2, id, questionId, text),
-      addChild: (parent, title) => this.write((t) => addItem(root2, { title, parent }, t)),
+      addChild: (parent, title) => this.write((t) => addItem(root2, { title, parent }, t), itemScope(root2, parent), "child"),
+      busy: (id) => this.busy.by(itemScope(root2, id)),
       select: (id) => this.select(id, root2),
       close: () => {
         if (!here()) return;
@@ -19544,13 +19727,13 @@ ${id}`;
       openSession: (id) => this.host.openSession(id),
       archiveSession: (id) => this.host.archiveSession(id),
       restoreSession: (id) => this.host.restoreSession(id),
-      group: (id, c) => this.write((t) => updateItem(root2, id, c, t)),
+      group: (id, c) => this.write((t) => updateItem(root2, id, c, t), itemScope(root2, id), groupSource(c)),
       orchestrator: {
         open: (id) => {
           const v = this.view();
           if (v && here()) void this.effort.open(root2, v, id);
         },
-        unbind: (id) => void this.effort.unbind(root2, id),
+        unbind: (id) => void this.busy.run(itemScope(root2, id), "unbind-orchestrator", () => this.effort.unbind(root2, id)),
         start: (v, g) => this.effort.button(root2, v, g)
       }
     };
@@ -23230,17 +23413,23 @@ function openEditTask(task) {
     })
   );
 }
-function toggleTask(task) {
+async function toggleTask(task) {
   const tok = token;
   if (tok === null) {
-    return;
+    return false;
   }
-  void updateTask(task, { enabled: !task.enabled }, tok).then(refreshTasks).catch((e) => {
-    if (isMutationCommittedError(e)) {
+  try {
+    await updateTask(task, { enabled: !task.enabled }, tok);
+  } catch (e) {
+    const committed = isMutationCommittedError(e);
+    if (committed) {
       refreshTasks();
     }
     surfaceTabError(e);
-  });
+    return committed;
+  }
+  refreshTasks();
+  return true;
 }
 function doTriggerTask(task) {
   const tok = token;

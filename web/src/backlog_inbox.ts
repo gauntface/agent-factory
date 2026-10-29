@@ -2,6 +2,7 @@
 // (backlog-v2 proposal, ui.md "Inbox"). Both live across renders, so a
 // backlog.changed event never eats an answer the user is typing, or its focus.
 
+import { locked, paintBusy } from "./backlog_busy.js";
 import { h } from "./dom.js";
 import { icon } from "./icon.js";
 import { type BacklogView, type Item, type Message, formatID, safeHttpUrl } from "./backlog_model.js";
@@ -33,6 +34,7 @@ export class QuestionBox {
     this.answer = h("textarea", { class: "af-backlog-note", rows: 2, placeholder: `Answer ${formatID(id)}…` });
     this.answer.setAttribute("aria-label", "Answer");
     this.send = h("button", { type: "button", class: "af-primary" }, "Send answer");
+    this.send.dataset.busy = "answer";
     this.send.addEventListener("click", () => this.sendAnswer());
     this.answer.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !e.isComposing) {
@@ -68,7 +70,7 @@ export class QuestionBox {
   private sendAnswer(): void {
     const text = this.answer.value.trim();
     const qid = this.qid;
-    if (!text || !qid || this.send.disabled) return;
+    if (!text || !qid || this.send.disabled || locked(this.send)) return;
     this.send.disabled = true;
     void this.submit(qid, text).then((ok) => {
       this.send.disabled = false;
@@ -81,6 +83,8 @@ export interface InboxActions {
   answer(id: number, questionId: number, text: string): Promise<boolean>;
   dismiss(id: number, noteId: number): Promise<boolean>;
   select(id: number): void;
+  /** What started the request that holds the item, or undefined when none does. */
+  busy?(id: number): string | undefined;
   /** Focuses the Inbox filter chip, when a dismiss leaves no card to focus. */
   focusInbox(): void;
 }
@@ -108,6 +112,7 @@ export class InboxList {
   render(view: BacklogView, sessions: readonly SessionData[]): void {
     const entries = inbox(view);
     const next = new Map<string, Card>();
+    const painted: [HTMLElement, number][] = [];
     for (const { item, question } of entries) {
       const key = `${item.id}:${question.id}`;
       const card = this.cards.get(key) ?? this.card(item.id);
@@ -121,13 +126,19 @@ export class InboxList {
       }
       card.box.set(question, answerEffectText(answerEffect(item, sessions)));
       next.set(key, card);
+      painted.push([card.li, item.id]);
     }
     this.cards = next;
-    const notes = inboxNotes(view).map(({ item, note }) => this.note(item, note));
+    const notes = inboxNotes(view).map(({ item, note }) => {
+      const li = this.note(item, note);
+      painted.push([li, item.id]);
+      return li;
+    });
     const want = [...[...next.values()].map((c) => c.li), ...notes];
     const have = [...this.list.children];
     if (want.length !== have.length || want.some((li, i) => li !== have[i])) this.list.replaceChildren(...want);
     this.empty.hidden = want.length > 0;
+    for (const [li, id] of painted) paintBusy(li, this.actions.busy?.(id));
   }
 
   /** A note card. Its signature lets an unchanged note keep its node. */
@@ -141,6 +152,7 @@ export class InboxList {
     const pr = safeHttpUrl(item.pr);
     const text = h("p", { class: "af-backlog-inbox-note-text" }, note.text);
     const dismiss = h("button", { type: "button" }, "Dismiss");
+    dismiss.dataset.busy = "dismiss";
     dismiss.setAttribute("aria-label", `Dismiss note on ${formatID(item.id)} from ${noteTime(note.at)}`);
     const li = h("li", { class: "af-backlog-inbox-card af-backlog-inbox-note" },
       h("div", { class: "af-backlog-inbox-head" }, open, h("span", { class: "af-backlog-reason" }, `Noted ${formatTime(note.at)}`)), text,
@@ -149,7 +161,7 @@ export class InboxList {
         dismiss));
     li.dataset.sig = sig;
     dismiss.addEventListener("click", () => {
-      if (dismiss.disabled) return;
+      if (dismiss.disabled || locked(dismiss)) return;
       dismiss.disabled = true;
       const next = li.nextElementSibling as HTMLElement | null;
       const prev = li.previousElementSibling as HTMLElement | null;

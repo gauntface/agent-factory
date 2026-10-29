@@ -281,14 +281,16 @@ test("the runner bar shows the window closest to the limit, and both windows on 
     ["1 of 1 working", "1 of 2 working", "1 of 3 working"]);
 });
 
-test("the switch, max running and when-done change this project's runner", () => {
+test("the switch, max running and when-done change this project's runner", async () => {
   const pane = mount(host());
   pane.update(data(view([item(1)])), "/a", []);
   const bar = el(pane).querySelector(".af-backlog-head")!;
   bar.querySelector('[role="switch"]')!.click();
+  await settle();
   const slots = bar.querySelector('select[aria-label="Max running"]')!;
   slots.value = "4";
   slots.dispatchEvent(new FakeEvent("change"));
+  await settle();
   const onDone = bar.querySelector('select[aria-label="When an item is done"]')!;
   assert.equal(onDone.value, "keep");
   onDone.value = "archive";
@@ -298,7 +300,7 @@ test("the switch, max running and when-done change this project's runner", () =>
   ]);
 });
 
-test("budget fields send one change each and refuse values out of range", () => {
+test("budget fields send one change each and refuse values out of range", async () => {
   const pane = mount(host());
   pane.update(data(view([item(1)])), "/a", []);
   const input = (label: string): FakeElement => el(pane).querySelector(`input[aria-label="${label}"]`)!;
@@ -308,6 +310,7 @@ test("budget fields send one change each and refuse values out of range", () => 
   assert.equal(input("Plan limit").value, "50");
   input("Plan limit").value = "30";
   input("Plan limit").dispatchEvent(new FakeEvent("change"));
+  await settle();
   input("Cap per run").value = "10";
   input("Cap per run").dispatchEvent(new FakeEvent("change"));
   input("Dollar limit").value = "12.5";
