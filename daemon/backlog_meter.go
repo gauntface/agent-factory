@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -226,37 +225,43 @@ func (m *Manager) meterPassLocked(now time.Time) {
 	var backlogDirs []string
 	metered := map[string]bool{}
 	runs, orchs := m.startedItemRuns(home)
-	launchDirs := map[string]map[string]string{}
-	projects := map[string]string{}
+	launchDirs := map[string]map[string]backlog.LaunchDirs{}
+	projects := map[string]backlog.Where{}
 	for _, r := range runs {
 		usage.Runs[r.run.SessionID] = r.run.Cost()
 		if r.inst == nil {
 			continue
 		}
 		archived := r.inst.IsArchived()
-		running := r.item.Status == backlog.StatusRunning && !archived && r.inst.BacklogRunEndedAt().IsZero()
-		project, ok := projects[r.repoID]
+		running := backlog.RunBlocksRunner(r.item.Status, archived, r.inst.BacklogRunEndedAt(), r.inst.LastPaneChurnAt())
+		where, ok := projects[r.repoID]
 		if !ok {
-			project = backlogHost{m: m}.ProjectName(r.repoID)
-			projects[r.repoID] = project
+			where = backlog.Where{Name: backlogHost{m: m}.ProjectName(r.repoID)}
+			where.Root, _ = registeredProjectRootForRepoID(r.repoID)
+			projects[r.repoID] = where
 		}
-		workDirs := runLaunchDirs(r.run, r.inst.GetWorktreePath(), archived)
+		current := r.inst.GetWorktreePath()
+		workDirs := r.run.LaunchCandidates(current, archived)
 		configDir, dirs, err := runTranscriptDirs(r.inst, workDirs)
+		if len(dirs) == 0 && !running {
+			configDir, dirs = r.run.MeteredLocation()
+		}
 		if errors.Is(err, session.ErrNotClaude) {
 			if running {
 				program := r.inst.ResolvedAgent()
 				if program == "" {
 					program = r.inst.Program
 				}
-				usage.Unmeterable[r.run.SessionID] = backlog.UnmeterableProgram(r.item.ID, project, program)
+				usage.Unmeterable[r.run.SessionID] = backlog.UnmeterableProgram(r.item.ID, where, program)
 			}
 			continue
 		}
-		if r.run.LaunchDir == "" && !archived && len(workDirs) > 0 {
+		if r.run.LaunchDir == "" && !archived && current != "" {
 			if launchDirs[r.repoID] == nil {
-				launchDirs[r.repoID] = map[string]string{}
+				launchDirs[r.repoID] = map[string]backlog.LaunchDirs{}
 			}
-			launchDirs[r.repoID][r.run.SessionID] = workDirs[0]
+			resolved, _ := filepath.EvalSymlinks(current)
+			launchDirs[r.repoID][r.run.SessionID] = backlog.LaunchDirs{Path: current, Resolved: resolved}
 		}
 		backlogDirs = append(backlogDirs, dirs...)
 		metered[r.run.SessionID] = true
@@ -264,9 +269,9 @@ func (m *Manager) meterPassLocked(now time.Time) {
 		planusage.PruneSeen(seen, now)
 		files := planusage.TranscriptFiles(dirs)
 		if !running {
-			files = withMeteredFiles(files, r.run)
+			files = r.run.WithMeteredFiles(files)
 		}
-		rm := backlog.MeterRun(r.item.ID, project, r.run, files, seen, overrides, now)
+		rm := backlog.MeterRun(r.item.ID, where, r.run, files, seen, overrides, now)
 		usage.Runs[r.run.SessionID] = rm.Cost()
 		state.AddRunEntries(r.run.SessionID, rm.Entries)
 		runAccount[r.run.SessionID] = planusage.AccountForConfigDir(home, configDir)
@@ -341,20 +346,6 @@ func (m *Manager) meterPassLocked(now time.Time) {
 	}
 }
 
-// runLaunchDirs are the directories Claude may have been launched in for a
-// run: where the run first launched, and where its session is now unless it is
-// archived, since an archived worktree is not where Claude ran.
-func runLaunchDirs(run backlog.RunRef, current string, archived bool) []string {
-	var out []string
-	if !archived && current != "" {
-		out = append(out, current)
-	}
-	if run.LaunchDir != "" && (archived || run.LaunchDir != current) {
-		out = append(out, run.LaunchDir)
-	}
-	return out
-}
-
 // runTranscriptDirs joins the transcript dirs of every launch dir.
 func runTranscriptDirs(inst *session.Instance, workDirs []string) (string, []string, error) {
 	if len(workDirs) == 0 {
@@ -385,18 +376,6 @@ func runTranscriptDirs(inst *session.Instance, workDirs []string) (string, []str
 		return "", nil, firstErr
 	}
 	return configDir, dirs, nil
-}
-
-// withMeteredFiles adds the transcript files a run already metered that still
-// exist, for a run whose launch dir is unknown.
-func withMeteredFiles(files []string, run backlog.RunRef) []string {
-	for f := range run.Meter {
-		if _, err := os.Stat(f); err == nil && !slices.Contains(files, f) {
-			files = append(files, f)
-		}
-	}
-	sort.Strings(files)
-	return files
 }
 
 // orchestratorConversation is the Claude conversation id of an orchestrator

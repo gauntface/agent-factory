@@ -153,3 +153,8 @@ test("webReason drops the clauses that name af commands", () => {
   assert.equal(webReason('No price for model x; add [backlog.prices."x"] to config.toml'), 'No price for model x; add [backlog.prices."x"] to config.toml');
   assert.equal(webReason("Usage limit until 14:00"), "Usage limit until 14:00");
 });
+
+test("webReason keeps the plain action of an unmeterable reason and drops the command", () => {
+  const reason = 'af cannot find the transcripts of the session of B-24 in project detail · mark B-24 done or drop it · see "af backlog show 24 --repo /src/detail"';
+  assert.equal(webReason(reason), "af cannot find the transcripts of the session of B-24 in project detail · mark B-24 done or drop it");
+});

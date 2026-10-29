@@ -121,6 +121,9 @@ type RunRef struct {
 	// files its transcripts under it, and an archived session no longer sits
 	// there.
 	LaunchDir string `json:"launch_dir,omitempty"`
+	// LaunchDirResolved is LaunchDir through symlinks, kept because the
+	// worktree may be gone when the transcripts are next read.
+	LaunchDirResolved string `json:"launch_dir_resolved,omitempty"`
 	// EndedAt is when a failed start failed.
 	EndedAt time.Time `json:"ended_at,omitzero"`
 	// CapReset names the 5-hour window the cap per run counts in, by its reset
