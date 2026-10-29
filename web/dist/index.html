@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- viewport-fit=cover lets the themed appbar/background paint edge-to-edge under a
+         phone's notch/home-indicator; the safe-area env() insets in styles.css keep the
+         actual controls out of those cutouts. Without width=device-width a mobile browser
+         renders at ~980px desktop width and the @media breakpoints never engage. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Agent Factory</title>
+    <!-- Same-origin bundle only: the daemon serves this shell with a strict
+         `Content-Security-Policy: default-src 'self'` (#1592 Phase 5 PR2), so the
+         stylesheet, script, icons, and manifest are all loaded from the origin,
+         never a CDN. manifest-src and worker-src carry no explicit directive because
+         both fall back to default-src, which already says 'self' — the manifest and
+         the service worker are same-origin, so the existing policy covers them and
+         needed no relaxation to ship this. -->
+
+    <!-- scripts/gen-design stamps these contents from --af-surface for cold loads.
+         The manifest's single theme_color and background_color use LIGHT surface,
+         matching the light meta and prefers-color-scheme defaults. The dark meta
+         supplies dark chrome; theme.ts rewrites both metas for explicit choices. -->
+    <meta name="theme-color" content="#f8f9fc" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1f1f1f" media="(prefers-color-scheme: dark)" />
+
+    <!-- The SVG is the real favicon — it scales, and it is the source every PNG here
+         is rendered from. The PNGs are the fallback for browsers that won't take an
+         SVG favicon: Chrome/Firefox prefer the SVG, Safari takes a PNG. -->
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="icon" href="/icons/favicon-16.png" sizes="16x16" type="image/png" />
+    <!-- iOS ignores the manifest's icons for add-to-home-screen and reads only this. -->
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon-180.png" sizes="180x180" />
+
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="stylesheet" href="/af-web.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/af-web.js"></script>
+  </body>
+</html>

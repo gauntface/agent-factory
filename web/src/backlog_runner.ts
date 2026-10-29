@@ -37,9 +37,10 @@ export function runnerWords(view: BacklogView): RunnerWords {
   const r = view.runner;
   const reason = webReason(r.reason ?? "").replace(/\.$/, "");
   const label = view.backlog.settings.runner ? "Runner on" : "Runner off";
-  if (!view.backlog.settings.runner) return { label, status: "", reason, warn: false };
+  const running = r.used > 0 ? `${r.used} running` : "";
+  if (!view.backlog.settings.runner) return { label, status: running, reason, warn: false };
   const blocked = BLOCKED[r.state];
-  if (blocked) return { label, status: blocked, reason, warn: true };
+  if (blocked) return { label, status: running ? `${running} · ${blocked}` : blocked, reason, warn: true };
   if (r.state === "running") return { label, status: `${r.used} running`, reason: "", warn: false };
   return { label, status: reason || "Idle", reason: "", warn: false };
 }
@@ -99,6 +100,7 @@ export class RunnerBar {
   private readonly plan = h("button", { type: "button", class: "af-backlog-plan" });
   private readonly planDetail = h("div", { class: "af-backlog-plan-detail", hidden: true });
   private slotsKey = "";
+  private statusKey = "";
   private readonly main: HTMLButtonElement;
   private readonly run: HTMLButtonElement;
   private readonly menu: HTMLDetailsElement;
@@ -118,6 +120,7 @@ export class RunnerBar {
     this.toggle.addEventListener("click", () => {
       if (this.view && !locked(this.toggle)) actions.setRunner(!this.view.backlog.settings.runner);
     });
+    this.status.setAttribute("role", "status");
     this.slots = h("select", { class: "af-backlog-slots" });
     this.slots.setAttribute("aria-label", "Max running");
     this.slots.title = "Most items the runner runs at once";
@@ -207,10 +210,7 @@ export class RunnerBar {
     this.toggle.setAttribute("aria-checked", String(on));
     this.toggle.classList.toggle("af-backlog-toggle-on", on);
     this.toggleLabel.textContent = words.label;
-    this.statusWord.textContent = words.status;
-    this.statusWord.hidden = words.status === "";
-    this.status.classList.toggle("af-backlog-warn", words.warn);
-    this.reason.textContent = words.status && words.reason ? `· ${words.reason}` : words.reason;
+    this.fillStatus(words);
     this.fillSlots(view);
     this.fillPlan();
     this.action = mainAction(view, usage);
@@ -224,6 +224,19 @@ export class RunnerBar {
     this.fill();
     paintBusy(this.el, held);
     paintBusy(this.el, heldBudget, "busy-budget");
+  }
+
+  /** Writes the live region only when its words change, so a spend event
+   *  does not make a screen reader repeat it. */
+  private fillStatus(words: RunnerWords): void {
+    const reason = words.status && words.reason ? `· ${words.reason}` : words.reason;
+    const key = `${words.status}\n${reason}`;
+    this.status.classList.toggle("af-backlog-warn", words.warn);
+    if (key === this.statusKey) return;
+    this.statusKey = key;
+    this.statusWord.textContent = words.status;
+    this.statusWord.hidden = words.status === "";
+    this.reason.textContent = reason;
   }
 
   /** Rebuilds the options only when their words change: replacing them

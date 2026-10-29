@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import type { BacklogView, RunnerView } from "./backlog_model.js";
-import { runnerWords } from "./backlog_runner.js";
+import type { Usage } from "./backlog_usage.js";
+import { mainAction, runnerWords } from "./backlog_runner.js";
 
 function view(on: boolean, runner: Partial<RunnerView>): BacklogView {
   return {
@@ -16,6 +17,40 @@ test("the switch label follows the setting, never the runner state", () => {
   assert.equal(runnerWords(view(false, { state: "off" })).label, "Runner off");
   for (const state of ["idle", "running", "waiting", "stopped"]) {
     assert.equal(runnerWords(view(true, { state })).label, "Runner on", state);
+  }
+});
+
+test("an off runner counts hand-started runs without a warning", () => {
+  assert.deepEqual(runnerWords(view(false, { state: "off", used: 1, reason: "Items run only when you start them." })),
+    { label: "Runner off", status: "1 running", reason: "Items run only when you start them", warn: false });
+});
+
+test("a closed gate keeps the live count", () => {
+  const w = runnerWords(view(true, { state: "stopped", gate: "limit", used: 2, reason: "Over the limit." }));
+  assert.equal(w.status, "2 running · Blocked");
+  assert.equal(w.warn, true);
+});
+
+const GATES: { gate: string; state: string; status: string; action: unknown }[] = [
+  { gate: "limit", state: "stopped", status: "Blocked", action: { kind: "limit" } },
+  { gate: "usage_limit", state: "stopped", status: "Blocked", action: null },
+  { gate: "no_reading", state: "waiting", status: "Waiting", action: { kind: "run" } },
+  { gate: "unmeterable", state: "stopped", status: "Blocked", action: { kind: "open", id: 7 } },
+  { gate: "usd_limit", state: "stopped", status: "Blocked", action: null },
+  { gate: "no_account", state: "stopped", status: "Blocked", action: null },
+  { gate: "metering", state: "waiting", status: "Waiting", action: null },
+];
+
+test("every closed gate has its status words, reason and main action", () => {
+  for (const g of GATES) {
+    const v = view(true, { state: g.state, gate: g.gate, reason: `Reason for ${g.gate}.` });
+    v.backlog.items = [{
+      id: 7, title: "t", status: "running", created_at: "", updated_at: "", waits_on: [], thread: [],
+      runs: [{ session_id: "s7", title: "t", state: "started", prev_status: "queued", started_by: "runner", started_at: "" }],
+    }];
+    const usage = { unmeterable: { s7: "x" } } as unknown as Usage;
+    assert.deepEqual(runnerWords(v), { label: "Runner on", status: g.status, reason: `Reason for ${g.gate}`, warn: true }, g.gate);
+    assert.deepEqual(mainAction(v, usage), g.action, g.gate);
   }
 });
 
