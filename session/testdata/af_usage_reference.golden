@@ -72,7 +72,7 @@ Backlog items: when af started your session for a backlog item (your first promp
   af backlog note --self <text>                        Add a note to the item's thread; nobody is notified
 From an item session af refuses queue, draft, review, reopen, start, run, done <id>, drop, delete, answer, and changing the runner or budget: those are the user's. If you need one of them, ask with "af backlog ask --self". Do not create other af sessions from an item session; the cap per run does not count their use.
 
-Effort orchestrator: a session can own one backlog group (a top-level parent, an "effort") as its orchestrator. Bind only when the user asks you to own or run the effort:
+Effort orchestrator: a session can own one backlog group (a top-level parent, an "effort") as its orchestrator. Bind when the user asks you to own, run, manage or drive the effort, and only then:
   af backlog add --file <path or -> --orchestrate      Add the batch and bind this session to the batch's top-level parent
   af backlog orchestrate <group> --self [--replace]     Bind this session to an existing group; --replace takes it over from another session
   af backlog orchestrate <group> --clear               Unbind; open questions that wait for you go to the user
