@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
+	"github.com/sachiniyer/agent-factory/config"
 	"github.com/sachiniyer/agent-factory/planusage"
 )
 
@@ -93,9 +95,18 @@ func (w Where) Item(id int) string {
 func (w Where) Fix(id int) string {
 	out := fmt.Sprintf("mark %s done or drop it", FormatID(id))
 	if w.Root != "" {
-		return out + fmt.Sprintf(" · see \"af backlog show %d --repo %s\"", id, w.Root)
+		return out + fmt.Sprintf(" · see \"af backlog show %d --repo %s\"", id, quoteArg(w.Root))
 	}
 	return out + fmt.Sprintf(" · see \"af backlog show %d\"", id)
+}
+
+// quoteArg quotes a path for a command the user pastes, only when the shell
+// would split or interpret it.
+func quoteArg(path string) string {
+	if strings.Trim(path, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._-+:=@%,~") == "" {
+		return path
+	}
+	return config.ShellQuotePath(path)
 }
 
 // UnmeterableProgram is why a run of a program other than Claude cannot be

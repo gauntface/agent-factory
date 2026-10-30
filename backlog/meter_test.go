@@ -143,6 +143,21 @@ func TestWhere(t *testing.T) {
 	}
 }
 
+func TestWhereFixQuotesTheRepoPath(t *testing.T) {
+	cases := map[string]string{
+		"/src/sahara":     `/src/sahara`,
+		"/src/my project": `'/src/my project'`,
+		"/src/it's$(x)":   `'/src/it'\''s$(x)'`,
+		"/src/a;rm -rf /": `'/src/a;rm -rf /'`,
+	}
+	for root, want := range cases {
+		got := (Where{Root: root}).Fix(7)
+		if wantFix := `mark B-7 done or drop it · see "af backlog show 7 --repo ` + want + `"`; got != wantFix {
+			t.Errorf("%s: got %s, want %s", root, got, wantFix)
+		}
+	}
+}
+
 func TestRunBlocksRunner(t *testing.T) {
 	end := time.Date(2026, 10, 23, 15, 17, 0, 0, time.UTC)
 	cases := []struct {
