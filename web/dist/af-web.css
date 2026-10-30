@@ -3763,8 +3763,9 @@ textarea[class] {
 }
 .af-backlog-runner-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--af-space-2);
+  gap: var(--af-space-1) var(--af-space-2);
   margin-left: auto;
   font-size: var(--af-type-caption);
 }
@@ -3827,6 +3828,20 @@ textarea[class] {
 }
 .af-backlog-runner-state {
   font-weight: 600;
+}
+.af-backlog-runner-status {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0 var(--af-space-1);
+  flex: 1 1 calc(var(--af-space-4) * 10);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.af-backlog-runner-status-word {
+  font-weight: 600;
+}
+.af-backlog-runner-status-word[hidden] {
+  display: none;
 }
 .af-backlog-warn {
   color: var(--af-lost);

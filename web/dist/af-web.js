@@ -18592,20 +18592,17 @@ var PreviewPopover = class {
 
 // src/backlog_runner.ts
 var MAX_RUNNING = 8;
-var RUNNER_STATES = {
-  off: "Runner off",
-  idle: "Runner on",
-  running: "Runner on",
-  waiting: "Runner waiting",
-  stopped: "Runner paused"
-};
+var BLOCKED = { stopped: "Blocked", waiting: "Waiting" };
 function runnerWords(view) {
   const r = view.runner;
-  return {
-    state: RUNNER_STATES[r.state] ?? "Runner on",
-    reason: webReason(r.reason ?? "").replace(/\.$/, ""),
-    warn: r.state === "stopped" || r.state === "waiting"
-  };
+  const reason = webReason(r.reason ?? "").replace(/\.$/, "");
+  const label = view.backlog.settings.runner ? "Runner on" : "Runner off";
+  const running = r.used > 0 ? `${r.used} running` : "";
+  if (!view.backlog.settings.runner) return { label, status: running, reason, warn: false };
+  const blocked = BLOCKED[r.state];
+  if (blocked) return { label, status: running ? `${running} \xB7 ${blocked}` : blocked, reason, warn: true };
+  if (r.state === "running") return { label, status: `${r.used} running`, reason: "", warn: false };
+  return { label, status: reason || "Idle", reason: "", warn: false };
 }
 function unmeterableItem(view, usage) {
   const sessions = Object.keys(usage?.unmeterable ?? {});
@@ -18650,8 +18647,10 @@ var RunnerBar = class {
     this.toggle.addEventListener("click", () => {
       if (this.view && !locked(this.toggle)) actions2.setRunner(!this.view.backlog.settings.runner);
     });
+    this.status.setAttribute("role", "status");
     this.slots = h("select", { class: "af-backlog-slots" });
     this.slots.setAttribute("aria-label", "Max running");
+    this.slots.title = "Most items the runner runs at once";
     this.slots.dataset.busy = "slots";
     this.slots.addEventListener("change", () => {
       if (locked(this.slots)) this.slots.value = String(Math.max(1, this.view?.backlog.settings.max_running ?? 1));
@@ -18687,19 +18686,22 @@ var RunnerBar = class {
     this.el = h(
       "div",
       { class: "af-backlog-head" },
-      h("div", { class: "af-backlog-runner" }, this.toggle, this.reason, this.slots, this.plan),
-      h("div", { class: "af-backlog-runner-actions" }, this.main, this.run, this.menu),
+      h("div", { class: "af-backlog-runner" }, this.toggle, this.slots, this.plan),
+      h("div", { class: "af-backlog-runner-actions" }, this.status, this.main, this.run, this.menu),
       this.planDetail
     );
   }
   el;
   toggle;
   toggleLabel = h("span", { class: "af-backlog-runner-state" });
+  statusWord = h("span", { class: "af-backlog-runner-status-word" });
   reason = h("span", { class: "af-backlog-reason" });
+  status = h("span", { class: "af-backlog-runner-status" }, this.statusWord, this.reason);
   slots;
   plan = h("button", { type: "button", class: "af-backlog-plan" });
   planDetail = h("div", { class: "af-backlog-plan-detail", hidden: true });
   slotsKey = "";
+  statusKey = "";
   main;
   run;
   menu;
@@ -18769,9 +18771,8 @@ var RunnerBar = class {
     const on = view.backlog.settings.runner;
     this.toggle.setAttribute("aria-checked", String(on));
     this.toggle.classList.toggle("af-backlog-toggle-on", on);
-    this.toggleLabel.textContent = words.state;
-    this.toggleLabel.classList.toggle("af-backlog-warn", words.warn);
-    this.reason.textContent = words.reason ? `\xB7 ${words.reason}` : "";
+    this.toggleLabel.textContent = words.label;
+    this.fillStatus(words);
     this.fillSlots(view);
     this.fillPlan();
     this.action = mainAction(view, usage);
@@ -18786,17 +18787,29 @@ var RunnerBar = class {
     paintBusy(this.el, held);
     paintBusy(this.el, heldBudget, "busy-budget");
   }
+  /** Writes the live region only when its words change, so a spend event
+   *  does not make a screen reader repeat it. */
+  fillStatus(words) {
+    const reason = words.status && words.reason ? `\xB7 ${words.reason}` : words.reason;
+    const key = `${words.status}
+${reason}`;
+    this.status.classList.toggle("af-backlog-warn", words.warn);
+    if (key === this.statusKey) return;
+    this.statusKey = key;
+    this.statusWord.textContent = words.status;
+    this.statusWord.hidden = words.status === "";
+    this.reason.textContent = reason;
+  }
   /** Rebuilds the options only when their words change: replacing them
    *  closes a native select the user has open. */
   fillSlots(view) {
-    const used = view.runner.used;
     const max = Math.max(1, view.backlog.settings.max_running);
-    const key = `${used}/${max}`;
+    const key = String(max);
     if (key === this.slotsKey) return;
     this.slotsKey = key;
     const top = Math.max(MAX_RUNNING, max);
     const opts = [];
-    for (let n = 1; n <= top; n++) opts.push(h("option", { value: String(n) }, `${used} of ${n} working`));
+    for (let n = 1; n <= top; n++) opts.push(h("option", { value: String(n) }, `Up to ${n} at once`));
     this.slots.replaceChildren(...opts);
     this.slots.value = String(max);
   }

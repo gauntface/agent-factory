@@ -1,6 +1,7 @@
 // The Backlog view's runner bar (backlog proposal, ui.md "Runner bar"): the
-// runner switch, max running, plan use of the window closest to the limit,
-// the paused reason with its main action, Run next, and the ⋯ settings. Its
+// runner switch, the limit on runs at once, plan use of the window closest to
+// the limit, the runner status with the reason it waits and its main action,
+// Run next, and the ⋯ settings. Its
 // controls live across renders so a backlog.spend event never takes focus or
 // a half-typed value.
 
@@ -21,27 +22,27 @@ export interface RunnerActions {
 
 const MAX_RUNNING = 8;
 
-const RUNNER_STATES: Record<string, string> = {
-  off: "Runner off",
-  idle: "Runner on",
-  running: "Runner on",
-  waiting: "Runner waiting",
-  stopped: "Runner paused",
-};
-
 export interface RunnerWords {
-  state: string;
+  label: string;
+  status: string;
   reason: string;
   warn: boolean;
 }
 
+const BLOCKED: Record<string, string> = { stopped: "Blocked", waiting: "Waiting" };
+
+/** The switch says only what the user set; the status says what the runner
+ *  is doing, and why it is not when a gate is closed. */
 export function runnerWords(view: BacklogView): RunnerWords {
   const r = view.runner;
-  return {
-    state: RUNNER_STATES[r.state] ?? "Runner on",
-    reason: webReason(r.reason ?? "").replace(/\.$/, ""),
-    warn: r.state === "stopped" || r.state === "waiting",
-  };
+  const reason = webReason(r.reason ?? "").replace(/\.$/, "");
+  const label = view.backlog.settings.runner ? "Runner on" : "Runner off";
+  const running = r.used > 0 ? `${r.used} running` : "";
+  if (!view.backlog.settings.runner) return { label, status: running, reason, warn: false };
+  const blocked = BLOCKED[r.state];
+  if (blocked) return { label, status: running ? `${running} · ${blocked}` : blocked, reason, warn: true };
+  if (r.state === "running") return { label, status: `${r.used} running`, reason: "", warn: false };
+  return { label, status: reason || "Idle", reason: "", warn: false };
 }
 
 /** The item a paused runner's main action opens: the first unmeterable run
@@ -92,11 +93,14 @@ export class RunnerBar {
   readonly el: HTMLElement;
   private readonly toggle: HTMLButtonElement;
   private readonly toggleLabel = h("span", { class: "af-backlog-runner-state" });
+  private readonly statusWord = h("span", { class: "af-backlog-runner-status-word" });
   private readonly reason = h("span", { class: "af-backlog-reason" });
+  private readonly status = h("span", { class: "af-backlog-runner-status" }, this.statusWord, this.reason);
   private readonly slots: HTMLSelectElement;
   private readonly plan = h("button", { type: "button", class: "af-backlog-plan" });
   private readonly planDetail = h("div", { class: "af-backlog-plan-detail", hidden: true });
   private slotsKey = "";
+  private statusKey = "";
   private readonly main: HTMLButtonElement;
   private readonly run: HTMLButtonElement;
   private readonly menu: HTMLDetailsElement;
@@ -116,8 +120,10 @@ export class RunnerBar {
     this.toggle.addEventListener("click", () => {
       if (this.view && !locked(this.toggle)) actions.setRunner(!this.view.backlog.settings.runner);
     });
+    this.status.setAttribute("role", "status");
     this.slots = h("select", { class: "af-backlog-slots" });
     this.slots.setAttribute("aria-label", "Max running");
+    this.slots.title = "Most items the runner runs at once";
     this.slots.dataset.busy = "slots";
     this.slots.addEventListener("change", () => {
       if (locked(this.slots)) this.slots.value = String(Math.max(1, this.view?.backlog.settings.max_running ?? 1));
@@ -145,8 +151,8 @@ export class RunnerBar {
     });
     this.menu = h("details", { class: "af-backlog-settings" }, this.menuSummary(), this.menuPanel());
     this.el = h("div", { class: "af-backlog-head" },
-      h("div", { class: "af-backlog-runner" }, this.toggle, this.reason, this.slots, this.plan),
-      h("div", { class: "af-backlog-runner-actions" }, this.main, this.run, this.menu), this.planDetail);
+      h("div", { class: "af-backlog-runner" }, this.toggle, this.slots, this.plan),
+      h("div", { class: "af-backlog-runner-actions" }, this.status, this.main, this.run, this.menu), this.planDetail);
   }
 
   private menuSummary(): HTMLElement {
@@ -203,9 +209,8 @@ export class RunnerBar {
     const on = view.backlog.settings.runner;
     this.toggle.setAttribute("aria-checked", String(on));
     this.toggle.classList.toggle("af-backlog-toggle-on", on);
-    this.toggleLabel.textContent = words.state;
-    this.toggleLabel.classList.toggle("af-backlog-warn", words.warn);
-    this.reason.textContent = words.reason ? `· ${words.reason}` : "";
+    this.toggleLabel.textContent = words.label;
+    this.fillStatus(words);
     this.fillSlots(view);
     this.fillPlan();
     this.action = mainAction(view, usage);
@@ -221,17 +226,29 @@ export class RunnerBar {
     paintBusy(this.el, heldBudget, "busy-budget");
   }
 
+  /** Writes the live region only when its words change, so a spend event
+   *  does not make a screen reader repeat it. */
+  private fillStatus(words: RunnerWords): void {
+    const reason = words.status && words.reason ? `· ${words.reason}` : words.reason;
+    const key = `${words.status}\n${reason}`;
+    this.status.classList.toggle("af-backlog-warn", words.warn);
+    if (key === this.statusKey) return;
+    this.statusKey = key;
+    this.statusWord.textContent = words.status;
+    this.statusWord.hidden = words.status === "";
+    this.reason.textContent = reason;
+  }
+
   /** Rebuilds the options only when their words change: replacing them
    *  closes a native select the user has open. */
   private fillSlots(view: BacklogView): void {
-    const used = view.runner.used;
     const max = Math.max(1, view.backlog.settings.max_running);
-    const key = `${used}/${max}`;
+    const key = String(max);
     if (key === this.slotsKey) return;
     this.slotsKey = key;
     const top = Math.max(MAX_RUNNING, max);
     const opts = [];
-    for (let n = 1; n <= top; n++) opts.push(h("option", { value: String(n) }, `${used} of ${n} working`));
+    for (let n = 1; n <= top; n++) opts.push(h("option", { value: String(n) }, `Up to ${n} at once`));
     this.slots.replaceChildren(...opts);
     this.slots.value = String(max);
   }
