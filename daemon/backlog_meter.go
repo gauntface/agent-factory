@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -224,28 +225,53 @@ func (m *Manager) meterPassLocked(now time.Time) {
 	var backlogDirs []string
 	metered := map[string]bool{}
 	runs, orchs := m.startedItemRuns(home)
+	launchDirs := map[string]map[string]backlog.LaunchDirs{}
+	projects := map[string]backlog.Where{}
 	for _, r := range runs {
 		usage.Runs[r.run.SessionID] = r.run.Cost()
-		running := r.item.Status == backlog.StatusRunning
 		if r.inst == nil {
 			continue
 		}
-		configDir, dirs, err := r.inst.ClaudeRunTranscriptDirs()
+		archived := r.inst.IsArchived()
+		running := backlog.RunBlocksRunner(r.item.Status, archived, r.inst.BacklogRunEndedAt(), r.inst.LastPaneChurnAt())
+		where, ok := projects[r.repoID]
+		if !ok {
+			where = backlog.Where{Name: backlogHost{m: m}.ProjectName(r.repoID)}
+			where.Root, _ = registeredProjectRootForRepoID(r.repoID)
+			projects[r.repoID] = where
+		}
+		current := r.inst.GetWorktreePath()
+		workDirs := r.run.LaunchCandidates(current, archived)
+		configDir, dirs, err := runTranscriptDirs(r.inst, workDirs)
+		if len(dirs) == 0 && !running {
+			configDir, dirs = r.run.MeteredLocation()
+		}
 		if errors.Is(err, session.ErrNotClaude) {
 			if running {
 				program := r.inst.ResolvedAgent()
 				if program == "" {
 					program = r.inst.Program
 				}
-				usage.Unmeterable[r.run.SessionID] = backlog.UnmeterableProgram(r.item.ID, program)
+				usage.Unmeterable[r.run.SessionID] = backlog.UnmeterableProgram(r.item.ID, where, program)
 			}
 			continue
+		}
+		if r.run.LaunchDir == "" && !archived && current != "" {
+			if launchDirs[r.repoID] == nil {
+				launchDirs[r.repoID] = map[string]backlog.LaunchDirs{}
+			}
+			resolved, _ := filepath.EvalSymlinks(current)
+			launchDirs[r.repoID][r.run.SessionID] = backlog.LaunchDirs{Path: current, Resolved: resolved}
 		}
 		backlogDirs = append(backlogDirs, dirs...)
 		metered[r.run.SessionID] = true
 		seen := state.RunSeenFor(r.run.SessionID)
 		planusage.PruneSeen(seen, now)
-		rm := backlog.MeterRun(r.item.ID, r.run, planusage.TranscriptFiles(dirs), seen, overrides, now)
+		files := planusage.TranscriptFiles(dirs)
+		if !running {
+			files = r.run.WithMeteredFiles(files)
+		}
+		rm := backlog.MeterRun(r.item.ID, where, r.run, files, seen, overrides, now)
 		usage.Runs[r.run.SessionID] = rm.Cost()
 		state.AddRunEntries(r.run.SessionID, rm.Entries)
 		runAccount[r.run.SessionID] = planusage.AccountForConfigDir(home, configDir)
@@ -288,9 +314,13 @@ func (m *Manager) meterPassLocked(now time.Time) {
 	for repoID := range orchUpdates {
 		repos[repoID] = true
 	}
+	for repoID := range launchDirs {
+		repos[repoID] = true
+	}
 	for repoID := range repos {
 		if _, err := backlog.Update(repoID, func(b *backlog.Backlog) error {
 			b.SetRunMeters(updates[repoID])
+			b.SetRunLaunchDirs(launchDirs[repoID])
 			b.SetOrchestratorMeters(orchUpdates[repoID])
 			return nil
 		}); err != nil {
@@ -314,6 +344,38 @@ func (m *Manager) meterPassLocked(now time.Time) {
 		st.published, st.lastSent = &spend, now
 		m.publishEvent(agentproto.EventBacklogSpend, spend)
 	}
+}
+
+// runTranscriptDirs joins the transcript dirs of every launch dir.
+func runTranscriptDirs(inst *session.Instance, workDirs []string) (string, []string, error) {
+	if len(workDirs) == 0 {
+		if inst.ResolvedAgent() != tmux.ProgramClaude {
+			return "", nil, session.ErrNotClaude
+		}
+		return "", nil, nil
+	}
+	var configDir string
+	var dirs []string
+	var firstErr error
+	for _, wd := range workDirs {
+		cd, d, err := inst.ClaudeRunTranscriptDirsIn(wd)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		configDir = cd
+		for _, p := range d {
+			if !slices.Contains(dirs, p) {
+				dirs = append(dirs, p)
+			}
+		}
+	}
+	if len(dirs) == 0 && firstErr != nil {
+		return "", nil, firstErr
+	}
+	return configDir, dirs, nil
 }
 
 // orchestratorConversation is the Claude conversation id of an orchestrator

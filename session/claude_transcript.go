@@ -194,6 +194,12 @@ var ErrNotClaude = errors.New("the session does not run claude")
 // ClaudeRunTranscriptDirs returns the Claude config dir a session's agent
 // writes to and the absolute project directories that hold its transcripts.
 func (i *Instance) ClaudeRunTranscriptDirs() (string, []string, error) {
+	return i.ClaudeRunTranscriptDirsIn(i.GetWorktreePath())
+}
+
+// ClaudeRunTranscriptDirsIn is ClaudeRunTranscriptDirs for an agent launched
+// in workDir, which is not the session's worktree path once it is archived.
+func (i *Instance) ClaudeRunTranscriptDirsIn(workDir string) (string, []string, error) {
 	if i.ResolvedAgent() != tmux.ProgramClaude {
 		return "", nil, ErrNotClaude
 	}
@@ -204,7 +210,6 @@ func (i *Instance) ClaudeRunTranscriptDirs() (string, []string, error) {
 	if program == "" {
 		program = i.Program
 	}
-	workDir := i.GetWorktreePath()
 	if workDir == "" {
 		return "", nil, errors.New("the session has no worktree")
 	}

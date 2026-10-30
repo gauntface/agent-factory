@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -76,4 +77,29 @@ func TestInspectClaudeProjectConversationsUsesEffectiveLaunchDirectory(t *testin
 	require.NoError(t, err)
 	require.True(t, state.RecordedExists)
 	require.Equal(t, id, state.Resume.ID)
+}
+
+func TestClaudeRunTranscriptDirsInUsesTheLaunchDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	inst := &Instance{Program: "claude"}
+
+	launch := filepath.Join(t.TempDir(), "detail-B-24")
+	_, dirs, err := inst.ClaudeRunTranscriptDirsIn(launch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(home, ".claude", "projects", claudeProjectName(launch))
+	if len(dirs) == 0 || dirs[0] != want {
+		t.Fatalf("dirs = %v, want %s first", dirs, want)
+	}
+
+	if _, _, err := inst.ClaudeRunTranscriptDirsIn(""); err == nil {
+		t.Fatal("an empty launch dir resolved")
+	}
+	other := &Instance{Program: "aider"}
+	if _, _, err := other.ClaudeRunTranscriptDirsIn(launch); !errors.Is(err, ErrNotClaude) {
+		t.Fatalf("err = %v", err)
+	}
 }
