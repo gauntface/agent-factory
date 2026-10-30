@@ -154,7 +154,7 @@ From an item session af refuses queue, draft, review, reopen, start, run, done <
 
 // afUsageOrchestratorInside is inside-only: binding and --self resolve the
 // calling session.
-const afUsageOrchestratorInside = `Effort orchestrator: a session can own one backlog group (a top-level parent, an "effort") as its orchestrator. Bind only when the user asks you to own or run the effort:
+const afUsageOrchestratorInside = `Effort orchestrator: a session can own one backlog group (a top-level parent, an "effort") as its orchestrator. Bind when the user asks you to own, run, manage or drive the effort, and only then:
   af backlog add --file <path or -> --orchestrate      Add the batch and bind this session to the batch's top-level parent
   af backlog orchestrate <group> --self [--replace]     Bind this session to an existing group; --replace takes it over from another session
   af backlog orchestrate <group> --clear               Unbind; open questions that wait for you go to the user
