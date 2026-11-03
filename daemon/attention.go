@@ -111,22 +111,18 @@ func (m *Manager) clearAttentionOnInput(instance *session.Instance) {
 	m.publishEvent(agentproto.EventSessionUpdated, data)
 }
 
-// attentionClearingBinding clears the session's attention request and reports
-// the line when the user submits one in the agent pane. A keystroke alone does
-// not clear it, so focusing the pane and typing a draft keeps the request.
+// attentionClearingBinding clears the session's attention request when the
+// user submits a line in the agent pane. A keystroke alone does not clear it,
+// so focusing the pane and typing a draft keeps the request.
 type attentionClearingBinding struct {
 	ptyTabBinding
-	clear     func()
-	submitted func()
+	clear func()
 }
 
 func (b attentionClearingBinding) input(p []byte) error {
 	err := b.ptyTabBinding.input(p)
 	if err == nil && isSubmittedInput(p) {
 		b.clear()
-		if b.submitted != nil {
-			b.submitted()
-		}
 	}
 	return err
 }
@@ -136,4 +132,18 @@ func (b attentionClearingBinding) input(p []byte) error {
 // replies must not count as the user answering.
 func isTypedInput(p []byte) bool {
 	return len(p) > 0 && p[0] != 0x1b
+}
+
+// isSubmittedInput reports whether a typed frame ends a line: the user sent
+// what they typed.
+func isSubmittedInput(p []byte) bool {
+	if !isTypedInput(p) {
+		return false
+	}
+	for _, c := range p {
+		if c == '\r' || c == '\n' {
+			return true
+		}
+	}
+	return false
 }

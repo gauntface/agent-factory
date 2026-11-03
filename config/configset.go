@@ -211,8 +211,7 @@ var settableKeySpecs = map[string]settableKeySpec{
 		"enabled": {kind: cfgBool},
 		"program": {kind: cfgString},
 	}},
-	"keys":    {structured: true},
-	"backlog": {structured: true},
+	"keys": {structured: true},
 }
 
 func requirePositiveInt(name, v string) error {

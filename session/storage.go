@@ -24,15 +24,6 @@ type PendingOnCompleteData struct {
 	FiledAt time.Time `json:"filed_at"`
 }
 
-// OwedArchiveData is an archive af owes an item session: Reason is why
-// (backlog.ArchiveDone or backlog.ArchiveAsk) and FiledAt when af took it on.
-// The archive guard's delivery counters are in memory, so after a restart it
-// treats pane churn or a run end after FiledAt as someone using the session.
-type OwedArchiveData struct {
-	Reason  string    `json:"reason"`
-	FiledAt time.Time `json:"filed_at"`
-}
-
 // InstanceData represents the serializable data of an Instance
 type InstanceData struct {
 	// ID is the instance's stable identity (#1195), minted at NewInstance and
@@ -51,13 +42,9 @@ type InstanceData struct {
 	// omitempty + additive: records written before #1892 simply have no task_id
 	// and count against no limit (rollforward, mirroring the ID precedent above).
 	TaskID string `json:"task_id,omitempty"`
-	// BacklogItem is the backlog item this session was started for (backlog.json
-	// holds the authoritative link). omitempty: an older af drops it on its next
-	// write and loses only the client chip.
-	BacklogItem int    `json:"backlog_item,omitempty"`
-	Title       string `json:"title"`
-	Path        string `json:"path"`
-	Branch      string `json:"branch"`
+	Title  string `json:"title"`
+	Path   string `json:"path"`
+	Branch string `json:"branch"`
 	// Status is the legacy single-axis status int (#1195). Still written for one
 	// release for rollback safety and read as the fallback source for records
 	// that predate the `liveness` field. New code should read Liveness.
@@ -207,15 +194,6 @@ type InstanceData struct {
 	// teardown that merely FAILED keeps it; the next daemon generation retries.
 	// omitempty + additive + rollforward, mirroring the TaskRunActive precedent.
 	PendingOnComplete *PendingOnCompleteData `json:"pending_on_complete,omitempty"`
-	// BacklogRunActive is the backlog run marker (Instance.backlogRunActive). The
-	// task-run gate fields above carry its prompt boundary and held edges.
-	BacklogRunActive bool `json:"backlog_run_active,omitempty"`
-	// BacklogRunEndedAt is when the latest backlog run ended; the on_done
-	// archive treats pane churn after it as the user taking the session over.
-	BacklogRunEndedAt time.Time `json:"backlog_run_ended_at,omitzero"`
-	// OwedArchive is an item-session archive af has filed and not yet settled.
-	// An archived row owes nothing, so it is never written for one.
-	OwedArchive *OwedArchiveData `json:"owed_archive,omitempty"`
 	// LimitResetAt is the parsed usage-limit reset time (#1146), display-only:
 	// written (and carried in the daemon snapshot to the read-only TUI) only for a
 	// LiveLimitReached row so the sidebar [limit] badge can show "resets <t>" and

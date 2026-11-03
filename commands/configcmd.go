@@ -151,7 +151,6 @@ var globalConfigReadOrder = []string{
 	"sandbox.ssh",
 	"limit_retry_interval",
 	"limit_patterns",
-	"backlog",
 	"keys",
 }
 

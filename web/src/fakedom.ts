@@ -1,4 +1,4 @@
-// A small DOM for the Backlog view's unit tests; the web tests run in node with
+// A small DOM for the web unit tests; the web tests run in node with
 // no DOM library. It models what the view's focus handling depends on: removing
 // a node that holds focus blurs it, as a browser does.
 

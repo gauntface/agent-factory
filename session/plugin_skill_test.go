@@ -125,26 +125,3 @@ func TestEnsurePluginDirRefusesASymlinkedSkillFile(t *testing.T) {
 	require.NoError(t, rerr)
 	assert.Equal(t, "user's own skill\n", string(on))
 }
-
-func TestBacklogUsageReachesBothAudiences(t *testing.T) {
-	for _, cmd := range []string{"af backlog list", "af backlog show", "af backlog add <title>", "af backlog add --file"} {
-		assert.Contains(t, afUsageReference, cmd)
-		assert.Contains(t, AfPluginUsageReference, cmd)
-	}
-	assert.Contains(t, afUsageReference, afUsageBacklogInside)
-	for _, cmd := range []string{"af backlog done --self", "af backlog ask --self", "af backlog note --self", "--handoff-file", "--then archive"} {
-		assert.Contains(t, afUsageBacklogInside, cmd)
-		assert.NotContains(t, AfPluginUsageReference, cmd)
-	}
-	assert.Contains(t, AfSkillDescription, "backlog")
-	assert.Contains(t, afSkillDescriptionInside, "backlog")
-}
-
-func TestOrchestratorUsageIsInsideOnly(t *testing.T) {
-	assert.Contains(t, afUsageReference, afUsageOrchestratorInside)
-	for _, s := range []string{"--orchestrate", "af backlog orchestrate <group> --self", "af backlog orchestrate --self --handoff-file",
-		"af backlog orchestrate --self --stay", "af backlog escalate <id>", "Events in effort", "af backlog done <id>"} {
-		assert.Contains(t, afUsageOrchestratorInside, s)
-		assert.NotContains(t, AfPluginUsageReference, s)
-	}
-}

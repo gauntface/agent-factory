@@ -105,13 +105,9 @@ func (i *Instance) toInstanceDataLocked() InstanceData {
 	// reintroduce the bug it fixes — a session whose run is live must read as active
 	// whether it is Running, limit-parked, mid-archive, or Lost.
 	data.TaskRunActive = i.taskRunActive
-	data.BacklogItem = i.BacklogItem
-	data.BacklogRunActive = i.backlogRunActive
-	data.BacklogRunEndedAt = i.backlogRunEndedAt
-	gate := i.runGateActiveLocked()
-	data.TaskRunIdleEdgeHeld = gate && i.taskRunIdleEdgeHeld
-	data.TaskRunTurnGateHeld = gate && i.taskRunTurnGateHeld
-	if gate {
+	data.TaskRunIdleEdgeHeld = i.taskRunActive && i.taskRunIdleEdgeHeld
+	data.TaskRunTurnGateHeld = i.taskRunActive && i.taskRunTurnGateHeld
+	if i.taskRunActive {
 		// Same gating as the held flag: a finished run's last turn observation
 		// is not evidence for anything, and persisting it would let a later run
 		// on this row inherit a boundary it never crossed.
@@ -125,7 +121,6 @@ func (i *Instance) toInstanceDataLocked() InstanceData {
 	// re-fire, so dropping the marker here would lose it permanently.
 	if i.liveness != LiveArchived {
 		data.PendingOnComplete = i.owedOnComplete
-		data.OwedArchive = i.owedArchive
 	}
 
 	// Persist each tab so the full local agent+shell tab list survives a restart
@@ -370,11 +365,8 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 		// disk or the cap would re-decide it from a Lost state that cannot tell a
 		// finished run from an interrupted one.
 		taskRunActive:       data.TaskRunActive,
-		BacklogItem:         data.BacklogItem,
-		backlogRunActive:    data.BacklogRunActive && data.BacklogItem != 0,
-		backlogRunEndedAt:   data.BacklogRunEndedAt,
-		taskRunIdleEdgeHeld: runGateActiveInData(data) && data.TaskRunIdleEdgeHeld,
-		taskRunTurnGateHeld: runGateActiveInData(data) && data.TaskRunTurnGateHeld,
+		taskRunIdleEdgeHeld: data.TaskRunActive && data.TaskRunIdleEdgeHeld,
+		taskRunTurnGateHeld: data.TaskRunActive && data.TaskRunTurnGateHeld,
 		// Gate on the run still being in flight, mirroring the write side and
 		// the held flag: a finished run's stale observation cannot release the
 		// next run's delivery window.
@@ -422,7 +414,6 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 	// somehow reached one is dropped rather than armed.
 	if liveness != LiveArchived {
 		instance.owedOnComplete = data.PendingOnComplete
-		instance.owedArchive = data.OwedArchive
 	}
 	worktreeReaped := false
 	restoredRelocationRecovery := false

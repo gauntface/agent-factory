@@ -31,12 +31,6 @@ type InstanceOptions struct {
 	// a user-created session. It is what lets the daemon count a task's in-flight
 	// sessions for the watch-task concurrency limit without guessing from titles.
 	TaskID string
-	// BacklogItem marks the session as started for a backlog item, and opens its
-	// first backlog run.
-	BacklogItem int
-	// OrchestratorTurn opens a turn on a session af starts to orchestrate a
-	// group; see Instance.ArmOrchestratorTurn.
-	OrchestratorTurn bool
 	// SandboxCredentials mints and revokes the per-session credential a provisioned
 	// sandbox uses to call back into the daemon (#2999, #3068). An INTERFACE rather
 	// than a pair of values so it runs only for off-box kinds — session cannot
@@ -600,8 +594,6 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 		// (#1892). Only a task-spawned session has a run to bound; a user's session
 		// is never counted against a cap.
 		taskRunActive:         opts.TaskID != "",
-		BacklogItem:           opts.BacklogItem,
-		backlogRunActive:      opts.BacklogItem != 0 || opts.OrchestratorTurn,
 		liveness:              LiveReady,
 		Path:                  absPath,
 		Program:               opts.Program,
