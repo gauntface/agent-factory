@@ -42,6 +42,9 @@ func TestCheckPlanGates(t *testing.T) {
 			in.Budget.USDLimit = 10
 			return in
 		}, GateNoReading, "No plan usage seen yet · run a Claude session once to take a reading"},
+		{"both windows reset since the last reading", func() GateInput {
+			return gateIn(readUsage(planusage.PlanWindow{}, planusage.PlanWindow{}, 8*24*time.Hour))
+		}, "", ""},
 		{"first meter pass not done", func() GateInput { return gateIn(planusage.Usage{Metering: true}) }, GateMetering, "Reading plan usage…"},
 		{"a later meter pass keeps the last reading", func() GateInput {
 			u := ok

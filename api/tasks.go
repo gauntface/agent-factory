@@ -554,8 +554,7 @@ var tasksUpdateCmd = &cobra.Command{
 			patch.OnComplete = strPtr(taskUpdateOnCompleteFlag)
 		}
 		if cmd.Flags().Changed("budget-gated") {
-			gated := taskUpdateBudgetGatedFlag
-			patch.BudgetGated = &gated
+			patch.BudgetGated = boolPtr(taskUpdateBudgetGatedFlag)
 		}
 		// --repo authorizes the task against its CURRENT project. Keep the new
 		// binding separate so a caller can say `--repo old --project-path new`

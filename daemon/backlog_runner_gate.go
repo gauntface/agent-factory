@@ -121,37 +121,43 @@ func (m *Manager) retryCapInterrupts(repoID string) {
 }
 
 func (h backlogHost) Gate(repoID string) backlog.Gate {
+	budget, g := loadBudget()
+	if !g.Open() {
+		return g
+	}
+	g, _ = h.m.backlogGate(repoID, budget, h.m.backlogUsage(), time.Now())
+	return g
+}
+
+// loadBudget reads the global budget, or returns the closed gate that says
+// why it cannot.
+func loadBudget() (backlog.Budget, backlog.Gate) {
 	budget, err := backlog.LoadBudget()
 	if err != nil {
-		return backlog.Gate{Name: "budget", Reason: err.Error()}
+		return backlog.Budget{}, backlog.Gate{Name: backlog.GateBudget, Reason: "Can't read the backlog budget · " + err.Error()}
 	}
-	g, _ := h.m.backlogGate(repoID, *budget, h.m.backlogUsage(), time.Now())
-	return g
+	return *budget, backlog.Gate{}
 }
 
 // backlogGate checks the gates for the account the project's item sessions
 // launch with, and returns that account.
 func (m *Manager) backlogGate(repoID string, budget backlog.Budget, usage planusage.Usage, now time.Time) (backlog.Gate, string) {
-	in, account := m.gateInput(repoID, budget, usage, now)
-	return backlog.CheckGates(in), account
-}
-
-// gateInput reads what the gates need for the account the project's new
-// sessions launch with, and returns that account.
-func (m *Manager) gateInput(repoID string, budget backlog.Budget, usage planusage.Usage, now time.Time) (backlog.GateInput, string) {
-	in := backlog.GateInput{Budget: budget, Now: now, Loc: time.Local}
 	account, err := m.itemAccount(repoID)
 	if err != nil {
-		in.NoAccount = err.Error()
-		return in, ""
+		return backlog.CheckGates(backlog.GateInput{Budget: budget, NoAccount: err.Error(), Now: now, Loc: time.Local}), ""
 	}
-	in.Usage = usageFor(usage, account)
+	return backlog.CheckGates(m.gateInput(account, budget, usage, now)), account
+}
+
+// gateInput reads what the gates need for a Claude account.
+func (m *Manager) gateInput(account string, budget backlog.Budget, usage planusage.Usage, now time.Time) backlog.GateInput {
+	in := backlog.GateInput{Budget: budget, Usage: usageFor(usage, account), Now: now, Loc: time.Local}
 	limited, until, err := m.claudeUsageLimit(account, now)
 	if err != nil {
 		in.LimitUnknown = err.Error()
 	}
 	in.Limited, in.LimitUntil = limited, until
-	return in, account
+	return in
 }
 
 // itemAccount names the Claude account a new item session of the project
@@ -162,8 +168,14 @@ func (m *Manager) itemAccount(repoID string) (string, error) {
 	if err != nil || root == "" {
 		return "", fmt.Errorf("af cannot tell which account this project's sessions use: the project is not registered; open it in af")
 	}
-	project, global := config.DefaultAccountLayersFor(m.Config(), root, tmux.ProgramClaude)
-	return planAccount(agentaccount.Resolve("", project.Name, global.Name)), nil
+	return m.claudeAccountFor(root), nil
+}
+
+// claudeAccountFor names the Claude account a new session in the repo at path
+// launches with when no account is asked for.
+func (m *Manager) claudeAccountFor(path string) string {
+	project, global := config.DefaultAccountLayersFor(m.Config(), path, tmux.ProgramClaude)
+	return planAccount(agentaccount.Resolve("", project.Name, global.Name))
 }
 
 // usageFor is usage seen from one account: that account's plan windows and

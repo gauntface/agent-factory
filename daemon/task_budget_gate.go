@@ -5,37 +5,39 @@ import (
 	"time"
 
 	"github.com/sachiniyer/agent-factory/backlog"
-	"github.com/sachiniyer/agent-factory/config"
 	"github.com/sachiniyer/agent-factory/log"
 	"github.com/sachiniyer/agent-factory/session/tmux"
 	"github.com/sachiniyer/agent-factory/task"
 )
 
-// TaskStatusSkippedOverBudget prefixes the run status of a budget-gated fire
+// TaskStatusSkippedBudgetGate prefixes the run status of a budget-gated fire
 // the gate held back; the gate's reason follows it.
-const TaskStatusSkippedOverBudget = "skipped: over budget"
+const TaskStatusSkippedBudgetGate = "skipped: budget gate"
+
+// A fire right after a daemon start waits up to budgetMeterWait for the first
+// meter pass, which can read a week of transcripts, so that the start alone
+// does not cost a nightly task its run.
+const (
+	budgetMeterWait = 5 * time.Minute
+	budgetMeterPoll = 5 * time.Second
+)
 
 // taskBudgetGate checks a budget-gated task against the backlog budget's plan
 // limit, for the account the task's session would launch with.
 func (m *Manager) taskBudgetGate(t task.Task) backlog.Gate {
 	program := t.Program
 	if program == "" {
+		// Validation accepts an empty program, and the default can name another agent.
 		program = defaultProgramFor(m.Config().DefaultProgram, t.ProjectPath)
 	}
 	if program != tmux.ProgramClaude {
-		return backlog.Gate{Name: "program", Reason: fmt.Sprintf("The budget meters Claude plan use only, and this task runs %s", program)}
+		return backlog.Gate{Name: backlog.GateProgram, Reason: fmt.Sprintf("The budget meters Claude plan use only, and this task runs %s", program)}
 	}
-	budget, err := backlog.LoadBudget()
-	if err != nil {
-		return backlog.Gate{Name: "budget", Reason: err.Error()}
+	budget, g := loadBudget()
+	if !g.Open() {
+		return g
 	}
-	repoID := t.RepoID
-	if repoID == "" {
-		if repo, err := config.RepoFromPath(t.ProjectPath); err == nil {
-			repoID = repo.ID
-		}
-	}
-	in, _ := m.gateInput(repoID, *budget, m.backlogUsage(), time.Now())
+	in := m.gateInput(m.claudeAccountFor(t.ProjectPath), budget, m.backlogUsage(), time.Now())
 	return backlog.CheckPlanGates(in)
 }
 
@@ -50,13 +52,16 @@ func (s *taskScheduler) skipOverBudget(taskID string) bool {
 		return false
 	}
 	g := s.budgetGate(*t)
+	for waited := time.Duration(0); g.Name == backlog.GateMetering && waited < budgetMeterWait; waited += budgetMeterPoll {
+		s.sleep(budgetMeterPoll)
+		g = s.budgetGate(*t)
+	}
 	if g.Open() {
 		return false
 	}
-	status := TaskStatusSkippedOverBudget + " · " + g.Reason
 	log.InfoLog.Printf("scheduled task %s skipped: %s", taskID, g.Reason)
 	now := time.Now()
-	if _, err := task.UpdateTaskStatus(taskID, &now, status); err != nil {
+	if _, err := task.UpdateTaskStatus(taskID, &now, TaskStatusSkippedBudgetGate+" · "+g.Reason); err != nil {
 		log.ErrorLog.Printf("failed to record skipped status for task %s: %v", taskID, err)
 	}
 	return true

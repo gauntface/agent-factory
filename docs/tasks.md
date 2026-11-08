@@ -144,8 +144,8 @@ Tasks live in `~/.agent-factory/tasks.json`. Manage them via `af tasks` (JSON CL
 | `watch_cmd` | Event trigger — long-running command; each stdout line fires the task (exactly one of `cron_expr` / `watch_cmd`) |
 | `target_session` | Deliver into this session by title (auto-created if missing). Empty = create a new session per fire |
 | `max_concurrent_runs` | Cap on how many sessions this watch task may have in flight at once. `0` (the default) = unlimited. Excess events are queued in order and delivered as sessions finish, rather than spawning more runs (subject to the durable queue's retention limits). Watch tasks with an empty `target_session` only (see [Limiting concurrent sessions](#limiting-concurrent-sessions)) |
-| `budget_gated` | When true, a scheduled fire runs only when Claude plan use is under the backlog budget limit for the 5-hour window and the week (see [Run only within the budget](#run-only-within-the-budget)). Cron tasks that run Claude only |
 | `on_complete` | What happens to a session this task spawned once its run finishes: `keep` (the default — leave it in place), `archive`, or `kill`. Rejected on a `target_session` task, whose session exists to be reused (see [What happens to a run's session](#what-happens-to-a-runs-session)) |
+| `budget_gated` | When true, a scheduled fire runs only when Claude plan use is under the backlog budget limit for the 5-hour window and the week (see [Run only within the budget](#run-only-within-the-budget)). Cron tasks that run Claude only |
 | `project_path` | Repo the task operates on; also the watch script's working directory |
 | `repo_id` | The owning project's id, resolved once when the task is bound and retained. Derived, not editable — it is recomputed only when `project_path` changes. It exists so that deleting the recorded directory cannot strand the task outside its own project; rows created before this field fall back to resolving `project_path` |
 | `program` | Agent to run (`claude`, `codex`, `aider`, `gemini`, `amp`, `opencode`, `devin`). Empty = configured `default_program` |
@@ -189,14 +189,14 @@ af tasks trigger "Daily triage"   # same thing, by name
 
 ### Run only within the budget
 
-`--budget-gated` makes a scheduled fire run only when Claude plan use is under the [backlog budget](backlog.md) limit (`af backlog budget --limit`) for both the 5-hour window and the week, and the account is not at a usage limit. Otherwise af skips that fire and records `skipped: over budget · <reason>` as the run status. The next fire checks again.
+`--budget-gated` makes a scheduled fire run only when Claude plan use is under the [backlog budget](backlog.md) limit (`af backlog budget --limit`) for both the 5-hour window and the week, and the account is not at a usage limit. Otherwise af skips that fire and records `skipped: budget gate · <reason>` as the run status. The next fire checks again.
 
 ```bash
 af tasks add --name "Nightly cleanup" --prompt "Tidy the repo" --cron "0 2 * * *" --budget-gated
 af tasks update "Nightly cleanup" --budget-gated=false
 ```
 
-The gate needs a plan reading, so it also skips while af has not seen Claude plan use yet. It applies to cron tasks that run Claude only. `af tasks trigger` ignores it.
+The gate needs a plan reading, so it also skips while af has never seen Claude plan use for the account. Right after the daemon starts, a fire waits up to five minutes for af to read plan use. The gate checks the account the task's project launches new Claude sessions with. It applies to cron tasks that run Claude only. `af tasks trigger` ignores it.
 
 ## Watch tasks
 
@@ -450,7 +450,7 @@ af tasks add --name <n> --prompt <p> --cron "0 9 * * *" [--target-session <title
 af tasks add --name <n> --watch-cmd <cmd> [--prompt "… {{line}} …"] [--target-session <title>] [--max-concurrent-runs <n>] [--on-complete keep|archive|kill]
 af tasks get <id-or-name>
 af tasks show <id-or-name>     # human-readable: schedule health and audit trail
-af tasks update <id-or-name> [--cron …|--watch-cmd …] [--prompt …|--prompt-file <path>] [--target-session …] [--max-concurrent-runs <n>] [--on-complete keep|archive|kill] [--project-path <repo>] [--program <agent>] [--enabled true|false]
+af tasks update <id-or-name> [--cron …|--watch-cmd …] [--prompt …|--prompt-file <path>] [--target-session …] [--max-concurrent-runs <n>] [--on-complete keep|archive|kill] [--budget-gated[=false]] [--project-path <repo>] [--program <agent>] [--enabled true|false]
 af tasks restart <id-or-name>  # enabled watch tasks only; reloads an edited script
 af tasks trigger <id-or-name>  # cron tasks only
 af tasks remove <id-or-name>

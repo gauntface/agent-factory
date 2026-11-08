@@ -44,7 +44,8 @@ type taskScheduler struct {
 
 	// Injection points for tests: loadTasks substitutes fixture task lists,
 	// parse allows a seconds-granularity parser so firing tests don't wait a
-	// full minute, and runTask observes fires without spawning sessions.
+	// full minute, and runTask observes fires without spawning sessions (an
+	// override also skips the budget gate the default applies).
 	loadTasks func() ([]task.Task, error)
 	// applyTasks is a post-load test seam. Production leaves it nil and applies
 	// the supplied validated snapshot below; control tests use it to prove that
@@ -55,6 +56,7 @@ type taskScheduler struct {
 	// budgetGate checks a budget-gated task before a scheduled fire. Nil skips
 	// the check. A manual "af tasks trigger" does not consult it.
 	budgetGate func(task.Task) backlog.Gate
+	sleep      func(time.Duration)
 }
 
 // scheduledEntry pairs a live cron entry with the DEFINITION it was built from.
@@ -79,6 +81,7 @@ func newTaskScheduler() *taskScheduler {
 		entries:   make(map[string]scheduledEntry),
 		loadTasks: task.LoadTasks,
 		parse:     task.ParseCron,
+		sleep:     time.Sleep,
 	}
 	s.runTask = func(taskID string) {
 		if s.skipOverBudget(taskID) {

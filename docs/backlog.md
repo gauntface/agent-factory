@@ -224,6 +224,10 @@ its use still counts. So plan use can pass the limit by at most
 `max running × cap per run` per project, plus what you start by hand and your
 own use.
 
+Cron tasks can obey the same limit: a task added with `--budget-gated` skips a
+scheduled run while plan use is at or over it. See
+[Run only within the budget](tasks.md#run-only-within-the-budget).
+
 A `budget.json` from before the limit had a share of the plan and a stop-at
 level. af reads it as one limit: the old stop-at when you changed it from 90%,
 else 50%. It then saves the file in the new shape.

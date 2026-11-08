@@ -11,7 +11,8 @@ import (
 
 const RunnerRunning = "running"
 
-// The gates that stop the runner, as RunnerView.Gate names them.
+// The gates that stop the runner, as RunnerView.Gate names them, and the
+// budget-gated task scheduler.
 const (
 	GateLimit       = "limit"
 	GateUsageLimit  = "usage_limit"
@@ -20,6 +21,8 @@ const (
 	GateUSDLimit    = "usd_limit"
 	GateNoAccount   = "no_account"
 	GateMetering    = "metering"
+	GateBudget      = "budget"
+	GateProgram     = "program"
 )
 
 // StaleReadingAfter is the reading age past which the runner starts at most
@@ -52,7 +55,7 @@ type GateInput struct {
 	Loc *time.Location
 }
 
-// Gate is a closed runner gate: its name and the reason the UI shows. The
+// Gate is a closed gate: its name and the reason the UI shows. The
 // zero Gate is open.
 type Gate struct {
 	Name   string
@@ -72,11 +75,8 @@ type window struct {
 // metering, limit, usage limit, no reading, unmeterable, usd_limit.
 func CheckGates(in GateInput) Gate {
 	b, u := in.Budget, in.Usage
-	if in.NoAccount != "" {
-		return Gate{GateNoAccount, capitalize(in.NoAccount)}
-	}
-	if b.Limit <= 0 {
-		return Gate{GateLimit, "Plan limit is 0% · raise it with \"af backlog budget --limit 50\""}
+	if g := accountAndLimitGate(in); !g.Open() {
+		return g
 	}
 	if u.Metering {
 		return Gate{GateMetering, "Reading plan usage…"}
@@ -84,7 +84,6 @@ func CheckGates(in GateInput) Gate {
 	if g := planLimitGate(in); !g.Open() {
 		return g
 	}
-	windows := planWindows(u)
 	if !u.Windows.FiveHour.Valid() && !u.Windows.SevenDay.Valid() && b.USDLimit <= 0 {
 		return Gate{GateNoReading, "No plan usage seen yet · start an item by hand once to take a reading, " +
 			"or set \"af backlog budget --usd-limit 10\""}
@@ -98,7 +97,7 @@ func CheckGates(in GateInput) Gate {
 		return Gate{GateUnmeterable, capitalize(u.Unmeterable[ids[0]])}
 	}
 	if b.USDLimit > 0 {
-		for _, w := range windows {
+		for _, w := range planWindows(u) {
 			if w.w.BacklogCost < b.USDLimit {
 				continue
 			}
@@ -149,21 +148,29 @@ func planLimitGate(in GateInput) Gate {
 	return Gate{}
 }
 
-// CheckPlanGates is the part of CheckGates that a budget-gated task obeys: the
-// backlog's plan limit on the 5-hour window and the week, and the usage limit.
-// It stays closed until af has a plan reading.
-func CheckPlanGates(in GateInput) Gate {
-	b, u := in.Budget, in.Usage
+func accountAndLimitGate(in GateInput) Gate {
 	if in.NoAccount != "" {
 		return Gate{GateNoAccount, capitalize(in.NoAccount)}
 	}
-	if b.Limit <= 0 {
+	if in.Budget.Limit <= 0 {
 		return Gate{GateLimit, "Plan limit is 0% · raise it with \"af backlog budget --limit 50\""}
+	}
+	return Gate{}
+}
+
+// CheckPlanGates is the gate a budget-gated task obeys: the backlog's plan
+// limit on the 5-hour window and the week, and the usage limit. Unlike
+// CheckGates it ignores backlog spend and unmeterable runs, and it waits only
+// for the account's first reading: a window that reset since then is at 0%.
+func CheckPlanGates(in GateInput) Gate {
+	u := in.Usage
+	if g := accountAndLimitGate(in); !g.Open() {
+		return g
 	}
 	if g := planLimitGate(in); !g.Open() {
 		return g
 	}
-	if !u.Windows.FiveHour.Valid() && !u.Windows.SevenDay.Valid() {
+	if u.ReadingAt == nil {
 		if u.Metering {
 			return Gate{GateMetering, "Reading plan usage…"}
 		}

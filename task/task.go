@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/sachiniyer/agent-factory/config"
-	"github.com/sachiniyer/agent-factory/session/tmux"
 )
 
 // taskIDPattern restricts a task ID to characters that are safe to use as a
@@ -297,13 +296,8 @@ func (t Task) ValidateTrigger() error {
 			return fmt.Errorf("task %s sets both max_concurrent_runs and target_session; deliveries into one session already serialize, so drop the cap or drop the target session", t.ID)
 		}
 	}
-	if t.BudgetGated {
-		if hasWatch {
-			return fmt.Errorf("task %s sets budget_gated but is a watch task; the budget gate applies to scheduled cron fires only", t.ID)
-		}
-		if t.Program != "" && t.Program != tmux.ProgramClaude {
-			return fmt.Errorf("task %s sets budget_gated with program %q; the budget meters Claude plan use only, so use program %q or drop budget_gated", t.ID, t.Program, tmux.ProgramClaude)
-		}
+	if err := t.validateBudgetGate(); err != nil {
+		return err
 	}
 	// on_complete governs a session this task SPAWNED, so it is meaningful only
 	// where the task spawns one (#2595). Rejecting it elsewhere follows the cap's
@@ -675,14 +669,6 @@ func (t Task) capApplies() bool {
 func (t *Task) clearInapplicableCap() {
 	if t.MaxConcurrentRuns > 0 && !t.capApplies() {
 		t.MaxConcurrentRuns = 0
-	}
-}
-
-// clearInapplicableBudgetGate drops the budget gate from a task that became a
-// watch task or moved to a program other than Claude.
-func (t *Task) clearInapplicableBudgetGate() {
-	if t.BudgetGated && (t.IsWatch() || (t.Program != "" && t.Program != tmux.ProgramClaude)) {
-		t.BudgetGated = false
 	}
 }
 
