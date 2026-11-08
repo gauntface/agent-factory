@@ -1,7 +1,6 @@
 package proctree
 
 import (
-	"os"
 	"os/exec"
 	"path/filepath"
 	"syscall"
@@ -15,20 +14,17 @@ import (
 // to everything proctree reads: its argv[0] is a path ending in `tmux`, and,
 // because the executable file itself is called `tmux`, so is its kernel task
 // name — which is what every tmux process is called on darwin, where tmux
-// cannot retitle itself. It is a copy of sleep, so nothing here drives tmux.
+// cannot retitle itself. It is a copy of this test binary that only sleeps, so
+// nothing here drives tmux.
 //
 // A real process rather than a fixture, because the defect this guards was in
 // what IsTmuxServer concluded from a live process's own table entry (#4678).
 func tmuxNamedProcess(t *testing.T, dir string, attr *syscall.SysProcAttr) int {
 	t.Helper()
-	sleepPath, err := exec.LookPath("sleep")
-	require.NoError(t, err)
-	body, err := os.ReadFile(sleepPath)
-	require.NoError(t, err)
 	fake := filepath.Join(t.TempDir(), "tmux")
-	require.NoError(t, os.WriteFile(fake, body, 0o755))
+	copyTestBinary(t, fake)
 
-	cmd := exec.Command(fake, "300")
+	cmd := exec.Command(fake, sleeperArg)
 	cmd.Dir = dir
 	cmd.SysProcAttr = attr
 	require.NoError(t, cmd.Start())
