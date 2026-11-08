@@ -81,30 +81,10 @@ func CheckGates(in GateInput) Gate {
 	if u.Metering {
 		return Gate{GateMetering, "Reading plan usage…"}
 	}
-	windows := []window{
-		{u.Windows.FiveHour, "the 5-hour window", "the last 5 hours"},
-		{u.Windows.SevenDay, "the week", "the last 7 days"},
+	if g := planLimitGate(in); !g.Open() {
+		return g
 	}
-	var over *window
-	for i, w := range windows {
-		if w.w.Valid() && w.w.Plan >= b.Limit && (over == nil || w.w.ResetsAt.After(*over.w.ResetsAt)) {
-			over = &windows[i]
-		}
-	}
-	if over != nil {
-		return Gate{GateLimit, fmt.Sprintf("Plan at %s of %s (limit %s) · resumes %s",
-			Percent(over.w.Plan), over.label, Percent(b.Limit), ResetLabel(*over.w.ResetsAt, in.Now, in.Loc))}
-	}
-	if in.LimitUnknown != "" {
-		return Gate{GateUsageLimit, "Can't tell whether the plan is at its usage limit · " + in.LimitUnknown}
-	}
-	if in.Limited {
-		reason := "Usage limit"
-		if !in.LimitUntil.IsZero() {
-			reason += " until " + ResetLabel(in.LimitUntil, in.Now, in.Loc)
-		}
-		return Gate{GateUsageLimit, reason}
-	}
+	windows := planWindows(u)
 	if !u.Windows.FiveHour.Valid() && !u.Windows.SevenDay.Valid() && b.USDLimit <= 0 {
 		return Gate{GateNoReading, "No plan usage seen yet · start an item by hand once to take a reading, " +
 			"or set \"af backlog budget --usd-limit 10\""}
@@ -130,6 +110,64 @@ func CheckGates(in GateInput) Gate {
 			}
 			return Gate{GateUSDLimit, reason}
 		}
+	}
+	return Gate{}
+}
+
+func planWindows(u planusage.Usage) []window {
+	return []window{
+		{u.Windows.FiveHour, "the 5-hour window", "the last 5 hours"},
+		{u.Windows.SevenDay, "the week", "the last 7 days"},
+	}
+}
+
+// planLimitGate closes when a plan window is at the limit or the account is at
+// its usage limit.
+func planLimitGate(in GateInput) Gate {
+	b, u := in.Budget, in.Usage
+	windows := planWindows(u)
+	var over *window
+	for i, w := range windows {
+		if w.w.Valid() && w.w.Plan >= b.Limit && (over == nil || w.w.ResetsAt.After(*over.w.ResetsAt)) {
+			over = &windows[i]
+		}
+	}
+	if over != nil {
+		return Gate{GateLimit, fmt.Sprintf("Plan at %s of %s (limit %s) · resumes %s",
+			Percent(over.w.Plan), over.label, Percent(b.Limit), ResetLabel(*over.w.ResetsAt, in.Now, in.Loc))}
+	}
+	if in.LimitUnknown != "" {
+		return Gate{GateUsageLimit, "Can't tell whether the plan is at its usage limit · " + in.LimitUnknown}
+	}
+	if in.Limited {
+		reason := "Usage limit"
+		if !in.LimitUntil.IsZero() {
+			reason += " until " + ResetLabel(in.LimitUntil, in.Now, in.Loc)
+		}
+		return Gate{GateUsageLimit, reason}
+	}
+	return Gate{}
+}
+
+// CheckPlanGates is the part of CheckGates that a budget-gated task obeys: the
+// backlog's plan limit on the 5-hour window and the week, and the usage limit.
+// It stays closed until af has a plan reading.
+func CheckPlanGates(in GateInput) Gate {
+	b, u := in.Budget, in.Usage
+	if in.NoAccount != "" {
+		return Gate{GateNoAccount, capitalize(in.NoAccount)}
+	}
+	if b.Limit <= 0 {
+		return Gate{GateLimit, "Plan limit is 0% · raise it with \"af backlog budget --limit 50\""}
+	}
+	if g := planLimitGate(in); !g.Open() {
+		return g
+	}
+	if !u.Windows.FiveHour.Valid() && !u.Windows.SevenDay.Valid() {
+		if u.Metering {
+			return Gate{GateMetering, "Reading plan usage…"}
+		}
+		return Gate{GateNoReading, "No plan usage seen yet · run a Claude session once to take a reading"}
 	}
 	return Gate{}
 }

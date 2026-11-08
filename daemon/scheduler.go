@@ -6,6 +6,7 @@ import (
 
 	cron "github.com/robfig/cron/v3"
 
+	"github.com/sachiniyer/agent-factory/backlog"
 	"github.com/sachiniyer/agent-factory/log"
 	"github.com/sachiniyer/agent-factory/task"
 )
@@ -51,6 +52,9 @@ type taskScheduler struct {
 	applyTasks func([]task.Task) error
 	parse      func(expr string) (cron.Schedule, error)
 	runTask    func(taskID string)
+	// budgetGate checks a budget-gated task before a scheduled fire. Nil skips
+	// the check. A manual "af tasks trigger" does not consult it.
+	budgetGate func(task.Task) backlog.Gate
 }
 
 // scheduledEntry pairs a live cron entry with the DEFINITION it was built from.
@@ -70,17 +74,21 @@ type scheduledEntry struct {
 }
 
 func newTaskScheduler() *taskScheduler {
-	return &taskScheduler{
+	s := &taskScheduler{
 		cron:      cron.New(),
 		entries:   make(map[string]scheduledEntry),
 		loadTasks: task.LoadTasks,
 		parse:     task.ParseCron,
-		runTask: func(taskID string) {
-			if err := RunTask(taskID, task.ProjectExpectation{}); err != nil {
-				log.WarningLog.Printf("scheduled task %s failed to run: %v", taskID, err)
-			}
-		},
 	}
+	s.runTask = func(taskID string) {
+		if s.skipOverBudget(taskID) {
+			return
+		}
+		if err := RunTask(taskID, task.ProjectExpectation{}); err != nil {
+			log.WarningLog.Printf("scheduled task %s failed to run: %v", taskID, err)
+		}
+	}
+	return s
 }
 
 // Start begins evaluating schedules. Each due task runs in its own goroutine

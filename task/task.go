@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sachiniyer/agent-factory/config"
+	"github.com/sachiniyer/agent-factory/session/tmux"
 )
 
 // taskIDPattern restricts a task ID to characters that are safe to use as a
@@ -87,7 +88,10 @@ type Task struct {
 	// session's owned branch. A run whose output already landed in a pushed
 	// branch or a PR usually wants kill; a run that might need inspecting wants
 	// archive. af must not pick for the user, so the default does neither.
-	OnComplete  string `json:"on_complete,omitempty"`
+	OnComplete string `json:"on_complete,omitempty"`
+	// BudgetGated makes a scheduled fire skip unless Claude plan use is under
+	// the backlog budget's limit for the 5-hour window and the week.
+	BudgetGated bool   `json:"budget_gated,omitempty"`
 	ProjectPath string `json:"project_path"`
 	// RepoID is the owning project's repo ID, resolved ONCE at bind time and
 	// retained. It is derived, never patchable — AddTask sets it and UpdateTask
@@ -291,6 +295,14 @@ func (t Task) ValidateTrigger() error {
 		}
 		if CanonicalTargetSession(t.TargetSession) != "" {
 			return fmt.Errorf("task %s sets both max_concurrent_runs and target_session; deliveries into one session already serialize, so drop the cap or drop the target session", t.ID)
+		}
+	}
+	if t.BudgetGated {
+		if hasWatch {
+			return fmt.Errorf("task %s sets budget_gated but is a watch task; the budget gate applies to scheduled cron fires only", t.ID)
+		}
+		if t.Program != "" && t.Program != tmux.ProgramClaude {
+			return fmt.Errorf("task %s sets budget_gated with program %q; the budget meters Claude plan use only, so use program %q or drop budget_gated", t.ID, t.Program, tmux.ProgramClaude)
 		}
 	}
 	// on_complete governs a session this task SPAWNED, so it is meaningful only
@@ -663,6 +675,14 @@ func (t Task) capApplies() bool {
 func (t *Task) clearInapplicableCap() {
 	if t.MaxConcurrentRuns > 0 && !t.capApplies() {
 		t.MaxConcurrentRuns = 0
+	}
+}
+
+// clearInapplicableBudgetGate drops the budget gate from a task that became a
+// watch task or moved to a program other than Claude.
+func (t *Task) clearInapplicableBudgetGate() {
+	if t.BudgetGated && (t.IsWatch() || (t.Program != "" && t.Program != tmux.ProgramClaude)) {
+		t.BudgetGated = false
 	}
 }
 

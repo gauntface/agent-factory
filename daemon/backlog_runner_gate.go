@@ -132,11 +132,18 @@ func (h backlogHost) Gate(repoID string) backlog.Gate {
 // backlogGate checks the gates for the account the project's item sessions
 // launch with, and returns that account.
 func (m *Manager) backlogGate(repoID string, budget backlog.Budget, usage planusage.Usage, now time.Time) (backlog.Gate, string) {
+	in, account := m.gateInput(repoID, budget, usage, now)
+	return backlog.CheckGates(in), account
+}
+
+// gateInput reads what the gates need for the account the project's new
+// sessions launch with, and returns that account.
+func (m *Manager) gateInput(repoID string, budget backlog.Budget, usage planusage.Usage, now time.Time) (backlog.GateInput, string) {
 	in := backlog.GateInput{Budget: budget, Now: now, Loc: time.Local}
 	account, err := m.itemAccount(repoID)
 	if err != nil {
 		in.NoAccount = err.Error()
-		return backlog.CheckGates(in), ""
+		return in, ""
 	}
 	in.Usage = usageFor(usage, account)
 	limited, until, err := m.claudeUsageLimit(account, now)
@@ -144,7 +151,7 @@ func (m *Manager) backlogGate(repoID string, budget backlog.Budget, usage planus
 		in.LimitUnknown = err.Error()
 	}
 	in.Limited, in.LimitUntil = limited, until
-	return backlog.CheckGates(in), account
+	return in, account
 }
 
 // itemAccount names the Claude account a new item session of the project

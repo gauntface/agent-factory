@@ -772,6 +772,7 @@ func init() {
 	tasksAddCmd.Flags().StringVar(&taskAddTargetSessionFlag, "target-session", "", "Deliver the prompt into this session (auto-created if missing); empty creates a new session per run")
 	tasksAddCmd.Flags().IntVar(&taskAddMaxConcurrentRunsFlag, "max-concurrent-runs", 0, "Cap how many sessions this watch task may have in flight at once; excess events are queued in order instead of spawning runs, subject to the durable queue's retention limits (0 = unlimited; --watch-cmd tasks without --target-session only)")
 	tasksAddCmd.Flags().StringVar(&taskAddOnCompleteFlag, "on-complete", "", "What happens to the session a run spawns once it finishes: keep (default, leaves it in place), archive (restorable, but retains its whole worktree), or kill (reclaims the worktree and prunes the session's branch). Not for --target-session tasks, whose session is meant to be reused")
+	tasksAddCmd.Flags().BoolVar(&taskAddBudgetGatedFlag, "budget-gated", false, "Skip a scheduled run unless Claude plan use is under the backlog budget limit (\"af backlog budget --limit\") for the 5-hour window and the week. --cron tasks with the claude program only")
 	tasksAddCmd.Flags().StringVar(&taskAddProgramFlag, "program", "", "Program to run (one of: "+tmux.SupportedProgramsString()+"; defaults to config default)")
 	tasksAddCmd.MarkFlagRequired("name")
 
@@ -790,6 +791,7 @@ func init() {
 	tasksUpdateCmd.Flags().StringVar(&taskUpdateTargetSessionFlag, "target-session", "", "New target session; pass an empty value to revert to a new session per run")
 	tasksUpdateCmd.Flags().IntVar(&taskUpdateMaxConcurrentRunsFlag, "max-concurrent-runs", 0, "New in-flight session cap for this watch task; pass 0 to revert to unlimited")
 	tasksUpdateCmd.Flags().StringVar(&taskUpdateOnCompleteFlag, "on-complete", "", "New spawned-session lifecycle: keep, archive, or kill; pass keep to revert to leaving sessions in place")
+	tasksUpdateCmd.Flags().BoolVar(&taskUpdateBudgetGatedFlag, "budget-gated", false, "Turn the budget gate on or off (--budget-gated=false turns it off)")
 	tasksUpdateCmd.Flags().StringVar(&taskUpdateProjectPathFlag, "project-path", "", "Move the task to this git repository (distinct from --repo, which scopes its current project)")
 	tasksUpdateCmd.Flags().StringVar(&taskUpdateEnabledFlag, "enabled", "", "Enable or disable the task (true/false)")
 	tasksUpdateCmd.Flags().StringVar(&taskUpdateProgramFlag, "program", "", "New program to run (one of: "+tmux.SupportedProgramsString()+"; leave unset to keep the current one)")
