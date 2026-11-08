@@ -1,7 +1,6 @@
 package proctree
 
 import (
-	"os"
 	"os/exec"
 	"path/filepath"
 	"syscall"
@@ -9,26 +8,22 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/sachiniyer/agent-factory/internal/testsleeper"
 )
 
 // tmuxNamedProcess starts a real process that looks exactly like a tmux client
 // to everything proctree reads: its argv[0] is a path ending in `tmux`, and,
 // because the executable file itself is called `tmux`, so is its kernel task
 // name — which is what every tmux process is called on darwin, where tmux
-// cannot retitle itself. It is a copy of sleep, so nothing here drives tmux.
+// cannot retitle itself. It is a copy of this test binary that only sleeps, so
+// nothing here drives tmux.
 //
 // A real process rather than a fixture, because the defect this guards was in
 // what IsTmuxServer concluded from a live process's own table entry (#4678).
 func tmuxNamedProcess(t *testing.T, dir string, attr *syscall.SysProcAttr) int {
 	t.Helper()
-	sleepPath, err := exec.LookPath("sleep")
-	require.NoError(t, err)
-	body, err := os.ReadFile(sleepPath)
-	require.NoError(t, err)
-	fake := filepath.Join(t.TempDir(), "tmux")
-	require.NoError(t, os.WriteFile(fake, body, 0o755))
-
-	cmd := exec.Command(fake, "300")
+	cmd := testsleeper.CopyCommand(t, filepath.Join(t.TempDir(), "tmux"))
 	cmd.Dir = dir
 	cmd.SysProcAttr = attr
 	require.NoError(t, cmd.Start())
@@ -80,7 +75,7 @@ func TestIsTmuxServer_RefusesATmuxClient(t *testing.T) {
 func TestIsTmuxProcess_CoversClientsAndRetitledArgv(t *testing.T) {
 	require.True(t, IsTmuxProcess(tmuxNamedProcess(t, t.TempDir(), nil)))
 
-	retitled := exec.Command("sleep", "300")
+	retitled := testsleeper.Command(t)
 	retitled.Args[0] = "tmux: server (/tmp/tmux-1000/default)"
 	require.NoError(t, retitled.Start())
 	t.Cleanup(func() {

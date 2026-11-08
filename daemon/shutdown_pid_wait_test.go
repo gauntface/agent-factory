@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/sachiniyer/agent-factory/internal/testguard"
+	"github.com/sachiniyer/agent-factory/internal/testsleeper"
 )
 
 // Tests for the #5007 PID-exit wait: RequestShutdown reports the shutdown
@@ -439,22 +440,12 @@ func TestProcessStartTokenIdentifiesIncarnation(t *testing.T) {
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skipf("no start token on %s", runtime.GOOS)
 	}
-	name := "sleep"
+	name, args := "sleep", []string{"30"}
 	if runtime.GOOS == "linux" {
-		sleepPath, err := exec.LookPath("sleep")
-		if err != nil {
-			t.Skip("sleep not available")
-		}
-		data, err := os.ReadFile(sleepPath)
-		if err != nil {
-			t.Skipf("read %s: %v", sleepPath, err)
-		}
-		name = filepath.Join(t.TempDir(), "a) (b c")
-		if err := os.WriteFile(name, data, 0o755); err != nil {
-			t.Fatalf("copy sleep: %v", err)
-		}
+		cmd := testsleeper.CopyCommand(t, filepath.Join(t.TempDir(), "a) (b c"))
+		name, args = cmd.Path, cmd.Args[1:]
 	}
-	pid := startReapedProcess(t, name, "30")
+	pid := startReapedProcess(t, name, args...)
 
 	token := processStartToken(pid)
 	if token == "" {
