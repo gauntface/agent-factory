@@ -11,7 +11,7 @@ import (
 
 const RunnerRunning = "running"
 
-// The gates that stop the runner, as RunnerView.Gate names them.
+// Gate names for the backlog runner and budget-gated tasks.
 const (
 	GateLimit       = "limit"
 	GateUsageLimit  = "usage_limit"
@@ -20,6 +20,7 @@ const (
 	GateUSDLimit    = "usd_limit"
 	GateNoAccount   = "no_account"
 	GateMetering    = "metering"
+	GateBudget      = "budget"
 )
 
 // StaleReadingAfter is the reading age past which the runner starts at most
@@ -52,8 +53,7 @@ type GateInput struct {
 	Loc *time.Location
 }
 
-// Gate is a closed runner gate: its name and the reason the UI shows. The
-// zero Gate is open.
+// Gate is a closed gate: its name and the reason the UI shows. The zero Gate is open.
 type Gate struct {
 	Name   string
 	Reason string
@@ -72,19 +72,66 @@ type window struct {
 // metering, limit, usage limit, no reading, unmeterable, usd_limit.
 func CheckGates(in GateInput) Gate {
 	b, u := in.Budget, in.Usage
-	if in.NoAccount != "" {
-		return Gate{GateNoAccount, capitalize(in.NoAccount)}
-	}
-	if b.Limit <= 0 {
-		return Gate{GateLimit, "Plan limit is 0% · raise it with \"af backlog budget --limit 50\""}
+	if g := accountAndLimitGate(in); !g.Open() {
+		return g
 	}
 	if u.Metering {
 		return Gate{GateMetering, "Reading plan usage…"}
 	}
-	windows := []window{
+	if g := planLimitGate(in); !g.Open() {
+		return g
+	}
+	if !u.Windows.FiveHour.Valid() && !u.Windows.SevenDay.Valid() && b.USDLimit <= 0 {
+		return Gate{GateNoReading, "No plan usage seen yet · start an item by hand once to take a reading, " +
+			"or set \"af backlog budget --usd-limit 10\""}
+	}
+	if len(u.Unmeterable) > 0 {
+		ids := make([]string, 0, len(u.Unmeterable))
+		for id := range u.Unmeterable {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		return Gate{GateUnmeterable, capitalize(u.Unmeterable[ids[0]])}
+	}
+	if b.USDLimit > 0 {
+		for _, w := range planWindows(u) {
+			if w.w.BacklogCost < b.USDLimit {
+				continue
+			}
+			reason := fmt.Sprintf("Backlog spent %s of its %s limit in ", USD(w.w.BacklogCost), USD(b.USDLimit))
+			if w.w.Valid() {
+				reason += w.label + " · resumes " + ResetLabel(*w.w.ResetsAt, in.Now, in.Loc)
+			} else {
+				reason += w.rolling
+			}
+			return Gate{GateUSDLimit, reason}
+		}
+	}
+	return Gate{}
+}
+
+func accountAndLimitGate(in GateInput) Gate {
+	if in.NoAccount != "" {
+		return Gate{GateNoAccount, capitalize(in.NoAccount)}
+	}
+	if in.Budget.Limit <= 0 {
+		return Gate{GateLimit, "Plan limit is 0% · raise it with \"af backlog budget --limit 50\""}
+	}
+	return Gate{}
+}
+
+func planWindows(u planusage.Usage) []window {
+	return []window{
 		{u.Windows.FiveHour, "the 5-hour window", "the last 5 hours"},
 		{u.Windows.SevenDay, "the week", "the last 7 days"},
 	}
+}
+
+// planLimitGate closes when a plan window is at the limit or the account is at
+// its usage limit.
+func planLimitGate(in GateInput) Gate {
+	b, u := in.Budget, in.Usage
+	windows := planWindows(u)
 	var over *window
 	for i, w := range windows {
 		if w.w.Valid() && w.w.Plan >= b.Limit && (over == nil || w.w.ResetsAt.After(*over.w.ResetsAt)) {
@@ -105,31 +152,25 @@ func CheckGates(in GateInput) Gate {
 		}
 		return Gate{GateUsageLimit, reason}
 	}
-	if !u.Windows.FiveHour.Valid() && !u.Windows.SevenDay.Valid() && b.USDLimit <= 0 {
-		return Gate{GateNoReading, "No plan usage seen yet · start an item by hand once to take a reading, " +
-			"or set \"af backlog budget --usd-limit 10\""}
+	return Gate{}
+}
+
+// CheckPlanGates is the gate a budget-gated task obeys: the backlog's plan
+// limit on the 5-hour window and the week, and the usage limit. Unlike
+// CheckGates it ignores backlog spend and unmeterable runs, and it waits only
+// for the account's first reading: a window that reset since then is at 0%.
+func CheckPlanGates(in GateInput) Gate {
+	if g := accountAndLimitGate(in); !g.Open() {
+		return g
 	}
-	if len(u.Unmeterable) > 0 {
-		ids := make([]string, 0, len(u.Unmeterable))
-		for id := range u.Unmeterable {
-			ids = append(ids, id)
-		}
-		sort.Strings(ids)
-		return Gate{GateUnmeterable, capitalize(u.Unmeterable[ids[0]])}
+	if g := planLimitGate(in); !g.Open() {
+		return g
 	}
-	if b.USDLimit > 0 {
-		for _, w := range windows {
-			if w.w.BacklogCost < b.USDLimit {
-				continue
-			}
-			reason := fmt.Sprintf("Backlog spent %s of its %s limit in ", USD(w.w.BacklogCost), USD(b.USDLimit))
-			if w.w.Valid() {
-				reason += w.label + " · resumes " + ResetLabel(*w.w.ResetsAt, in.Now, in.Loc)
-			} else {
-				reason += w.rolling
-			}
-			return Gate{GateUSDLimit, reason}
+	if in.Usage.ReadingAt == nil {
+		if in.Usage.Metering {
+			return Gate{GateMetering, "Reading plan usage…"}
 		}
+		return Gate{GateNoReading, "No plan usage seen yet · run a Claude session once to take a reading"}
 	}
 	return Gate{}
 }

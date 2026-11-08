@@ -48,6 +48,7 @@ type TaskUpdate struct {
 	// BACK to, and a plain string could not tell "revert to keep" from "leave it
 	// alone".
 	OnComplete  *string `json:"on_complete,omitempty"`
+	BudgetGated *bool   `json:"budget_gated,omitempty"`
 	ProjectPath *string `json:"project_path,omitempty"`
 	Program     *string `json:"program,omitempty"`
 	Enabled     *bool   `json:"enabled,omitempty"`
@@ -77,7 +78,7 @@ func (u *TaskUpdate) GobDecode(data []byte) error {
 func (u TaskUpdate) IsEmpty() bool {
 	return u.Name == nil && u.Prompt == nil && u.CronExpr == nil &&
 		u.WatchCmd == nil && u.TargetSession == nil && u.MaxConcurrentRuns == nil &&
-		u.OnComplete == nil &&
+		u.OnComplete == nil && u.BudgetGated == nil &&
 		u.ProjectPath == nil && u.Program == nil && u.Enabled == nil
 }
 
@@ -105,6 +106,9 @@ func (u TaskUpdate) apply(t Task) Task {
 	}
 	if u.OnComplete != nil {
 		t.OnComplete = *u.OnComplete
+	}
+	if u.BudgetGated != nil {
+		t.BudgetGated = *u.BudgetGated
 	}
 	if u.ProjectPath != nil {
 		t.ProjectPath = *u.ProjectPath
@@ -148,6 +152,9 @@ func (u TaskUpdate) apply(t Task) Task {
 	// left alone so a contradictory request still surfaces as an error.
 	if u.OnComplete == nil {
 		t.clearInapplicableOnComplete()
+	}
+	if u.BudgetGated == nil {
+		t.clearInapplicableBudgetGate()
 	}
 	return t
 }
@@ -195,6 +202,9 @@ func DiffTask(old, cur Task) TaskUpdate {
 	// the moment a surface starts editing it.
 	if cur.OnComplete != old.OnComplete {
 		u.OnComplete = &cur.OnComplete
+	}
+	if cur.BudgetGated != old.BudgetGated {
+		u.BudgetGated = &cur.BudgetGated
 	}
 	if cur.ProjectPath != old.ProjectPath {
 		u.ProjectPath = &cur.ProjectPath

@@ -3789,6 +3789,7 @@ af tasks add [flags]
 
 | Flag | Type | Description |
 |------|------|-------------|
+| `--budget-gated` |  | Skip a scheduled run unless Claude plan use is under the backlog budget limit ("af backlog budget --limit") for the 5-hour window and the week. --cron tasks with the claude program only |
 | `--cron` | `string` | Cron expression (exactly one of --cron / --watch-cmd) |
 | `--max-concurrent-runs` | `int` | Cap how many sessions this watch task may have in flight at once; excess events are queued in order instead of spawning runs, subject to the durable queue's retention limits (0 = unlimited; --watch-cmd tasks without --target-session only) (default `0`) |
 | `--name` | `string` | Task name (required) |
@@ -3991,6 +3992,7 @@ af tasks update <id-or-name> [flags]
 
 | Flag | Type | Description |
 |------|------|-------------|
+| `--budget-gated` |  | Turn the budget gate on or off (--budget-gated=false turns it off) |
 | `--cron` | `string` | New cron expression (clears watch-cmd) |
 | `--enabled` | `string` | Enable or disable the task (true/false) |
 | `--max-concurrent-runs` | `int` | New in-flight session cap for this watch task; pass 0 to revert to unlimited (default `0`) |
