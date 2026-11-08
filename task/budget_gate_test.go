@@ -34,7 +34,7 @@ func TestValidateTriggerBudgetGated(t *testing.T) {
 	}
 }
 
-func TestTaskUpdateBudgetGatedRoundTrip(t *testing.T) {
+func TestTaskUpdateBudgetGated(t *testing.T) {
 	off := false
 	var buf bytes.Buffer
 	require.NoError(t, gob.NewEncoder(&buf).Encode(TaskUpdate{BudgetGated: &off}))

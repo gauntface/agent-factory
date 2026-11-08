@@ -134,7 +134,7 @@ func (h backlogHost) Gate(repoID string) backlog.Gate {
 func loadBudget() (backlog.Budget, backlog.Gate) {
 	budget, err := backlog.LoadBudget()
 	if err != nil {
-		return backlog.Budget{}, backlog.Gate{Name: backlog.GateBudget, Reason: "Can't read the backlog budget · " + err.Error()}
+		return backlog.Budget{}, backlog.Gate{Name: backlog.GateBudget, Reason: err.Error()}
 	}
 	return *budget, backlog.Gate{}
 }

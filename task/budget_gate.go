@@ -10,10 +10,6 @@ func (t Task) runsClaude() bool {
 	return t.Program == "" || t.Program == tmux.ProgramClaude
 }
 
-func (t Task) budgetGateApplies() bool {
-	return !t.IsWatch() && t.runsClaude()
-}
-
 func (t Task) validateBudgetGate() error {
 	if !t.BudgetGated {
 		return nil
@@ -30,7 +26,7 @@ func (t Task) validateBudgetGate() error {
 // clearInapplicableBudgetGate drops the budget gate from a task that became a
 // watch task or moved to a program other than Claude.
 func (t *Task) clearInapplicableBudgetGate() {
-	if t.BudgetGated && !t.budgetGateApplies() {
+	if t.IsWatch() || !t.runsClaude() {
 		t.BudgetGated = false
 	}
 }

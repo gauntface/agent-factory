@@ -11,8 +11,7 @@ import (
 
 const RunnerRunning = "running"
 
-// The gates that stop the runner, as RunnerView.Gate names them, and the
-// budget-gated task scheduler.
+// Gate names for the backlog runner and budget-gated tasks.
 const (
 	GateLimit       = "limit"
 	GateUsageLimit  = "usage_limit"
@@ -22,7 +21,6 @@ const (
 	GateNoAccount   = "no_account"
 	GateMetering    = "metering"
 	GateBudget      = "budget"
-	GateProgram     = "program"
 )
 
 // StaleReadingAfter is the reading age past which the runner starts at most
@@ -55,8 +53,7 @@ type GateInput struct {
 	Loc *time.Location
 }
 
-// Gate is a closed gate: its name and the reason the UI shows. The
-// zero Gate is open.
+// Gate is a closed gate: its name and the reason the UI shows. The zero Gate is open.
 type Gate struct {
 	Name   string
 	Reason string
@@ -113,6 +110,16 @@ func CheckGates(in GateInput) Gate {
 	return Gate{}
 }
 
+func accountAndLimitGate(in GateInput) Gate {
+	if in.NoAccount != "" {
+		return Gate{GateNoAccount, capitalize(in.NoAccount)}
+	}
+	if in.Budget.Limit <= 0 {
+		return Gate{GateLimit, "Plan limit is 0% · raise it with \"af backlog budget --limit 50\""}
+	}
+	return Gate{}
+}
+
 func planWindows(u planusage.Usage) []window {
 	return []window{
 		{u.Windows.FiveHour, "the 5-hour window", "the last 5 hours"},
@@ -148,30 +155,19 @@ func planLimitGate(in GateInput) Gate {
 	return Gate{}
 }
 
-func accountAndLimitGate(in GateInput) Gate {
-	if in.NoAccount != "" {
-		return Gate{GateNoAccount, capitalize(in.NoAccount)}
-	}
-	if in.Budget.Limit <= 0 {
-		return Gate{GateLimit, "Plan limit is 0% · raise it with \"af backlog budget --limit 50\""}
-	}
-	return Gate{}
-}
-
 // CheckPlanGates is the gate a budget-gated task obeys: the backlog's plan
 // limit on the 5-hour window and the week, and the usage limit. Unlike
 // CheckGates it ignores backlog spend and unmeterable runs, and it waits only
 // for the account's first reading: a window that reset since then is at 0%.
 func CheckPlanGates(in GateInput) Gate {
-	u := in.Usage
 	if g := accountAndLimitGate(in); !g.Open() {
 		return g
 	}
 	if g := planLimitGate(in); !g.Open() {
 		return g
 	}
-	if u.ReadingAt == nil {
-		if u.Metering {
+	if in.Usage.ReadingAt == nil {
+		if in.Usage.Metering {
 			return Gate{GateMetering, "Reading plan usage…"}
 		}
 		return Gate{GateNoReading, "No plan usage seen yet · run a Claude session once to take a reading"}

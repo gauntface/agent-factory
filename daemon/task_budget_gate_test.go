@@ -25,18 +25,24 @@ func TestSkipOverBudget(t *testing.T) {
 		return gate
 	}
 
-	assert.False(t, s.skipOverBudget("plain"))
+	assert.False(t, s.skipClosedBudgetGate("plain"))
 	assert.Equal(t, 0, calls, "a task without the gate must not read the budget")
 
-	assert.False(t, s.skipOverBudget("gated"), "an open gate lets the task run")
+	assert.False(t, s.skipClosedBudgetGate("gated"), "an open gate lets the task run")
 
 	gate = backlog.Gate{Name: backlog.GateLimit, Reason: "Plan at 60% of the week (limit 50%) · resumes Mon 12:00"}
-	assert.True(t, s.skipOverBudget("gated"))
+	assert.True(t, s.skipClosedBudgetGate("gated"))
 	got, err := task.GetTask("gated")
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(got.LastRunStatus, TaskStatusSkippedBudgetGate), got.LastRunStatus)
 	assert.Contains(t, got.LastRunStatus, "Plan at 60% of the week")
 	assert.NotNil(t, got.LastRunAt)
+
+	off := false
+	_, err = task.UpdateTask("gated", task.TaskUpdate{BudgetGated: &off}, task.ProjectExpectation{})
+	require.NoError(t, err)
+	gate = backlog.Gate{Name: backlog.GateLimit, Reason: "closed"}
+	assert.False(t, s.skipClosedBudgetGate("gated"), "a task whose gate was turned off runs")
 }
 
 func TestSkipOverBudgetWaitsForTheFirstMeterPass(t *testing.T) {
@@ -54,11 +60,14 @@ func TestSkipOverBudgetWaitsForTheFirstMeterPass(t *testing.T) {
 		}
 		return backlog.Gate{}
 	}
-	assert.False(t, s.skipOverBudget("gated"), "the task runs once the first pass shows room")
+	assert.False(t, s.skipClosedBudgetGate("gated"), "the task runs once the first pass shows room")
 	assert.Equal(t, 2*budgetMeterPoll, slept)
 
-	calls, slept = -1000, 0
-	assert.True(t, s.skipOverBudget("gated"), "a pass that never ends still skips the fire")
+	slept = 0
+	s.budgetGate = func(task.Task) backlog.Gate {
+		return backlog.Gate{Name: backlog.GateMetering, Reason: "Reading plan usage…"}
+	}
+	assert.True(t, s.skipClosedBudgetGate("gated"), "a pass that never ends still skips the fire")
 	assert.Equal(t, budgetMeterWait, slept)
 	got, err := task.GetTask("gated")
 	require.NoError(t, err)

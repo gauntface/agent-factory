@@ -196,7 +196,7 @@ af tasks add --name "Nightly cleanup" --prompt "Tidy the repo" --cron "0 2 * * *
 af tasks update "Nightly cleanup" --budget-gated=false
 ```
 
-The gate needs a plan reading, so it also skips while af has never seen Claude plan use for the account. Right after the daemon starts, a fire waits up to five minutes for af to read plan use. The gate checks the account the task's project launches new Claude sessions with. It applies to cron tasks that run Claude only. `af tasks trigger` ignores it.
+The gate needs a plan reading, so it also skips while af has never seen Claude plan use for the account. Right after the daemon starts, a fire waits up to five minutes for af to read plan use. The gate checks the account the task's project launches new Claude sessions with. It applies to cron tasks that run Claude only: a task with no `--program` whose project's default program is another agent skips every fire. `af tasks trigger` ignores it.
 
 ## Watch tasks
 

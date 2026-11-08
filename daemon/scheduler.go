@@ -44,8 +44,9 @@ type taskScheduler struct {
 
 	// Injection points for tests: loadTasks substitutes fixture task lists,
 	// parse allows a seconds-granularity parser so firing tests don't wait a
-	// full minute, and runTask observes fires without spawning sessions (an
-	// override also skips the budget gate the default applies).
+	// full minute, runTask observes fires without spawning sessions (an
+	// override also skips the budget gate the default applies), and sleep lets
+	// the budget gate's meter wait run without real waits.
 	loadTasks func() ([]task.Task, error)
 	// applyTasks is a post-load test seam. Production leaves it nil and applies
 	// the supplied validated snapshot below; control tests use it to prove that
@@ -84,7 +85,7 @@ func newTaskScheduler() *taskScheduler {
 		sleep:     time.Sleep,
 	}
 	s.runTask = func(taskID string) {
-		if s.skipOverBudget(taskID) {
+		if s.skipClosedBudgetGate(taskID) {
 			return
 		}
 		if err := RunTask(taskID, task.ProjectExpectation{}); err != nil {
