@@ -14,12 +14,14 @@ import (
 	"github.com/sachiniyer/agent-factory/config"
 	"github.com/sachiniyer/agent-factory/internal/sessionenv"
 	"github.com/sachiniyer/agent-factory/internal/testguard"
+	"github.com/sachiniyer/agent-factory/internal/testsleeper"
 	"github.com/sachiniyer/agent-factory/log"
 	"github.com/sachiniyer/agent-factory/session"
 	sessiontmux "github.com/sachiniyer/agent-factory/session/tmux"
 )
 
 func TestMain(m *testing.M) {
+	testsleeper.Handle()
 	sessionenv.HandleInternalExec()
 	sessiontmux.HandleDedicatedServerExec()
 	// A re-exec of this test binary standing in for code-server (see

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/sachiniyer/agent-factory/internal/testsleeper"
 )
 
 // tmuxNamedProcess starts a real process that looks exactly like a tmux client
@@ -21,10 +23,7 @@ import (
 // what IsTmuxServer concluded from a live process's own table entry (#4678).
 func tmuxNamedProcess(t *testing.T, dir string, attr *syscall.SysProcAttr) int {
 	t.Helper()
-	fake := filepath.Join(t.TempDir(), "tmux")
-	copyTestBinary(t, fake)
-
-	cmd := exec.Command(fake, sleeperArg)
+	cmd := testsleeper.CopyCommand(t, filepath.Join(t.TempDir(), "tmux"))
 	cmd.Dir = dir
 	cmd.SysProcAttr = attr
 	require.NoError(t, cmd.Start())
@@ -76,7 +75,7 @@ func TestIsTmuxServer_RefusesATmuxClient(t *testing.T) {
 func TestIsTmuxProcess_CoversClientsAndRetitledArgv(t *testing.T) {
 	require.True(t, IsTmuxProcess(tmuxNamedProcess(t, t.TempDir(), nil)))
 
-	retitled := exec.Command("sleep", "300")
+	retitled := testsleeper.Command(t)
 	retitled.Args[0] = "tmux: server (/tmp/tmux-1000/default)"
 	require.NoError(t, retitled.Start())
 	t.Cleanup(func() {

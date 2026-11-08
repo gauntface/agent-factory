@@ -17,6 +17,7 @@ import (
 	"github.com/sachiniyer/agent-factory/cmd/cmd_test"
 	"github.com/sachiniyer/agent-factory/internal/proctree"
 	"github.com/sachiniyer/agent-factory/internal/testguard"
+	"github.com/sachiniyer/agent-factory/internal/testsleeper"
 )
 
 // A tmux server that holds NO sessions answers every targeted query with `no
@@ -227,14 +228,12 @@ func TestProbeSessionStrictStaysUnknownWhenAnUnsignallableCandidateRemains(t *te
 	neighbour, err := strconv.Atoi(strings.TrimSpace(string(out)))
 	require.NoError(t, err)
 
-	// An unsignallable candidate: a sleeping copy of this test binary named "tmux", so the
-	// kernel task name and argv[0] basename are both "tmux" — exactly what
+	// An unsignallable candidate: a sleeping copy of this test binary named
+	// "tmux", so the kernel task name and argv[0] basename are both "tmux" — exactly what
 	// liveTmuxServerPIDs' comm prefilter admits and isTmuxArgv accepts —
 	// but it is not a daemonised server (SID != PID, PPID != 1), so
 	// IsTmuxServer rejects it at tmuxServerIdentity's `case "tmux"`.
-	fakeTmux := filepath.Join(t.TempDir(), "tmux")
-	copyTestBinary(t, fakeTmux)
-	fakeCmd := exec.Command(fakeTmux, sleeperArg)
+	fakeCmd := testsleeper.CopyCommand(t, filepath.Join(t.TempDir(), "tmux"))
 	require.NoError(t, fakeCmd.Start())
 	t.Cleanup(func() {
 		_ = fakeCmd.Process.Kill()

@@ -16,6 +16,7 @@ import (
 	"github.com/sachiniyer/agent-factory/internal/agentaccount"
 	"github.com/sachiniyer/agent-factory/internal/sessionenv"
 	"github.com/sachiniyer/agent-factory/internal/testguard"
+	"github.com/sachiniyer/agent-factory/internal/testsleeper"
 	aflog "github.com/sachiniyer/agent-factory/log"
 	"github.com/sachiniyer/agent-factory/log/logtest"
 
@@ -26,7 +27,7 @@ import (
 // InfoLog/ErrorLog (e.g. Restore's re-spawn fallback) do not nil-deref.
 func TestMain(m *testing.M) {
 	handleMarkedEscapeeExec()
-	handleSleeperExec()
+	testsleeper.Handle()
 	// Match main's account lookup before the internal pane shim can consume this
 	// test binary. Real-pane account tests then exercise the same registry-backed
 	// child boundary as the shipped executable rather than a test-only shortcut.
