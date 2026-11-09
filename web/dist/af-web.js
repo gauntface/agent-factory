@@ -20057,8 +20057,6 @@ function openEditTask(task) {
             watch_cmd: input.trigger === "watch" ? input.watchCmd : "",
             target_session: input.targetSession,
             on_complete: value.on_complete ?? "",
-            // Unchanged is left out, so the daemon clears the gate when the task
-            // moves to a watch trigger or another program.
             budget_gated: input.budgetGated === (task.budget_gated === true) ? void 0 : value.budget_gated,
             project_path: input.projectPath,
             program: input.program
