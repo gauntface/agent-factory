@@ -300,6 +300,7 @@ var controlMethodPolicies = map[string]probationPolicy{
 	"ListTasks":               allowedDuringProbation,
 	"Ping":                    allowedDuringProbation,
 	"Preview":                 allowedDuringProbation,
+	"PreviewSession":          allowedDuringProbation,
 	"ReleaseUpgradeProbation": allowedDuringProbation,
 	"Shutdown":                allowedDuringProbation,
 	"Snapshot":                allowedDuringProbation,

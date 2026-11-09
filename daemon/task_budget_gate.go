@@ -3,7 +3,7 @@ package daemon
 import (
 	"fmt"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sachiniyer/agent-factory/config"
@@ -19,10 +19,13 @@ import (
 // the gate held back; the gate's reason follows it.
 const TaskStatusSkippedBudgetGate = "skipped: budget gate"
 
-var ledgerWarn struct {
-	mu     sync.Mutex
-	warned bool
-}
+// gateProgram closes the budget gate of a task whose program resolves to an
+// agent other than Claude.
+const gateProgram = "program"
+
+// ledgerWarned is set while the account limit ledger fails to read, so the
+// gate logs once per run of failures.
+var ledgerWarned atomic.Bool
 
 // taskBudgetGate checks a budget-gated task against budget_limit, for the
 // account the task's session would launch with.
@@ -34,20 +37,23 @@ func (m *Manager) taskBudgetGate(t task.Task) planusage.Gate {
 		program = defaultProgramFor(cfg.DefaultProgram, t.ProjectPath)
 	}
 	if program != tmux.ProgramClaude {
-		return planusage.Gate{Name: planusage.GateProgram, Reason: fmt.Sprintf("The budget meters Claude plan use only, and this task runs %s", program)}
+		return planusage.Gate{Name: gateProgram, Reason: fmt.Sprintf("The budget gate reads Claude plan use only, and this task runs %s", program)}
 	}
 	account := m.claudeAccountFor(t.ProjectPath)
-	now := time.Now()
 	reading, err := planusage.LoadReading(account)
 	if err != nil {
 		return planusage.Gate{Name: planusage.GateNoReading, Reason: "Can't read the plan usage · " + err.Error()}
 	}
-	in := planusage.GateInput{Limit: float64(cfg.BudgetLimit), Reading: reading, Now: now, Loc: time.Local}
-	limited, until, err := m.claudeUsageLimit(account, now)
-	if err != nil {
-		in.LimitUnknown = err.Error()
+	now := time.Now()
+	limited, until, limitErr := m.claudeUsageLimit(account, now)
+	in := planusage.GateInput{
+		Limit: float64(cfg.BudgetLimit), Reading: reading,
+		Limited: limited, LimitUntil: until,
+		Now: now, Loc: time.Local,
 	}
-	in.Limited, in.LimitUntil = limited, until
+	if limitErr != nil {
+		in.LimitUnknown = limitErr.Error()
+	}
 	return planusage.CheckGate(in)
 }
 
@@ -100,10 +106,7 @@ func (m *Manager) claudeUsageLimit(account string, now time.Time) (bool, time.Ti
 	}
 	m.mu.Unlock()
 	ledger, err := loadAccountLimitLedger()
-	ledgerWarn.mu.Lock()
-	warn := err != nil && !ledgerWarn.warned
-	ledgerWarn.warned = err != nil
-	ledgerWarn.mu.Unlock()
+	warn := !ledgerWarned.Swap(err != nil) && err != nil
 	if err != nil {
 		if warn {
 			m.warn().Printf("budget gate: account limit ledger: %v", err)

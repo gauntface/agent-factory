@@ -6,12 +6,11 @@ import (
 	"time"
 )
 
+// Gate names for budget-gated tasks.
 const (
 	GateLimit      = "limit"
 	GateUsageLimit = "usage_limit"
 	GateNoReading  = "no_reading"
-	GateConfig     = "config"
-	GateProgram    = "program"
 )
 
 // GateInput is what the plan gate reads for one Claude account.
@@ -40,27 +39,30 @@ type Gate struct {
 func (g Gate) Open() bool { return g.Name == "" }
 
 // CheckGate reports the first closed gate, in the order limit 0, plan window
-// at the limit, usage limit, no reading. A window that reset since the last
-// reading is at 0%.
+// at the limit, usage limit (or unknown), no reading.
 func CheckGate(in GateInput) Gate {
 	if in.Limit <= 0 {
 		return Gate{GateLimit, "Plan limit is 0% · raise it with \"af config set budget_limit 50\""}
 	}
-	w := WindowsOf(in.Reading, in.Now)
-	windows := []struct {
-		w     PlanWindow
+	var fiveHour, sevenDay planWindow
+	if in.Reading != nil {
+		fiveHour, sevenDay = windowOf(in.Reading.FiveHour, in.Now), windowOf(in.Reading.SevenDay, in.Now)
+	}
+	type labelled struct {
+		w     planWindow
 		label string
-	}{{w.FiveHour, "the 5-hour window"}, {w.SevenDay, "the week"}}
-	over := -1
-	for i, x := range windows {
-		if x.w.Valid() && x.w.Plan >= in.Limit && (over < 0 || x.w.ResetsAt.After(*windows[over].w.ResetsAt)) {
-			over = i
+	}
+	// When both windows are over, report the later reset: that is when the
+	// gate opens.
+	var over *labelled
+	for _, x := range []labelled{{fiveHour, "the 5-hour window"}, {sevenDay, "the week"}} {
+		if x.w.valid() && x.w.plan >= in.Limit && (over == nil || x.w.resetsAt.After(*over.w.resetsAt)) {
+			over = &x
 		}
 	}
-	if over >= 0 {
-		o := windows[over]
+	if over != nil {
 		return Gate{GateLimit, fmt.Sprintf("Plan at %s of %s (limit %s) · resumes %s",
-			Percent(o.w.Plan), o.label, Percent(in.Limit), ResetLabel(*o.w.ResetsAt, in.Now, in.Loc))}
+			percent(over.w.plan), over.label, percent(in.Limit), resetLabel(*over.w.resetsAt, in.Now, in.Loc))}
 	}
 	if in.LimitUnknown != "" {
 		return Gate{GateUsageLimit, "Can't tell whether the plan is at its usage limit · " + in.LimitUnknown}
@@ -68,7 +70,7 @@ func CheckGate(in GateInput) Gate {
 	if in.Limited {
 		reason := "Usage limit"
 		if !in.LimitUntil.IsZero() {
-			reason += " until " + ResetLabel(in.LimitUntil, in.Now, in.Loc)
+			reason += " until " + resetLabel(in.LimitUntil, in.Now, in.Loc)
 		}
 		return Gate{GateUsageLimit, reason}
 	}
@@ -78,13 +80,13 @@ func CheckGate(in GateInput) Gate {
 	return Gate{}
 }
 
-// Percent formats a percent: 50%, 12.5%.
-func Percent(v float64) string {
+// percent formats a percent: 50%, 12.5%.
+func percent(v float64) string {
 	return strings.TrimSuffix(strings.TrimRight(fmt.Sprintf("%.1f", v), "0"), ".") + "%"
 }
 
-// ResetLabel shows a reset time: 14:00 within a day, else Mon 09:00.
-func ResetLabel(at, now time.Time, loc *time.Location) string {
+// resetLabel shows a reset time: 14:00 within a day, else Mon 09:00.
+func resetLabel(at, now time.Time, loc *time.Location) string {
 	if loc == nil {
 		loc = time.Local
 	}

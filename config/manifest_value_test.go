@@ -221,6 +221,7 @@ func TestEditorRejectsInvalidValueWithTheCLIsOwnError(t *testing.T) {
 		// the range validator ever runs, so the message differs from "0" above.
 		{"daemon_poll_interval", "abc", `expected a Go duration`},
 		{"log_max_backups", "-1", "must be a non-negative integer"},
+		{"budget_limit", "101", "must be between 0 and 100"},
 		{"auto_yes", "yes-please", "auto_yes was removed"},
 		{"worktree_root", "somewhere-else", "worktree_root must be one of"},
 		{"listen_addr", "not a valid addr", "listen_addr"},

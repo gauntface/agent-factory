@@ -21,9 +21,6 @@ const (
 	DirName = "plan"
 	// DefaultAccount names the ambient Claude identity.
 	DefaultAccount = "default"
-
-	FiveHourSpan = 5 * time.Hour
-	SevenDaySpan = 7 * 24 * time.Hour
 )
 
 // Limit is one plan window as the status line reports it.

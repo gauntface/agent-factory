@@ -23,3 +23,13 @@ func discardRemovedPRKeyBindings(raw map[string]any, source string) {
 		}
 	}
 }
+
+// The backlog shipped a [backlog] table; a config that still has one must not
+// log a notice on every reload.
+var removedBacklogWarned sync.Map
+
+func warnRemovedBacklogTable(source string) {
+	if _, seen := removedBacklogWarned.LoadOrStore(source, struct{}{}); !seen {
+		log.WarningLog.Printf("config %s: the backlog was removed; the [backlog] table is ignored and can be deleted", source)
+	}
+}

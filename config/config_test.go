@@ -862,6 +862,33 @@ func TestLoadConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("clamps budget_limit outside 0-100 to the default", func(t *testing.T) {
+		cases := []struct {
+			name     string
+			content  string
+			expected int
+		}{
+			{"missing -> default", `{"default_program": "claude"}`, DefaultBudgetLimit},
+			{"explicit zero is valid", `{"default_program": "claude", "budget_limit": 0}`, 0},
+			{"negative -> default", `{"default_program": "claude", "budget_limit": -5}`, DefaultBudgetLimit},
+			{"over 100 -> default", `{"default_program": "claude", "budget_limit": 150}`, DefaultBudgetLimit},
+			{"custom -> as-is", `{"default_program": "claude", "budget_limit": 70}`, 70},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Setenv("AGENT_FACTORY_HOME", t.TempDir())
+				configDir, err := GetConfigDir()
+				require.NoError(t, err)
+				require.NoError(t, os.MkdirAll(configDir, 0755))
+				require.NoError(t, os.WriteFile(filepath.Join(configDir, ConfigFileName), []byte(tc.content), 0644))
+
+				cfg, err := LoadConfig()
+				require.NoError(t, err)
+				assert.Equal(t, tc.expected, cfg.BudgetLimit)
+			})
+		}
+	})
+
 	t.Run("validates update_channel and falls back to stable", func(t *testing.T) {
 		cases := []struct {
 			name     string

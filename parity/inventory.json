@@ -968,7 +968,7 @@
         "pointer": "api/sessions.go:582 sessionsPreviewCmd"
       },
       "verdict": "parity",
-      "notes": "The CLI uses the internal Preview RPC; the UIs get the same content off the live stream. POST /v1/PreviewSession (backlog v2 PR 5) is the public, read-only short form: the last 1-40 lines of the agent tab, ANSI stripped, for the web backlog hover preview (backlog v2 PR 6)."
+      "notes": "The CLI uses the internal Preview RPC; the UIs get the same content off the live stream. POST /v1/PreviewSession (#51) is the public, read-only short form: the last 1-40 lines of the agent tab, ANSI stripped."
     },
     {
       "id": "session.preview-full",
