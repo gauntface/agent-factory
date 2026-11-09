@@ -87,7 +87,10 @@ type Task struct {
 	// session's owned branch. A run whose output already landed in a pushed
 	// branch or a PR usually wants kill; a run that might need inspecting wants
 	// archive. af must not pick for the user, so the default does neither.
-	OnComplete  string `json:"on_complete,omitempty"`
+	OnComplete string `json:"on_complete,omitempty"`
+	// BudgetGated makes a scheduled fire skip unless Claude plan use is under
+	// the budget_limit config key for the 5-hour window and the week.
+	BudgetGated bool   `json:"budget_gated,omitempty"`
 	ProjectPath string `json:"project_path"`
 	// RepoID is the owning project's repo ID, resolved ONCE at bind time and
 	// retained. It is derived, never patchable — AddTask sets it and UpdateTask
@@ -292,6 +295,9 @@ func (t Task) ValidateTrigger() error {
 		if CanonicalTargetSession(t.TargetSession) != "" {
 			return fmt.Errorf("task %s sets both max_concurrent_runs and target_session; deliveries into one session already serialize, so drop the cap or drop the target session", t.ID)
 		}
+	}
+	if err := t.validateBudgetGate(); err != nil {
+		return err
 	}
 	// on_complete governs a session this task SPAWNED, so it is meaningful only
 	// where the task spawns one (#2595). Rejecting it elsewhere follows the cap's

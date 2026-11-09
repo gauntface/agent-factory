@@ -127,6 +127,7 @@ var (
 	taskAddTargetSessionFlag     string
 	taskAddMaxConcurrentRunsFlag int
 	taskAddOnCompleteFlag        string
+	taskAddBudgetGatedFlag       bool
 	taskAddProgramFlag           string
 )
 
@@ -217,6 +218,7 @@ var tasksAddCmd = &cobra.Command{
 			TargetSession:     taskAddTargetSessionFlag,
 			MaxConcurrentRuns: taskAddMaxConcurrentRunsFlag,
 			OnComplete:        taskAddOnCompleteFlag,
+			BudgetGated:       taskAddBudgetGatedFlag,
 			ProjectPath:       projectPath,
 			Program:           program,
 			Enabled:           true,
@@ -400,6 +402,7 @@ var (
 	taskUpdateTargetSessionFlag     string
 	taskUpdateMaxConcurrentRunsFlag int
 	taskUpdateOnCompleteFlag        string
+	taskUpdateBudgetGatedFlag       bool
 	taskUpdateProjectPathFlag       string
 	taskUpdateEnabledFlag           string
 	taskUpdateProgramFlag           string
@@ -549,6 +552,9 @@ var tasksUpdateCmd = &cobra.Command{
 		// the two above do (#2595).
 		if cmd.Flags().Changed("on-complete") {
 			patch.OnComplete = strPtr(taskUpdateOnCompleteFlag)
+		}
+		if cmd.Flags().Changed("budget-gated") {
+			patch.BudgetGated = boolPtr(taskUpdateBudgetGatedFlag)
 		}
 		// --repo authorizes the task against its CURRENT project. Keep the new
 		// binding separate so a caller can say `--repo old --project-path new`

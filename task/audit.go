@@ -160,6 +160,7 @@ func changedFields(before, after Task) []string {
 	add(CanonicalTargetSession(before.TargetSession) != CanonicalTargetSession(after.TargetSession), "target_session")
 	add(before.MaxConcurrentRuns != after.MaxConcurrentRuns, "max_concurrent_runs")
 	add(CanonicalOnComplete(before.OnComplete) != CanonicalOnComplete(after.OnComplete), "on_complete")
+	add(before.BudgetGated != after.BudgetGated, "budget_gated")
 	add(before.ProjectPath != after.ProjectPath, "project_path")
 	add(before.Program != after.Program, "program")
 	add(before.Enabled != after.Enabled, "enabled")

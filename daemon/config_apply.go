@@ -97,6 +97,7 @@ var keyDiff = map[string]func(a, b *config.Config) bool{
 	},
 	"limit_retry_interval":           func(a, b *config.Config) bool { return a.LimitRetryInterval != b.LimitRetryInterval },
 	"limit_patterns":                 func(a, b *config.Config) bool { return !reflect.DeepEqual(a.LimitPatterns, b.LimitPatterns) },
+	"budget_limit":                   func(a, b *config.Config) bool { return a.BudgetLimit != b.BudgetLimit },
 	"global_agent_skills":            func(a, b *config.Config) bool { return a.GlobalAgentSkills != b.GlobalAgentSkills },
 	"docker.mount_agent_credentials": func(a, b *config.Config) bool { return a.DockerMountAgentCredentials != b.DockerMountAgentCredentials },
 	"ssh.host_key_verification":      func(a, b *config.Config) bool { return a.SSHHostKeyVerification != b.SSHHostKeyVerification },

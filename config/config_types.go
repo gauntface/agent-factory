@@ -25,6 +25,8 @@ const (
 	// delivery cap while making it available to the daemon and the config
 	// manifest from one source of truth.
 	DefaultWatcherEventsPerMinute = 10
+	// DefaultBudgetLimit is the plan percent under which budget-gated tasks run.
+	DefaultBudgetLimit = 50
 	// defaultListenAddr is the daemon's default web/API/WS bind address: the
 	// loopback interface on 8443. The web UI is bundled with the daemon and
 	// served here by default (plain HTTP, no TLS) — a same-machine browser at
@@ -346,6 +348,10 @@ type Config struct {
 	// without a release. Empty keeps every built-in default. See
 	// sanitizeLimitPatterns in limit_patterns.go for validation and semantics.
 	LimitPatterns map[string]string `json:"limit_patterns,omitempty" toml:"limit_patterns,omitempty"`
+	// BudgetLimit is the Claude plan percent, in both the 5-hour window and the
+	// week, under which a budget-gated task runs a scheduled fire. 0 holds every
+	// budget-gated task.
+	BudgetLimit int `json:"budget_limit" toml:"budget_limit"`
 	// LimitAutoResume opts a machine into the daemon's usage-limit auto-resume
 	// scheduler (#1146 PR3): when true, the daemon re-prompts a session parked at
 	// a usage-limit wall on its own once the limit window has elapsed (its parsed
@@ -682,6 +688,7 @@ func staticDefaultConfig() *Config {
 		ListenAddr:             defaultListenAddr,
 		DaemonPollInterval:     defaultDaemonPollInterval,
 		WatcherEventsPerMinute: DefaultWatcherEventsPerMinute,
+		BudgetLimit:            DefaultBudgetLimit,
 		LimitAutoResume:        false,
 		GlobalAgentSkills:      false,
 		LimitRetryInterval:     defaultLimitRetryInterval,

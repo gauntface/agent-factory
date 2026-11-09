@@ -249,6 +249,18 @@ var configManifest = []ManifestEntry{
 		Formats:    formatTOMLJSON,
 	},
 	{
+		Key:        "budget_limit",
+		Type:       "int",
+		Default:    "50",
+		Purpose:    "Claude plan percent, in the 5-hour window and the week, under which a budget-gated task runs its scheduled fires · 0 holds them all.",
+		Tier:       TierAdvanced,
+		Settable:   true,
+		Sources:    sourceGlobalOnly,
+		Precedence: precedenceGlobal,
+		Merge:      MergeReplace,
+		Formats:    formatTOMLJSON,
+	},
+	{
 		Key:        "watcher_events_per_minute",
 		Type:       "int",
 		Default:    "10",

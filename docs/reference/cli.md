@@ -895,6 +895,7 @@ Settable keys:
                              the control API. Same address grammar as network.listen_addr.
   daemon_poll_interval       Go duration (e.g. 1500ms or 30m), or legacy positive integer (ms)
   watcher_events_per_minute  positive integer (per-task watch delivery cap; default 10; next daemon start)
+  budget_limit               integer 0-100 (plan percent under which budget-gated tasks run; default 50)
   debug_pprof                true | false  (serve Go runtime profiles at GET /v1/debug/pprof/{profile}; default false,
                              unix control socket only, never on the web address. A profile dumps live daemon
                              memory — session titles, worktree paths, prompt text — so turn it off again.
@@ -3075,6 +3076,7 @@ af tasks add [flags]
 
 | Flag | Type | Description |
 |------|------|-------------|
+| `--budget-gated` |  | Skip a scheduled run unless Claude plan use is under budget_limit ("af config set budget_limit 50", default 50%) for the 5-hour window and the week. --cron tasks with the claude program only |
 | `--cron` | `string` | Cron expression (exactly one of --cron / --watch-cmd) |
 | `--max-concurrent-runs` | `int` | Cap how many sessions this watch task may have in flight at once; excess events are queued in order instead of spawning runs, subject to the durable queue's retention limits (0 = unlimited; --watch-cmd tasks without --target-session only) (default `0`) |
 | `--name` | `string` | Task name (required) |
@@ -3277,6 +3279,7 @@ af tasks update <id-or-name> [flags]
 
 | Flag | Type | Description |
 |------|------|-------------|
+| `--budget-gated` |  | Turn the budget gate on or off (--budget-gated=false turns it off) |
 | `--cron` | `string` | New cron expression (clears watch-cmd) |
 | `--enabled` | `string` | Enable or disable the task (true/false) |
 | `--max-concurrent-runs` | `int` | New in-flight session cap for this watch task; pass 0 to revert to unlimited (default `0`) |

@@ -451,7 +451,7 @@
         "pointer": "commands/docs_gen.go:29 (hidden); commands/docs_gen.go:61 (--plugin-root); commands/agentservercmd.go:34; commands/legacy_tmuxguardcmd.go"
       },
       "verdict": "deliberate",
-      "notes": "af gen-docs is Hidden:true (CI docs generation). af agent-server is daemon-consumed plumbing — its own Long says it 'exists to be consumed by a daemon rather than opened by a person' — and af --daemon is a hidden flag. af hook-guard-tmux is also hidden: #2608 retains the removed command name only as an exit-0 compatibility tombstone for already-running pre-#2563 Codex hooks; it performs no guard or user operation. af ssh-relay is hidden for the same class of reason (#3086): it is the stdio\u2194TCP relay af composes into its OWN ssh invocations as a ProxyCommand, so every step of a remote session dials the one address the session was pinned to. Its stdout IS the ssh transport stream while it runs, so it is af talking to af and not something a person invokes \u2014 running it by hand does nothing useful. None are user capabilities. af gen-docs --plugin-root (#2172) regenerates the committed per-agent plugin artifacts from the canonical af usage text; like the rest of gen-docs it is build tooling, run by scripts/gen-docs.sh and the CI drift gate. The TUI and web will deliberately never expose these internals — regenerating a repo's committed build artifacts and legacy hook compatibility are not things either surface should offer — so this is a recorded decision, not a parity gap to re-report."
+      "notes": "af gen-docs is Hidden:true (CI docs generation). af agent-server is daemon-consumed plumbing — its own Long says it 'exists to be consumed by a daemon rather than opened by a person' — and af --daemon is a hidden flag. af hook-guard-tmux is also hidden: #2608 retains the removed command name only as an exit-0 compatibility tombstone for already-running pre-#2563 Codex hooks; it performs no guard or user operation. af ssh-relay is hidden for the same class of reason (#3086): it is the stdio\u2194TCP relay af composes into its OWN ssh invocations as a ProxyCommand, so every step of a remote session dials the one address the session was pinned to. Its stdout IS the ssh transport stream while it runs, so it is af talking to af and not something a person invokes \u2014 running it by hand does nothing useful. af internal plan-tap is hidden too: it is the Claude Code status line command af injects into the Claude sessions it launches, so Claude Code runs it, not a person; it records plan usage and runs the user's own status line. None are user capabilities. af gen-docs --plugin-root (#2172) regenerates the committed per-agent plugin artifacts from the canonical af usage text; like the rest of gen-docs it is build tooling, run by scripts/gen-docs.sh and the CI drift gate. The TUI and web will deliberately never expose these internals — regenerating a repo's committed build artifacts and legacy hook compatibility are not things either surface should offer — so this is a recorded decision, not a parity gap to re-report."
     },
     {
       "id": "project.add",
@@ -1403,6 +1403,24 @@
       "notes": "A watch-task concurrency cap (task.Task/TaskUpdate.MaxConcurrentRuns) added on master. The CLI sets it via --max-concurrent-runs; the TUI task form and web do not expose it. Same class as the other task-edit gaps: the TUI can edit tasks (so this is a missing FIELD, #1935-adjacent) and the web cannot edit tasks at all (#1935). Niche enough that whether the UIs should surface it is an owner call. Not filed pending that."
     },
     {
+      "id": "task.budget-gated",
+      "title": "Run a cron task only within the plan budget",
+      "tui": {
+        "status": "no",
+        "pointer": ""
+      },
+      "web": {
+        "status": "no",
+        "pointer": ""
+      },
+      "cli": {
+        "status": "yes",
+        "pointer": "api/api.go af tasks add/update --budget-gated"
+      },
+      "verdict": "unclear",
+      "notes": "A per-task toggle (task.Task/TaskUpdate.BudgetGated) that skips a scheduled cron fire unless Claude plan use is under budget_limit. The CLI sets it via --budget-gated; the TUI task form and web do not expose it yet. Whether the UIs should surface it is an owner call."
+    },
+    {
       "id": "task.on-complete",
       "title": "Declare what happens to a task run's session when it finishes",
       "tui": {
@@ -1677,6 +1695,7 @@
       "af gen-docs": "meta.internal",
       "af help": "meta.discovery",
       "af hook-guard-tmux": "meta.internal",
+      "af internal plan-tap": "meta.internal",
       "af keys": "meta.discovery",
       "af projects add": "project.add",
       "af projects delete": "project.delete",
@@ -1969,6 +1988,8 @@
       "af gen-docs --plugin-root": "meta.internal",
       "af help --help": "meta.discovery",
       "af hook-guard-tmux --help": "meta.internal",
+      "af internal --help": "meta.internal",
+      "af internal plan-tap --help": "meta.internal",
       "af keys --help": "meta.discovery",
       "af keys --json": "cli.json-envelope",
       "af projects --help": "meta.discovery",
@@ -2101,6 +2122,7 @@
       "af tasks --repo": "project.switch",
       "af tasks add --cron": "task.add",
       "af tasks add --help": "meta.discovery",
+      "af tasks add --budget-gated": "task.budget-gated",
       "af tasks add --max-concurrent-runs": "task.max-concurrent-runs",
       "af tasks add --name": "task.add",
       "af tasks add --on-complete": "task.on-complete",
@@ -2118,6 +2140,7 @@
       "af tasks update --cron": "task.edit",
       "af tasks update --enabled": "task.toggle",
       "af tasks update --help": "meta.discovery",
+      "af tasks update --budget-gated": "task.budget-gated",
       "af tasks update --max-concurrent-runs": "task.max-concurrent-runs",
       "af tasks update --name": "task.edit",
       "af tasks update --on-complete": "task.on-complete",
@@ -2387,6 +2410,9 @@
           "task.dropped_events": {
             "ok": "Daemon-owned watch-delivery history (#4357): the supervisor advances it only when the per-minute source cap discards an event, and task.AddTaskChecked clears any client-supplied value. A surface setting it would forge loss that did not occur."
           },
+          "task.budget_gated": {
+            "gap": "task.budget-gated"
+          },
           "task.max_concurrent_runs": {
             "gap": "task.max-concurrent-runs"
           },
@@ -2420,6 +2446,9 @@
           },
           "update.watch_cmd": {
             "ok": "Reached via task.DiffTask over the edited task.Task (ui/task_pane_state.go:91): the TUI never writes a task.TaskUpdate literal, so the AST cannot prove the field statically. Derivation reports it unreached — the SAFE direction, since unprovable forces a declaration rather than a silent pass."
+          },
+          "update.budget_gated": {
+            "gap": "task.budget-gated"
           },
           "update.max_concurrent_runs": {
             "gap": "task.max-concurrent-runs"
@@ -2622,6 +2651,9 @@
         "actor": {
           "ok": "The web client IS the API surface, and the daemon resolves an undeclared actor from the transport (daemon/task_health.go taskActor), so an HTTP caller that sends nothing is already recorded as \"api\". The TUI declares \"tui\" because it reaches the daemon over these same HTTP routes and the transport alone cannot tell the two apart."
         },
+        "update.budget_gated": {
+          "gap": "task.budget-gated"
+        },
         "update.max_concurrent_runs": {
           "gap": "task.max-concurrent-runs"
         }
@@ -2674,6 +2706,9 @@
         },
         "task.dropped_events": {
           "ok": "Daemon-owned watch-delivery history (#4357): the supervisor advances it only when the per-minute source cap discards an event, and task.AddTaskChecked clears any client-supplied value. A surface setting it would forge loss that did not occur."
+        },
+        "task.budget_gated": {
+          "gap": "task.budget-gated"
         },
         "task.max_concurrent_runs": {
           "gap": "task.max-concurrent-runs"

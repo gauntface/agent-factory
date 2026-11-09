@@ -135,6 +135,11 @@ var shellSiteRegistry = map[string][]classifiedSite{
 			"sees it. Out of #3566's scope on purpose — the fix is a warning where the value is ADMITTED, " +
 			"which for a task is task creation, not config load.",
 	}},
+	"planusage/tap.go:Tap": {{
+		class: operatorOther,
+		note: "the user's own Claude Code statusLine command, read from their Claude settings files, run " +
+			"exactly as Claude Code would run it. No af config load sees it.",
+	}},
 
 	// ---- af-authored scripts ----
 	"config/claude_probe.go:probeClaudeCommand": {

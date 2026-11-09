@@ -7,6 +7,7 @@ import (
 	cron "github.com/robfig/cron/v3"
 
 	"github.com/sachiniyer/agent-factory/log"
+	"github.com/sachiniyer/agent-factory/planusage"
 	"github.com/sachiniyer/agent-factory/task"
 )
 
@@ -43,7 +44,8 @@ type taskScheduler struct {
 
 	// Injection points for tests: loadTasks substitutes fixture task lists,
 	// parse allows a seconds-granularity parser so firing tests don't wait a
-	// full minute, and runTask observes fires without spawning sessions.
+	// full minute, and runTask observes fires without spawning sessions (an
+	// override also skips the budget gate the default applies).
 	loadTasks func() ([]task.Task, error)
 	// applyTasks is a post-load test seam. Production leaves it nil and applies
 	// the supplied validated snapshot below; control tests use it to prove that
@@ -51,6 +53,9 @@ type taskScheduler struct {
 	applyTasks func([]task.Task) error
 	parse      func(expr string) (cron.Schedule, error)
 	runTask    func(taskID string)
+	// budgetGate checks a budget-gated task before a scheduled fire. Nil skips
+	// the check. A manual "af tasks trigger" does not consult it.
+	budgetGate func(task.Task) planusage.Gate
 }
 
 // scheduledEntry pairs a live cron entry with the DEFINITION it was built from.
@@ -70,17 +75,21 @@ type scheduledEntry struct {
 }
 
 func newTaskScheduler() *taskScheduler {
-	return &taskScheduler{
+	s := &taskScheduler{
 		cron:      cron.New(),
 		entries:   make(map[string]scheduledEntry),
 		loadTasks: task.LoadTasks,
 		parse:     task.ParseCron,
-		runTask: func(taskID string) {
-			if err := RunTask(taskID, task.ProjectExpectation{}); err != nil {
-				log.WarningLog.Printf("scheduled task %s failed to run: %v", taskID, err)
-			}
-		},
 	}
+	s.runTask = func(taskID string) {
+		if s.skipClosedBudgetGate(taskID) {
+			return
+		}
+		if err := RunTask(taskID, task.ProjectExpectation{}); err != nil {
+			log.WarningLog.Printf("scheduled task %s failed to run: %v", taskID, err)
+		}
+	}
+	return s
 }
 
 // Start begins evaluating schedules. Each due task runs in its own goroutine

@@ -130,6 +130,7 @@ var globalConfigReadOrder = []string{
 	"network.cors_allowed_origins",
 	"daemon_poll_interval",
 	"watcher_events_per_minute",
+	"budget_limit",
 	"debug_pprof",
 	"log_max_size_mb",
 	"log_max_backups",
@@ -538,6 +539,7 @@ Settable keys:
                              the control API. Same address grammar as network.listen_addr.
   daemon_poll_interval       Go duration (e.g. 1500ms or 30m), or legacy positive integer (ms)
   watcher_events_per_minute  positive integer (per-task watch delivery cap; default 10; next daemon start)
+  budget_limit               integer 0-100 (plan percent under which budget-gated tasks run; default 50)
   debug_pprof                true | false  (serve Go runtime profiles at GET /v1/debug/pprof/{profile}; default false,
                              unix control socket only, never on the web address. A profile dumps live daemon
                              memory — session titles, worktree paths, prompt text — so turn it off again.
