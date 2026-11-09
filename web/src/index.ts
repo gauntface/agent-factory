@@ -2312,6 +2312,7 @@ function openEditTask(task: TaskData): void {
             watch_cmd: input.trigger === "watch" ? input.watchCmd : "",
             target_session: input.targetSession,
             on_complete: value.on_complete ?? "",
+            budget_gated: value.budget_gated ?? false,
             project_path: input.projectPath,
             program: input.program,
           },

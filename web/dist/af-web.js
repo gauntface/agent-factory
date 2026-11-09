@@ -15523,6 +15523,7 @@ function buildTask(input) {
     watch_cmd: input.trigger === "watch" ? input.watchCmd : "",
     target_session: input.targetSession,
     on_complete: input.targetSession.trim() ? "" : input.onComplete ?? "",
+    budget_gated: input.trigger === "cron" && !!input.budgetGated,
     project_path: input.projectPath,
     program: input.program,
     enabled: true,
@@ -15531,6 +15532,9 @@ function buildTask(input) {
 }
 function onCompleteUnavailableReason(targetSession) {
   return targetSession.trim() ? "Target session will be reused." : null;
+}
+function budgetGateUnavailableReason(trigger) {
+  return trigger === "watch" ? "Applies to scheduled tasks only." : null;
 }
 function triggerSummary(t) {
   if (t.watch_cmd && t.watch_cmd.trim() !== "") {
@@ -16194,6 +16198,25 @@ function taskFormModal(opts) {
   }).catch(() => {
     onCompleteHint.textContent = "Choices unavailable \xB7 current value kept.";
   });
+  const budgetSwitch = h("input", { type: "checkbox", checked: opts.seed?.budget_gated === true });
+  budgetSwitch.setAttribute("role", "switch");
+  const budgetHint = h(
+    "span",
+    { class: "af-modal-hint", id: "af-task-budget-hint" },
+    "Skips a scheduled run while Claude plan use is at or over the backlog budget limit. Claude tasks only."
+  );
+  budgetSwitch.setAttribute("aria-describedby", budgetHint.id);
+  const budgetField = fieldGroup("Budget", h("label", { class: "af-check-row" }, budgetSwitch, "Run only within the budget"));
+  budgetField.append(budgetHint);
+  const budgetReason = h("p", { class: "af-muted" });
+  const budgetReasonField = fieldGroup("Budget", budgetReason);
+  const syncBudget = () => {
+    const reason = budgetGateUnavailableReason(triggerSelect.value);
+    budgetField.hidden = reason !== null;
+    budgetReasonField.hidden = reason === null;
+    budgetReason.textContent = reason ?? "";
+  };
+  triggerSelect.addEventListener("change", syncBudget);
   const programSelect = h("select", { class: "af-input" });
   programSelect.setAttribute("aria-label", "Program");
   const keepProgram = opts.seed?.program ?? "";
@@ -16239,6 +16262,7 @@ function taskFormModal(opts) {
   }
   loadProgramsFor(projectSelect.value);
   syncOnComplete();
+  syncBudget();
   body.append(
     field("Name", nameInput),
     field("Project", projectSelect),
@@ -16249,7 +16273,9 @@ function taskFormModal(opts) {
     field("Target session", targetInput),
     onCompleteField,
     onCompleteReasonField,
-    field("Program", programSelect)
+    field("Program", programSelect),
+    budgetField,
+    budgetReasonField
   );
   const card = handle.el.firstElementChild;
   asForm(card, () => {
@@ -16285,6 +16311,7 @@ function taskFormModal(opts) {
       prompt: promptArea.value,
       targetSession: targetInput.value.trim(),
       onComplete: onCompleteSelect.value,
+      budgetGated: budgetSwitch.checked,
       program: programSelect.value
     });
   });
@@ -20030,6 +20057,7 @@ function openEditTask(task) {
             watch_cmd: input.trigger === "watch" ? input.watchCmd : "",
             target_session: input.targetSession,
             on_complete: value.on_complete ?? "",
+            budget_gated: value.budget_gated ?? false,
             project_path: input.projectPath,
             program: input.program
           },
