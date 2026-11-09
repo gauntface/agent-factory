@@ -1011,7 +1011,7 @@ function taskFormModal(opts: {
   const budgetSwitch = h("input", { type: "checkbox", checked: opts.seed?.budget_gated === true });
   budgetSwitch.setAttribute("role", "switch");
   const budgetHint = h("span", { class: "af-modal-hint af-budget-hint", id: "af-task-budget-hint" },
-    "Skips a scheduled run while Claude plan use is at or over the backlog budget limit · other agents skip every run.");
+    "Skips a scheduled run while Claude plan use is at or over budget_limit · other agents skip every run.");
   budgetSwitch.setAttribute("aria-describedby", budgetHint.id);
   const budgetField = fieldGroup("Budget", h("label", { class: "af-check-row" }, budgetSwitch, "Run only within the budget"));
   budgetField.append(budgetHint);
