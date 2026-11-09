@@ -196,6 +196,8 @@ af tasks add --name "Nightly cleanup" --prompt "Tidy the repo" --cron "0 2 * * *
 af tasks update "Nightly cleanup" --budget-gated=false
 ```
 
+In the web app, turn on **Run only within the budget** in the task's add or edit form.
+
 The gate needs a plan reading, so it also skips while af has never seen Claude plan use for the account. `budget_limit = 0` skips every budget-gated fire. The gate checks the account the task's project launches new Claude sessions with. It applies to cron tasks that run Claude only: a task with no `--program` whose project's default program is another agent skips every fire. `af tasks trigger` ignores it.
 
 af reads plan use only from the data Claude Code gives its status line (`rate_limits`, Claude Code 2.1.80 or later, Pro and Max plans, after the first reply in a session). For this, af starts every Claude session it launches with a status line of its own, `af internal plan-tap`. The tap saves the reading under `$AF_HOME/plan/`, then runs your own status line command with the same input and prints its output, so your status line looks as before. af does not touch your Claude settings files. It cannot add the tap when your `claude` command already passes `--settings`, or when managed settings set the status line; then af logs a warning and gets no readings from those sessions. Plan use is for your whole account, so the limit counts everything: your own sessions, claude.ai chat and other computers too.

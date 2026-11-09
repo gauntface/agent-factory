@@ -1410,15 +1410,15 @@
         "pointer": ""
       },
       "web": {
-        "status": "no",
-        "pointer": ""
+        "status": "yes",
+        "pointer": "web/src/tasks.ts Budget switch and buildTask; web/src/index.ts UpdateTask budget_gated value"
       },
       "cli": {
         "status": "yes",
         "pointer": "api/api.go af tasks add/update --budget-gated"
       },
       "verdict": "unclear",
-      "notes": "A per-task toggle (task.Task/TaskUpdate.BudgetGated) that skips a scheduled cron fire unless Claude plan use is under budget_limit. The CLI sets it via --budget-gated; the TUI task form and web do not expose it yet. Whether the UIs should surface it is an owner call."
+      "notes": "A per-task toggle (task.Task/TaskUpdate.BudgetGated) that skips a scheduled cron fire unless Claude plan use is under budget_limit. The CLI sets it via --budget-gated and the web task form via its Budget switch, which a watch trigger replaces with its reason. The TUI task form does not expose it yet."
     },
     {
       "id": "task.on-complete",
@@ -2651,9 +2651,6 @@
         "actor": {
           "ok": "The web client IS the API surface, and the daemon resolves an undeclared actor from the transport (daemon/task_health.go taskActor), so an HTTP caller that sends nothing is already recorded as \"api\". The TUI declares \"tui\" because it reaches the daemon over these same HTTP routes and the transport alone cannot tell the two apart."
         },
-        "update.budget_gated": {
-          "gap": "task.budget-gated"
-        },
         "update.max_concurrent_runs": {
           "gap": "task.max-concurrent-runs"
         }
@@ -2706,9 +2703,6 @@
         },
         "task.dropped_events": {
           "ok": "Daemon-owned watch-delivery history (#4357): the supervisor advances it only when the per-minute source cap discards an event, and task.AddTaskChecked clears any client-supplied value. A surface setting it would forge loss that did not occur."
-        },
-        "task.budget_gated": {
-          "gap": "task.budget-gated"
         },
         "task.max_concurrent_runs": {
           "gap": "task.max-concurrent-runs"

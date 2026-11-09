@@ -42,6 +42,7 @@ export interface AddTaskInput {
   prompt: string;
   targetSession: string;
   onComplete?: string;
+  budgetGated?: boolean;
   program: string;
 }
 
@@ -88,6 +89,7 @@ export function buildTask(input: AddTaskInput): TaskData {
     watch_cmd: input.trigger === "watch" ? input.watchCmd : "",
     target_session: input.targetSession,
     on_complete: input.targetSession.trim() ? "" : input.onComplete ?? "",
+    budget_gated: input.trigger === "cron" && !!input.budgetGated,
     project_path: input.projectPath,
     program: input.program,
     enabled: true,
@@ -98,6 +100,11 @@ export function buildTask(input: AddTaskInput): TaskData {
 /** Targeted tasks reuse a session, so a spawned-session policy cannot apply. */
 export function onCompleteUnavailableReason(targetSession: string): string | null {
   return targetSession.trim() ? "Target session will be reused." : null;
+}
+
+/** Watch tasks fire on events, so the budget gate on scheduled fires cannot apply. */
+export function budgetGateUnavailableReason(trigger: string): string | null {
+  return trigger === "watch" ? "Applies to scheduled tasks only." : null;
 }
 
 /** The task's trigger as a one-line summary, mirroring the TUI's row detail
@@ -1001,6 +1008,23 @@ function taskFormModal(opts: {
     onCompleteHint.textContent = "Choices unavailable · current value kept.";
   });
 
+  const budgetSwitch = h("input", { type: "checkbox", checked: opts.seed?.budget_gated === true });
+  budgetSwitch.setAttribute("role", "switch");
+  const budgetHint = h("span", { class: "af-modal-hint af-budget-hint", id: "af-task-budget-hint" },
+    "Skips a scheduled run while Claude plan use is at or over budget_limit · other agents skip every run.");
+  budgetSwitch.setAttribute("aria-describedby", budgetHint.id);
+  const budgetField = fieldGroup("Budget", h("label", { class: "af-check-row" }, budgetSwitch, "Run only within the budget"));
+  budgetField.append(budgetHint);
+  const budgetReason = h("p", { class: "af-muted" });
+  const budgetReasonField = fieldGroup("Budget", budgetReason);
+  const syncBudget = (): void => {
+    const reason = budgetGateUnavailableReason(triggerSelect.value);
+    budgetField.hidden = reason !== null;
+    budgetReasonField.hidden = reason === null;
+    budgetReason.textContent = reason ?? "";
+  };
+  triggerSelect.addEventListener("change", syncBudget);
+
   // The program field (#1970). Its options come from the daemon, never from a list
   // here, so an agent added server-side shows up with no change to the web.
   const programSelect = h("select", { class: "af-input" });
@@ -1070,6 +1094,7 @@ function taskFormModal(opts: {
   // program as the current selection rather than clobbering it with the default.
   loadProgramsFor(projectSelect.value);
   syncOnComplete();
+  syncBudget();
 
   body.append(
     field("Name", nameInput),
@@ -1082,6 +1107,8 @@ function taskFormModal(opts: {
     onCompleteField,
     onCompleteReasonField,
     field("Program", programSelect),
+    budgetField,
+    budgetReasonField,
   );
 
   const card = handle.el.firstElementChild as HTMLElement;
@@ -1121,6 +1148,7 @@ function taskFormModal(opts: {
       prompt: promptArea.value,
       targetSession: targetInput.value.trim(),
       onComplete: onCompleteSelect.value,
+      budgetGated: budgetSwitch.checked,
       program: programSelect.value,
     });
   });

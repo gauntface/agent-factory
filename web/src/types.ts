@@ -319,6 +319,7 @@ export interface OnCompleteOption {
  */
 export interface TaskData {
   on_complete?: string;
+  budget_gated?: boolean;
   id: string;
   name?: string;
   prompt: string;
@@ -392,6 +393,7 @@ export interface TaskData {
  */
 export interface TaskUpdate {
   on_complete?: string;
+  budget_gated?: boolean;
   name?: string;
   prompt?: string;
   cron_expr?: string;
