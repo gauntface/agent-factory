@@ -4023,7 +4023,7 @@ test("#3626: the tasks list marks a task that has stopped firing, and says how f
   await page.locator('.af-viewtab[data-view="sessions"]').click();
 });
 
-test("the #1694 keyboard model: [ / ] cycle the top-level view (sessions → backlog → tasks → config)", REAL_FIXTURE, async () => {
+test("the #1694 keyboard model: [ / ] cycle the top-level view (sessions → tasks → config)", REAL_FIXTURE, async () => {
   // Establish rail mode on the sessions view rather than inheriting it from the
   // previous flow (#2816) — same reasoning as the j/k test above: an inherited
   // precondition turns a predecessor's failure into this test's failure.
@@ -4037,9 +4037,7 @@ test("the #1694 keyboard model: [ / ] cycle the top-level view (sessions → bac
   const active = (view: string) =>
     expect(page.locator(`.af-viewtab[data-view="${view}"]`)).toHaveClass(/af-viewtab-active/);
   await active("sessions");
-  // ] advances sessions -> backlog -> tasks -> config, then wraps config -> sessions.
-  await page.keyboard.press("]");
-  await active("backlog");
+  // ] advances sessions -> tasks -> config, then wraps config -> sessions.
   await page.keyboard.press("]");
   await active("tasks");
   await page.keyboard.press("]");
@@ -4052,8 +4050,6 @@ test("the #1694 keyboard model: [ / ] cycle the top-level view (sessions → bac
   await active("config");
   await page.keyboard.press("[");
   await active("tasks");
-  await page.keyboard.press("[");
-  await active("backlog");
   await page.keyboard.press("[");
   await active("sessions");
   await expect(page.locator(".af-rail-list")).toBeVisible();
@@ -12530,7 +12526,7 @@ test("#2227 mobile appbar: project context wins scarce width at 320px and 375px"
         // tabindex or CSS-only reordering would still leave assistive technology
         // jumping between rows, so walk the native DOM sequence end to end.
         await toggle.focus();
-        for (let i = 0; i < 4; i++) {
+        for (let i = 0; i < 3; i++) {
           await p.keyboard.press("Tab");
           await expect(viewTabs.nth(i), `view tab ${i + 1} follows the drawer toggle`).toBeFocused();
         }

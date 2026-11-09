@@ -1,6 +1,5 @@
 // Package planusage reads the Claude plan usage that Claude Code reports to
-// its status line, and meters what Claude Code transcripts cost at API prices
-// so a run's part of a plan window, and the backlog's dollar spend, are known.
+// its status line, and gates budget-gated tasks on it.
 package planusage
 
 import (
@@ -22,9 +21,6 @@ const (
 	DirName = "plan"
 	// DefaultAccount names the ambient Claude identity.
 	DefaultAccount = "default"
-
-	FiveHourSpan = 5 * time.Hour
-	SevenDaySpan = 7 * 24 * time.Hour
 )
 
 // Limit is one plan window as the status line reports it.

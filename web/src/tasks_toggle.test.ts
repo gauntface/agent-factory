@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
 
-import { type FakeElement, installFakeDom } from "./backlog_fakedom.js";
+import { type FakeElement, installFakeDom } from "./fakedom.js";
 import { TasksPane } from "./tasks.js";
 import type { TaskData } from "./types.js";
 

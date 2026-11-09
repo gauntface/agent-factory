@@ -5,15 +5,14 @@
 // this module small: everything else about the tab lives in the lazy bundle.
 
 import { errorText } from "./api.js";
-import type { DocsBacklog } from "./docs_backlog.js";
 import type { ProposalChange, PushStatus } from "./proposal_api.js";
 
-export type DocsModule = typeof import("./docs_pane.js");
+type DocsModule = typeof import("./docs_pane.js");
 
 let docsModule: Promise<DocsModule> | null = null;
 
 /** Loads the Docs bundle once. A failed load is forgotten, so Retry fetches again. */
-export function loadDocsModule(): Promise<DocsModule> {
+function loadDocsModule(): Promise<DocsModule> {
   if (!docsModule) {
     // A computed specifier keeps esbuild from inlining the Docs bundle here.
     const url = new URL("./lazy/docs-editor.js", import.meta.url).href;
@@ -53,7 +52,6 @@ export interface DocsTabOptions {
   sessionId: string;
   slug: string;
   token: string;
-  backlog?: DocsBacklog;
 }
 
 /** Shows the Docs tab for one proposal in `host`. Returns its teardown. */

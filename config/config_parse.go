@@ -70,6 +70,8 @@ func parseConfigJSON(data []byte, prettyConfigPath string, warnRootAgents, warnS
 			case key == "auto_yes" || key == "theme" || key == "appearance":
 				// Compatibility warning emitted above. Do not follow it with the
 				// generic unknown-key warning for the same removed setting.
+			case key == "backlog":
+				warnRemovedBacklogTable(prettyConfigPath)
 			case key == "keys":
 				log.WarningLog.Printf("config %s: \"keys\" is ignored in config.json — the keymap is TOML-only; move it to a [keys] table in %s", prettyConfigPath, TomlConfigFileName)
 			case !known[key]:
@@ -191,6 +193,10 @@ func warnUnknownTomlKeys(data []byte, prettyConfigPath string) {
 			// generic warning that loses the migration recipe.
 			continue
 		}
+		if len(key) > 0 && key[0] == "backlog" {
+			warnRemovedBacklogTable(prettyConfigPath)
+			continue
+		}
 		if len(key) == 1 && configAliasSection(key[0]) {
 			// Config intentionally keeps the grouped tables out of its runtime and
 			// JSON shape. Their approved leaves are checked below; do not reduce an
@@ -283,6 +289,11 @@ func validateConfig(config *Config, prettyConfigPath string, warnShellValues boo
 	if config.WatcherEventsPerMinute <= 0 {
 		log.WarningLog.Printf("watcher_events_per_minute=%d is non-positive; using default %d", config.WatcherEventsPerMinute, DefaultWatcherEventsPerMinute)
 		config.WatcherEventsPerMinute = DefaultWatcherEventsPerMinute
+	}
+
+	if config.BudgetLimit < 0 || config.BudgetLimit > 100 {
+		log.WarningLog.Printf("budget_limit=%d is not between 0 and 100; using default %d", config.BudgetLimit, DefaultBudgetLimit)
+		config.BudgetLimit = DefaultBudgetLimit
 	}
 
 	if config.LogMaxSizeMB <= 0 {

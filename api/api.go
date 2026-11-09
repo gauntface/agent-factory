@@ -612,8 +612,6 @@ func silenceCobraOutput() {
 	ProjectsCmd.SilenceErrors = true
 	ProposalCmd.SilenceUsage = true
 	ProposalCmd.SilenceErrors = true
-	BacklogCmd.SilenceUsage = true
-	BacklogCmd.SilenceErrors = true
 	if root := SessionsCmd.Root(); root != nil {
 		root.SilenceUsage = true
 		root.SilenceErrors = true
@@ -772,7 +770,7 @@ func init() {
 	tasksAddCmd.Flags().StringVar(&taskAddTargetSessionFlag, "target-session", "", "Deliver the prompt into this session (auto-created if missing); empty creates a new session per run")
 	tasksAddCmd.Flags().IntVar(&taskAddMaxConcurrentRunsFlag, "max-concurrent-runs", 0, "Cap how many sessions this watch task may have in flight at once; excess events are queued in order instead of spawning runs, subject to the durable queue's retention limits (0 = unlimited; --watch-cmd tasks without --target-session only)")
 	tasksAddCmd.Flags().StringVar(&taskAddOnCompleteFlag, "on-complete", "", "What happens to the session a run spawns once it finishes: keep (default, leaves it in place), archive (restorable, but retains its whole worktree), or kill (reclaims the worktree and prunes the session's branch). Not for --target-session tasks, whose session is meant to be reused")
-	tasksAddCmd.Flags().BoolVar(&taskAddBudgetGatedFlag, "budget-gated", false, "Skip a scheduled run unless Claude plan use is under the backlog budget limit (\"af backlog budget --limit\") for the 5-hour window and the week. --cron tasks with the claude program only")
+	tasksAddCmd.Flags().BoolVar(&taskAddBudgetGatedFlag, "budget-gated", false, "Skip a scheduled run unless Claude plan use is under budget_limit (\"af config set budget_limit 50\", default 50%) for the 5-hour window and the week. --cron tasks with the claude program only")
 	tasksAddCmd.Flags().StringVar(&taskAddProgramFlag, "program", "", "Program to run (one of: "+tmux.SupportedProgramsString()+"; defaults to config default)")
 	tasksAddCmd.MarkFlagRequired("name")
 

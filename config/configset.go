@@ -163,6 +163,7 @@ var settableKeySpecs = map[string]settableKeySpec{
 		return requirePositiveInt("watcher_events_per_minute", v)
 	}},
 	"log_max_size_mb":    {kind: cfgInt, validate: func(_, v string) error { return requirePositiveInt("log_max_size_mb", v) }},
+	"budget_limit":       {kind: cfgInt, validate: func(_, v string) error { return requirePercent("budget_limit", v) }},
 	"log_max_backups":    {kind: cfgInt, validate: func(_, v string) error { return requireNonNegativeInt("log_max_backups", v) }},
 	"branch_prefix":      {kind: cfgString},
 	"on_archive_command": {kind: cfgString},
@@ -211,8 +212,7 @@ var settableKeySpecs = map[string]settableKeySpec{
 		"enabled": {kind: cfgBool},
 		"program": {kind: cfgString},
 	}},
-	"keys":    {structured: true},
-	"backlog": {structured: true},
+	"keys": {structured: true},
 }
 
 func requirePositiveInt(name, v string) error {
@@ -222,6 +222,17 @@ func requirePositiveInt(name, v string) error {
 	}
 	if n <= 0 {
 		return fmt.Errorf("%s must be a positive integer, got %d", name, n)
+	}
+	return nil
+}
+
+func requirePercent(name, v string) error {
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil {
+		return fmt.Errorf("%s must be an integer, got %q", name, v)
+	}
+	if n < 0 || n > 100 {
+		return fmt.Errorf("%s must be between 0 and 100, got %d", name, n)
 	}
 	return nil
 }

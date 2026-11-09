@@ -59,7 +59,8 @@ const (
 
 // pluginReleaseDigests is an append-only release ledger. Its length is the
 // monotonic SemVer minor: a seeded payload/path/mode change must append the new
-// digest, which advances ordering automatically. pluginContentVersion refuses
+// digest, which advances ordering automatically. A revert appends the older
+// digest again. pluginContentVersion refuses
 // to generate when the final entry does not match, so the ordinary fix for a
 // changed payload cannot update its identity without also moving forward.
 var pluginReleaseDigests = []string{
@@ -83,6 +84,7 @@ var pluginReleaseDigests = []string{
 	"77fa36ac207b2370db0c505c9503930610bed63e52af1d4601b7ac1d6405418f", // 3.18 — task verbs accept <id-or-name>; name resolution and ambiguity rules (#4676)
 	"44e424184f3f0af13ad42a0b9c5665f691440f16cb3d71cabd7a74e9e655bd3f", // 3.19 — sessions attention --self: ask the user for attention
 	"7a8e5ff024037dd9c03efb683ae0d385ddc9624a943f367b28548f125715bc75", // 3.20 — af backlog: list/show/add for every agent
+	"44e424184f3f0af13ad42a0b9c5665f691440f16cb3d71cabd7a74e9e655bd3f", // 3.21 — remove af backlog
 }
 
 // pluginGenBanner marks a generated Markdown/shell artifact. Like genBanner it

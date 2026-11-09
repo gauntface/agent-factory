@@ -89,7 +89,7 @@ type Task struct {
 	// archive. af must not pick for the user, so the default does neither.
 	OnComplete string `json:"on_complete,omitempty"`
 	// BudgetGated makes a scheduled fire skip unless Claude plan use is under
-	// the backlog budget's limit for the 5-hour window and the week.
+	// the budget_limit config key for the 5-hour window and the week.
 	BudgetGated bool   `json:"budget_gated,omitempty"`
 	ProjectPath string `json:"project_path"`
 	// RepoID is the owning project's repo ID, resolved ONCE at bind time and

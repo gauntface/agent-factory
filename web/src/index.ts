@@ -79,7 +79,6 @@ import {
   newSessionModal,
   rebindProjectModal,
   removeTaskModal,
-  askConfirm,
 } from "./modals.js";
 import { confirmDeleteTabModal } from "./delete_tab_modal.js";
 import { InstallAffordance } from "./install.js";
@@ -136,8 +135,6 @@ import { captureTabDeleteTarget } from "./tab_delete_target.js";
 import { type AccountsResponse, type SessionData, TabKind, type TaskData, type WireEvent } from "./types.js";
 import { publishProposalChange, publishProposalPush } from "./docs_tab.js";
 import { parseProposalChange, parseProposalPush } from "./proposal_api.js";
-import { BacklogLoader, EMPTY_BACKLOG_DATA } from "./backlog_data.js";
-import { type DocsBacklog, proposalItems } from "./docs_backlog.js";
 
 // Boot stamp (redesign PR1): apply the saved theme choice to <html> BEFORE the app
 // mounts (before first paint), so an explicit light/dark choice shows no flash. This
@@ -176,7 +173,6 @@ const store = new Store<AppState>({
   tabError: null,
   tasks: [],
   registeredProjects: [],
-  backlog: EMPTY_BACKLOG_DATA,
   themeChoice: initialThemeChoice,
   // Resume the persisted filter (feat: hide archived by default) before first paint,
   // for the same reason the theme is boot-stamped: rendering the default set first
@@ -196,31 +192,6 @@ const store = new Store<AppState>({
 // `token === null`, never `!token`, or a tokenless client's create/kill/archive/
 // restore/retry/attach would be silently skipped because `!"" === true`.
 let token: string | null = null;
-
-const backlogLoader = new BacklogLoader({
-  token: () => token,
-  roots: () => {
-    const state = store.get();
-    const roots = projectSummaries(state.sessions, state.tasks, projectRoots(state.registeredProjects)).map((p) => p.root);
-    return state.selectedProject ? [state.selectedProject, ...roots] : roots;
-  },
-  current: () => store.get().backlog ?? EMPTY_BACKLOG_DATA,
-  commit: (backlog) => store.set({ backlog }),
-});
-
-// Connect and disconnect are watched here rather than edited, so the backlog
-// follows the session the way the rest of the app state does.
-let backlogPhase = store.get().phase;
-store.subscribe((state) => {
-  if (state.phase === backlogPhase) return;
-  backlogPhase = state.phase;
-  if (state.phase === "app") {
-    void backlogLoader.refresh();
-  } else {
-    backlogLoader.reset();
-    if (state.backlog !== EMPTY_BACKLOG_DATA) store.set({ backlog: EMPTY_BACKLOG_DATA });
-  }
-});
 let connectionGeneration = 0;
 let pendingRestoreResync = false;
 let stream: EventStream | null = null;
@@ -316,22 +287,7 @@ const splitView = new SplitView(termHost, {
   // tab (activeTab) and flag which tabs are shown across panes (shownTabs). Fired only
   // on a real change, so this write never loops back through rerender → syncSplit.
   onLayout: ({ focusedTab, shownTabs }) => store.set({ activeTab: focusedTab, shownTabs }),
-  docsBacklog: (sessionId, slug) => docsBacklog(sessionId, slug),
 });
-
-function docsBacklog(sessionId: string, slug: string): DocsBacklog {
-  const root = (): string => store.get().sessions.find((s) => s.id === sessionId)?.worktree?.repo_path ?? "";
-  return {
-    items: () => {
-      const r = root();
-      return r ? proposalItems(store.get().backlog?.views.get(r), slug) : null;
-    },
-    open: (id) => {
-      const r = root();
-      if (r) shell?.openBacklogItem(r, id);
-    },
-  };
-}
 
 let root: HTMLElement | null = null;
 
@@ -633,18 +589,6 @@ function resolveRoute(): void {
   }
 }
 
-/** Shows an item's session in the Sessions view, as a deep link does. */
-function openBacklogSession(id: string): void {
-  const session = store.get().sessions.find((s) => s.id === id);
-  if (!session?.id) {
-    showTransientNotice("That session is gone");
-    return;
-  }
-  if (session.worktree?.repo_path) switchProject(session.worktree.repo_path);
-  setStatusFilter(operatorKind(session), true);
-  openFromRail(session.id);
-}
-
 /** Moves the rail selection to a session by its stable id and puts the keyboard in
  *  rail-nav mode. This is the keyboard path (j/k): selecting a row never steals the
  *  keyboard into the terminal — you attach explicitly with Enter. Resetting focus to
@@ -737,9 +681,6 @@ function switchView(view: View): void {
   store.set({ view, focus: "rail" });
   if (view === "tasks") {
     refreshTasks();
-  }
-  if (view === "backlog") {
-    void backlogLoader.refresh();
   }
   if (view === "config") {
     refreshConfig();
@@ -1207,15 +1148,6 @@ function openConfirm(
     }),
   );
   if (immediateRestore) onConfirm();
-}
-
-/** The backlog's one-time confirm before a start by hand while a budget gate
- *  is closed. */
-function confirmBacklog(title: string, body: string, confirmLabel: string): Promise<boolean> {
-  return askConfirm({ title, body, confirmLabel }, (m) => openModal(m, true), (m) => {
-    if (modal === m) closeModal();
-    else m.close();
-  });
 }
 
 /** Opens the delete-project confirm for a project row (#1735). On confirm it
@@ -2688,23 +2620,6 @@ const actions = {
   },
   retryConnection: () => { void bootstrap(); },
   retryTasks: refreshTasks,
-  backlog: {
-    token: () => token,
-    refresh: () => backlogLoader.refresh(),
-    started: () => backlogLoader.started(),
-    notify: (message: string) => showTransientNotice(message),
-    openSession: openBacklogSession,
-    archiveSession: (id: string) => {
-      const s = store.get().sessions.find((x) => x.id === id);
-      if (s && isActionableSession(s)) openConfirm("archive", s);
-    },
-    restoreSession: (id: string) => {
-      const s = store.get().sessions.find((x) => x.id === id);
-      if (s && isActionableSession(s)) openConfirm("restore", s);
-    },
-    addProject: () => openAddProject(),
-    confirm: confirmBacklog,
-  },
   notice: surfaceNotice,
   paneDropHintAt: (x: number, y: number) => splitView.showTabDropHintAt(x, y),
   clearPaneDropHint: () => splitView.clearTabDropHint(),
@@ -2883,14 +2798,6 @@ function onEvent(ev: WireEvent): void {
   // ListTasks refetch (the authoritative task projection). The session reducer
   // no-ops these, so run both: the reducer for session.* and the task refetch for
   // task.*.
-  if (ev.type === "backlog.spend") {
-    backlogLoader.applySpend(ev.data);
-    return;
-  }
-  if (ev.type === "backlog.changed" || ev.type === "backlog.runner") {
-    backlogLoader.request();
-    return;
-  }
   if (ev.type === "task.created" || ev.type === "task.updated" || ev.type === "task.removed") {
     requestTaskResync();
     return;
