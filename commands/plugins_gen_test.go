@@ -411,16 +411,17 @@ func TestPluginReleaseDigestLedgerIsValid(t *testing.T) {
 	if len(pluginReleaseDigests) == 0 {
 		t.Fatal("plugin release digest ledger is empty")
 	}
-	seen := make(map[string]bool, len(pluginReleaseDigests))
 	for idx, digest := range pluginReleaseDigests {
 		decoded, err := hex.DecodeString(digest)
 		if err != nil || len(decoded) != 32 {
 			t.Fatalf("plugin release %d digest %q is not SHA-256: decoded=%d err=%v", idx+1, digest, len(decoded), err)
 		}
-		if seen[digest] {
-			t.Fatalf("plugin release %d repeats an earlier content digest; do not mint a new version for unchanged bytes", idx+1)
+		// A revert to older bytes needs a new, higher version so installed
+		// clients move off the release in between; only a repeat of the
+		// previous release is unchanged bytes.
+		if idx > 0 && pluginReleaseDigests[idx-1] == digest {
+			t.Fatalf("plugin release %d repeats the previous content digest; do not mint a new version for unchanged bytes", idx+1)
 		}
-		seen[digest] = true
 	}
 }
 

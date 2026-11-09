@@ -59,7 +59,8 @@ const (
 
 // pluginReleaseDigests is an append-only release ledger. Its length is the
 // monotonic SemVer minor: a seeded payload/path/mode change must append the new
-// digest, which advances ordering automatically. pluginContentVersion refuses
+// digest, which advances ordering automatically. A revert appends the older
+// digest again. pluginContentVersion refuses
 // to generate when the final entry does not match, so the ordinary fix for a
 // changed payload cannot update its identity without also moving forward.
 var pluginReleaseDigests = []string{

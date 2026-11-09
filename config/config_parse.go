@@ -70,6 +70,8 @@ func parseConfigJSON(data []byte, prettyConfigPath string, warnRootAgents, warnS
 			case key == "auto_yes" || key == "theme" || key == "appearance":
 				// Compatibility warning emitted above. Do not follow it with the
 				// generic unknown-key warning for the same removed setting.
+			case key == "backlog":
+				warnRemovedBacklogTable(prettyConfigPath)
 			case key == "keys":
 				log.WarningLog.Printf("config %s: \"keys\" is ignored in config.json — the keymap is TOML-only; move it to a [keys] table in %s", prettyConfigPath, TomlConfigFileName)
 			case !known[key]:

@@ -11,6 +11,8 @@ const (
 	GateLimit      = "limit"
 	GateUsageLimit = "usage_limit"
 	GateNoReading  = "no_reading"
+	// GateProgram closes the gate of a task whose program is not Claude.
+	GateProgram = "program"
 )
 
 // GateInput is what the plan gate reads for one Claude account.

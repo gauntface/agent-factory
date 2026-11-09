@@ -19,10 +19,6 @@ import (
 // the gate held back; the gate's reason follows it.
 const TaskStatusSkippedBudgetGate = "skipped: budget gate"
 
-// gateProgram closes the budget gate of a task whose program resolves to an
-// agent other than Claude.
-const gateProgram = "program"
-
 // ledgerWarned is set while the account limit ledger fails to read, so the
 // gate logs once per run of failures.
 var ledgerWarned atomic.Bool
@@ -37,7 +33,7 @@ func (m *Manager) taskBudgetGate(t task.Task) planusage.Gate {
 		program = defaultProgramFor(cfg.DefaultProgram, t.ProjectPath)
 	}
 	if program != tmux.ProgramClaude {
-		return planusage.Gate{Name: gateProgram, Reason: fmt.Sprintf("The budget gate reads Claude plan use only, and this task runs %s", program)}
+		return planusage.Gate{Name: planusage.GateProgram, Reason: fmt.Sprintf("The budget gate reads Claude plan use only, and this task runs %s", program)}
 	}
 	account := m.claudeAccountFor(t.ProjectPath)
 	reading, err := planusage.LoadReading(account)

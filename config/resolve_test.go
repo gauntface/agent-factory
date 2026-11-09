@@ -38,6 +38,7 @@ func captureLog(t *testing.T, logger **stdlog.Logger) *logtest.Buffer {
 	resetConfigAliasWarnings()
 	resetShellValueWarnings()
 	resetUnknownTableLeafWarnings()
+	resetRemovedBacklogWarnings()
 	resetProjectBranchPrefixWarnings()
 	resetRetainedLegacyBareRepoConfigWarnings()
 	var buf logtest.Buffer
