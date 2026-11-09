@@ -1940,7 +1940,8 @@ button:disabled,
   font-size: var(--af-type-body);
   line-height: 1.5;
 }
-.af-on-complete-hint {
+.af-on-complete-hint,
+.af-budget-hint {
   color: var(--af-ink-muted);
 }
 .af-modal-hint:empty {
