@@ -16203,7 +16203,7 @@ function taskFormModal(opts) {
   const budgetHint = h(
     "span",
     { class: "af-modal-hint", id: "af-task-budget-hint" },
-    "Skips a scheduled run while Claude plan use is at or over the backlog budget limit. Claude tasks only."
+    "Skips a scheduled run while Claude plan use is at or over the backlog budget limit \xB7 other agents skip every run."
   );
   budgetSwitch.setAttribute("aria-describedby", budgetHint.id);
   const budgetField = fieldGroup("Budget", h("label", { class: "af-check-row" }, budgetSwitch, "Run only within the budget"));
@@ -20057,7 +20057,9 @@ function openEditTask(task) {
             watch_cmd: input.trigger === "watch" ? input.watchCmd : "",
             target_session: input.targetSession,
             on_complete: value.on_complete ?? "",
-            budget_gated: value.budget_gated ?? false,
+            // Unchanged is left out, so the daemon clears the gate when the task
+            // moves to a watch trigger or another program.
+            budget_gated: input.budgetGated === (task.budget_gated === true) ? void 0 : value.budget_gated,
             project_path: input.projectPath,
             program: input.program
           },

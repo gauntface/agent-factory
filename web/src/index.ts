@@ -2312,7 +2312,9 @@ function openEditTask(task: TaskData): void {
             watch_cmd: input.trigger === "watch" ? input.watchCmd : "",
             target_session: input.targetSession,
             on_complete: value.on_complete ?? "",
-            budget_gated: value.budget_gated ?? false,
+            // Unchanged is left out, so the daemon clears the gate when the task
+            // moves to a watch trigger or another program.
+            budget_gated: input.budgetGated === (task.budget_gated === true) ? undefined : value.budget_gated,
             project_path: input.projectPath,
             program: input.program,
           },
