@@ -47,6 +47,7 @@ import {
   suggestSessionName,
   listTasks,
   setConfigValue,
+  getBudget,
   listAccounts,
   registerAccount as registerAccountRPC,
   startAccountLogin,
@@ -154,6 +155,7 @@ const store = new Store<AppState>({
   configPath: "",
   configStatus: null,
   accounts: emptyAccountsState(),
+  budget: null,
   selectedProject: null,
   authRequired: true,
   // Start in the connecting state: mount() immediately probes /v1/auth-info, and
@@ -688,6 +690,7 @@ function switchView(view: View): void {
     // section shows them as they are NOW, including an account registered from
     // the CLI or logged in from the TUI since this tab was opened.
     refreshAccounts();
+    refreshBudget();
   }
 }
 
@@ -1945,6 +1948,21 @@ function refreshAccounts(): void {
   accountsRefetcher.refresh();
 }
 
+/** A daemon without GetBudget answers 404, which hides the plan use and leaves
+ *  the budget_limit row. Any other failure keeps the last answer. */
+const budgetRefetcher = createFencedRefetcher({
+  readToken: () => token,
+  fetch: getBudget,
+  commit: (budget) => store.set({ budget }),
+  onError: (err: unknown) => {
+    if (err instanceof ApiError && err.status === 404) store.set({ budget: null });
+  },
+});
+
+function refreshBudget(): void {
+  budgetRefetcher.refresh();
+}
+
 /** Records the outcome of an account action on the row that produced it. */
 function setAccountStatus(agent: string, name: string, message: string, error: boolean): void {
   store.set({ accounts: { ...store.get().accounts, status: { agent, name, message, error } } });
@@ -2075,6 +2093,7 @@ function applyConfigValueNow(key: string, value: string, tok: string): Promise<v
         // holds the new value; an open config view would otherwise display the
         // pre-write state until the user leaves and re-enters.
         refreshConfig();
+        refreshBudget();
         return;
       }
       store.set({
@@ -2087,6 +2106,7 @@ function applyConfigValueNow(key: string, value: string, tok: string): Promise<v
         },
       });
       refreshConfig();
+      refreshBudget();
     })
     .catch((err: unknown) => {
       if (requestGeneration !== connectionGeneration || token !== tok) return;
@@ -2120,6 +2140,16 @@ window.setInterval(() => {
     refreshTasks();
   }
 }, TASK_HEALTH_POLL_MS);
+
+// Plan use moves with every Claude session, and nothing announces it. Guarded in
+// the tick for the same reason as the tasks poll above.
+const BUDGET_POLL_MS = 60_000;
+window.setInterval(() => {
+  const state = store.get();
+  if (state.phase === "app" && state.view === "config") {
+    refreshBudget();
+  }
+}, BUDGET_POLL_MS);
 
 /** Refetches the authoritative task list and commits it to the store. Failures are
  *  swallowed: the events plane / a later action retries, exactly like the Snapshot
@@ -2758,6 +2788,7 @@ function stopStream(): void {
   projectsRefetcher.invalidate();
   configRefetcher.invalidate();
   accountsRefetcher.invalidate();
+  budgetRefetcher.invalidate();
   root?.removeAttribute("data-af-resync-settled");
   if (resyncTimer !== null) {
     window.clearTimeout(resyncTimer);

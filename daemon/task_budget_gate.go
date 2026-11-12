@@ -32,18 +32,31 @@ func (m *Manager) taskBudgetGate(t task.Task) planusage.Gate {
 		// Validation accepts an empty program, and the default can name another agent.
 		program = defaultProgramFor(cfg.DefaultProgram, t.ProjectPath)
 	}
-	if program != tmux.ProgramClaude {
-		return planusage.Gate{Name: planusage.GateProgram, Reason: fmt.Sprintf("The budget gate reads Claude plan use only, and this task runs %s", program)}
+	if g, ok := programGate(program); !ok {
+		return g
 	}
 	account := m.claudeAccountFor(t.ProjectPath)
 	reading, err := planusage.LoadReading(account)
-	if err != nil {
-		return planusage.Gate{Name: planusage.GateNoReading, Reason: "Can't read the plan usage · " + err.Error()}
+	return m.planGate(account, reading, err, cfg.BudgetLimit, time.Now())
+}
+
+// programGate closes the gate for a program that is not Claude.
+func programGate(program string) (planusage.Gate, bool) {
+	if program == tmux.ProgramClaude {
+		return planusage.Gate{}, true
 	}
-	now := time.Now()
+	return planusage.Gate{Name: planusage.GateProgram, Reason: fmt.Sprintf("The budget gate reads Claude plan use only, and this task runs %s", program)}, false
+}
+
+// planGate checks a Claude account's plan reading, and its usage limit,
+// against limit.
+func (m *Manager) planGate(account string, reading *planusage.Reading, readErr error, limit int, now time.Time) planusage.Gate {
+	if readErr != nil {
+		return planusage.Gate{Name: planusage.GateNoReading, Reason: "Can't read the plan usage · " + readErr.Error()}
+	}
 	limited, until, limitErr := m.claudeUsageLimit(account, now)
 	in := planusage.GateInput{
-		Limit: float64(cfg.BudgetLimit), Reading: reading,
+		Limit: float64(limit), Reading: reading,
 		Limited: limited, LimitUntil: until,
 		Now: now, Loc: time.Local,
 	}
@@ -51,6 +64,29 @@ func (m *Manager) taskBudgetGate(t task.Task) planusage.Gate {
 		in.LimitUnknown = limitErr.Error()
 	}
 	return planusage.CheckGate(in)
+}
+
+// GetBudget lists the default Claude account and every account with a plan
+// reading, each with the gate a budget-gated task with no program and no
+// project meets on it.
+func (m *Manager) GetBudget() (GetBudgetResponse, error) {
+	accounts, err := planusage.ReadingAccounts()
+	if err != nil {
+		return GetBudgetResponse{}, err
+	}
+	cfg := m.Config()
+	now := time.Now()
+	program, claude := programGate(defaultProgramFor(cfg.DefaultProgram, ""))
+	gate := func(account string, r *planusage.Reading, readErr error) planusage.Gate {
+		if !claude {
+			return program
+		}
+		return m.planGate(account, r, readErr, cfg.BudgetLimit, now)
+	}
+	return GetBudgetResponse{
+		Limit:    cfg.BudgetLimit,
+		Accounts: planusage.BudgetAccounts(m.claudeAccountFor(""), accounts, now, planusage.LoadReading, gate),
+	}, nil
 }
 
 // skipClosedBudgetGate records a skip and returns true when taskID is
@@ -68,9 +104,9 @@ func (s *taskScheduler) skipClosedBudgetGate(taskID string) bool {
 	if g.Open() {
 		return false
 	}
-	log.InfoLog.Printf("scheduled task %s skipped: %s", taskID, g.Reason)
+	log.InfoLog.Printf("scheduled task %s skipped: %s", taskID, g.Text())
 	now := time.Now()
-	if _, err := task.UpdateTaskStatus(taskID, &now, TaskStatusSkippedBudgetGate+" · "+g.Reason); err != nil {
+	if _, err := task.UpdateTaskStatus(taskID, &now, TaskStatusSkippedBudgetGate+" · "+g.Text()); err != nil {
 		log.ErrorLog.Printf("failed to record skipped status for task %s: %v", taskID, err)
 	}
 	return true

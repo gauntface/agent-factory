@@ -96,6 +96,33 @@ func LoadReading(account string) (*Reading, error) {
 	return &r, nil
 }
 
+// ReadingAccounts names the accounts that have a reading file in Dir.
+func ReadingAccounts() ([]string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, e := range entries {
+		name, ok := strings.CutSuffix(e.Name(), ".json")
+		if !ok || !e.Type().IsRegular() {
+			continue
+		}
+		if name != DefaultAccount && agentaccount.ValidateName(name) != nil {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names, nil
+}
+
 // AccountForConfigDir names the af account whose Claude config dir is dir, or
 // DefaultAccount when dir is not under af's account registry.
 func AccountForConfigDir(home, dir string) string {

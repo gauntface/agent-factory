@@ -378,6 +378,15 @@ var httpRoutes = []HTTPRoute{
 		handler:     func(cs *controlServer) http.HandlerFunc { return rpcHandler(cs.AccountLogin) },
 	},
 
+	// Budget.
+	{
+		Method:      http.MethodPost,
+		Path:        "/v1/GetBudget",
+		Description: "Read the Claude plan budget: budget_limit, and for the default Claude account and every account with a plan reading, the plan percent used and reset time of the 5-hour and 7-day windows (resets_at is null when there is no valid reading), when the reading was taken, and the gate a budget-gated task meets on that account now (an empty name means it runs).",
+		requestType: reflect.TypeOf(GetBudgetRequest{}),
+		handler:     func(cs *controlServer) http.HandlerFunc { return rpcHandler(cs.GetBudget) },
+	},
+
 	// Config. The read/write pair behind the web config editor; both are thin
 	// wrappers over the same config package calls the TUI and `af config set`
 	// make in-process, so the three surfaces cannot validate or write differently.

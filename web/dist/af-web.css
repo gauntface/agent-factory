@@ -2525,6 +2525,53 @@ button:disabled,
   border-radius: var(--af-radius-control);
   padding: var(--af-space-1) var(--af-space-2);
 }
+.af-budget {
+  display: flex;
+  flex-direction: column;
+  gap: var(--af-space-2);
+}
+.af-budget-account {
+  display: flex;
+  flex-direction: column;
+  gap: var(--af-space-1);
+  padding: var(--af-space-2) 0;
+  font-variant-numeric: tabular-nums;
+}
+.af-budget-account-name {
+  font-family: var(--af-font-mono);
+  font-size: var(--af-type-body);
+  color: var(--af-ink);
+}
+.af-budget-plan {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--af-space-1);
+  min-width: 0;
+  font-size: var(--af-type-body);
+  color: var(--af-ink);
+}
+.af-budget-meter {
+  display: inline-block;
+  width: calc(var(--af-space-4) * 3);
+  height: var(--af-space-2);
+  border: calc(var(--af-space-1) * 0.25) solid var(--af-border);
+  border-radius: var(--af-radius-control);
+  overflow: hidden;
+}
+.af-budget-meter-fill {
+  display: block;
+  height: 100%;
+  background: var(--af-accent);
+}
+.af-budget-detail,
+.af-budget-gate {
+  font-size: var(--af-type-caption);
+  color: var(--af-ink-muted);
+}
+.af-budget-gate.af-budget-warn {
+  color: var(--af-lost);
+}
 .af-accounts {
   display: flex;
   flex-direction: column;

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"github.com/sachiniyer/agent-factory/config"
+	"github.com/sachiniyer/agent-factory/planusage"
 	"github.com/sachiniyer/agent-factory/session"
 )
 
@@ -721,6 +722,16 @@ type GetConfigResponse struct {
 	// user which file it is editing (a user with AF_HOME set is otherwise left
 	// guessing).
 	Path string `json:"path"`
+}
+
+// GetBudgetRequest takes no arguments.
+type GetBudgetRequest struct{}
+
+// GetBudgetResponse is budget_limit and each Claude account's plan use, with
+// the gate a budget-gated task meets on that account now.
+type GetBudgetResponse struct {
+	Limit    int                       `json:"limit"`
+	Accounts []planusage.AccountBudget `json:"accounts"`
 }
 
 // SetConfigValueRequest sets one key, exactly as `af config set key value` does.

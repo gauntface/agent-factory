@@ -6453,6 +6453,122 @@ async function copyText(text) {
   }
 }
 
+// src/parse.ts
+function isRecord(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function str(v) {
+  return typeof v === "string" ? v : "";
+}
+
+// src/time.ts
+function formatDuration(ms) {
+  const age = Math.max(0, ms);
+  const minute = 6e4, hour = 60 * minute, day = 24 * hour;
+  if (age < minute) return "<1m";
+  if (age < hour) return `${Math.floor(age / minute)}m`;
+  if (age < day) return `${Math.floor(age / hour)}h`;
+  return `${Math.floor(age / day)}d`;
+}
+function formatTime(value, now = /* @__PURE__ */ new Date()) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown time";
+  const delta = date.getTime() - now.getTime();
+  if (Math.abs(delta) < 24 * 60 * 6e4) {
+    const duration = formatDuration(Math.abs(delta));
+    return delta >= 0 ? `in ${duration}` : `${duration} ago`;
+  }
+  return date.toLocaleString(void 0, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+// src/budget.ts
+var WINDOW_LABELS = {
+  five_hour: { bar: "5-hour window", detail: "5-hour" },
+  seven_day: { bar: "week", detail: "Weekly" }
+};
+var WINDOWS = ["five_hour", "seven_day"];
+function parseWindow(v) {
+  const w = isRecord(v) ? v : {};
+  return { plan: Number(w.plan) || 0, resets_at: typeof w.resets_at === "string" ? w.resets_at : null };
+}
+function parseAccount(v) {
+  if (!isRecord(v) || typeof v.account !== "string" || v.account === "") return null;
+  const g = isRecord(v.gate) ? v.gate : {};
+  return {
+    account: v.account,
+    default: v.default === true,
+    five_hour: parseWindow(v.five_hour),
+    seven_day: parseWindow(v.seven_day),
+    reading_at: typeof v.reading_at === "string" ? v.reading_at : null,
+    gate: { name: str(g.name), reason: str(g.reason) }
+  };
+}
+function parseBudget(d) {
+  const v = isRecord(d) ? d : {};
+  const accounts = Array.isArray(v.accounts) ? v.accounts.map(parseAccount).filter((a) => a !== null) : [];
+  return { limit: Number(v.limit) || 0, accounts };
+}
+function hasLiveReading(w, now) {
+  return w.resets_at !== null && Date.parse(w.resets_at) > now;
+}
+function pct(v) {
+  return `${Number(v.toFixed(1))}%`;
+}
+function tighterWindow(a, limit, now) {
+  let best = null;
+  for (const k of WINDOWS) {
+    const w = a[k];
+    if (!hasLiveReading(w, now)) continue;
+    if (best === null) {
+      best = k;
+      continue;
+    }
+    const b = a[best];
+    const bothOver = w.plan >= limit && b.plan >= limit;
+    if (bothOver ? Date.parse(w.resets_at) > Date.parse(b.resets_at) : w.plan > b.plan) best = k;
+  }
+  return best;
+}
+function resetLabel(at, now) {
+  const d = new Date(at);
+  const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  if (d.getTime() - now < 24 * 36e5) return hm;
+  return `${d.toLocaleDateString("en-US", { weekday: "short" })} ${hm}`;
+}
+function readingAge(at, now) {
+  if (!at) return "no reading yet";
+  const age = now - Date.parse(at);
+  if (age < 6e4) return "read just now";
+  return `read ${formatDuration(age)} ago`;
+}
+function usageLines(a, limit, now) {
+  const line = (k) => {
+    const w = a[k];
+    const label = WINDOW_LABELS[k].detail;
+    if (!hasLiveReading(w, now)) return `${label} \xB7 no reading`;
+    return `${label} \xB7 plan ${pct(w.plan)} of ${pct(limit)} limit \xB7 resets ${resetLabel(w.resets_at, now)}`;
+  };
+  return [line("five_hour"), line("seven_day"), readingAge(a.reading_at, now)];
+}
+function planMeter(a, limit, now) {
+  const k = tighterWindow(a, limit, now);
+  if (k === null) return null;
+  const plan = a[k].plan;
+  return {
+    before: `Plan ${pct(plan)} of ${WINDOW_LABELS[k].bar}`,
+    fill: limit > 0 ? Math.min(100, plan / limit * 100) : 100,
+    ariaLabel: `${pct(plan)} of a ${pct(limit)} limit`,
+    after: `limit ${pct(limit)}`
+  };
+}
+function gateLine(a) {
+  if (a.gate.name === "") return "Budget-gated Claude tasks run now";
+  return `Budget-gated Claude tasks skip \xB7 ${a.gate.reason}`;
+}
+function accountLabel(a) {
+  return a.default ? `${a.account} \xB7 global default` : a.account;
+}
+
 // src/api.ts
 var TOKEN_KEY = "af.token";
 function loadToken() {
@@ -6869,6 +6985,9 @@ async function removeTask(task, token2) {
 async function getConfig(token2) {
   const resp = await af("GetConfig", {}, token2);
   return { entries: resp?.entries ?? [], path: resp?.path ?? "" };
+}
+async function getBudget(token2) {
+  return parseBudget(await af("GetBudget", {}, token2));
 }
 async function setConfigValue(key, value, token2) {
   return af("SetConfigValue", { key, value }, token2);
@@ -7757,6 +7876,39 @@ function appendStatus(row, status, agent, name) {
   row.append(h("div", { class: "af-accounts-echo" }, status.message));
 }
 
+// src/budget_view.ts
+function renderBudgetSection(budget, limitRow, now) {
+  const section = h("div", { class: "af-budget" });
+  if (limitRow) section.append(limitRow);
+  if (budget) {
+    const named = budget.accounts.length > 1;
+    for (const a of budget.accounts) section.append(renderAccountBudget(a, budget.limit, now, named));
+  }
+  return section;
+}
+function renderAccountBudget(a, limit, now, named) {
+  const el2 = h("div", { class: "af-budget-account" });
+  el2.setAttribute("data-account", a.account);
+  if (named) el2.append(h("span", { class: "af-budget-account-name" }, accountLabel(a)));
+  const meter = planMeter(a, limit, now);
+  const plan = h("div", { class: "af-budget-plan" });
+  if (meter) {
+    const fill = h("span", { class: "af-budget-meter-fill" });
+    fill.style.width = `${meter.fill}%`;
+    const bar = h("span", { class: "af-budget-meter", role: "img" }, fill);
+    bar.setAttribute("aria-label", meter.ariaLabel);
+    plan.append(meter.before, bar, meter.after);
+  } else {
+    plan.append(`Plan limit ${pct(limit)}`);
+  }
+  el2.append(
+    plan,
+    h("div", { class: "af-budget-detail" }, ...usageLines(a, limit, now).map((l) => h("div", {}, l))),
+    h("div", { class: a.gate.name === "" ? "af-budget-gate" : "af-budget-gate af-budget-warn" }, gateLine(a))
+  );
+  return el2;
+}
+
 // src/scrollkeep.ts
 function listToken(parts) {
   return parts.map((p) => p ?? "none").join("\0");
@@ -7795,6 +7947,10 @@ function tiersInOrder(entries) {
   return [...seen.entries()].sort((a, b) => a[0] - b[0]).map(([tier, name]) => ({ tier, name }));
 }
 var TIER_ADVANCED = 3;
+var BUDGET_KEY = "budget_limit";
+function tierHeading(name) {
+  return h("div", { class: "af-config-tier" }, h("span", { class: "af-config-tier-name" }, name));
+}
 function controlKind(e) {
   if (e.type === "bool") {
     return "checkbox";
@@ -7853,6 +8009,7 @@ var ConfigPane = class {
    *  config: see accounts.ts. */
   accounts = emptyAccountsState();
   theme = "system";
+  budget = null;
   showAdvanced = false;
   /** The key whose field is open, if any. Only one row edits at a time: a config
    *  write is per-key (like `af config set`), so a multi-row "save all" would
@@ -7872,10 +8029,11 @@ var ConfigPane = class {
   lastStatus = null;
   lastAccounts = null;
   lastTheme = null;
+  lastBudget = null;
   /** Feeds the pane fresh manifest rows. Re-rendering is skipped when nothing
    *  changed, matching the rest of the shell's patch-in-place model. */
-  update(entries, path, status, accounts, theme = this.theme) {
-    if (this.lastEntries === entries && this.lastStatus === status && this.lastAccounts === accounts && this.lastTheme === theme) {
+  update(entries, path, status, accounts, theme = this.theme, budget = this.budget) {
+    if (this.lastEntries === entries && this.lastStatus === status && this.lastAccounts === accounts && this.lastTheme === theme && this.lastBudget === budget) {
       return;
     }
     const statusIsNew = status !== this.lastStatus;
@@ -7889,6 +8047,8 @@ var ConfigPane = class {
     this.lastAccounts = accounts;
     this.lastTheme = theme;
     this.theme = theme;
+    this.lastBudget = budget;
+    this.budget = budget;
     this.entries = entries.filter((entry) => entry.key !== "theme" && !entry.key.startsWith("theme."));
     this.path = path;
     this.status = status;
@@ -8000,12 +8160,12 @@ var ConfigPane = class {
     head.append(assistantBtn);
     const sections = [];
     for (const { tier, name } of tiersInOrder(this.entries)) {
-      const inTier = this.entries.filter((e) => e.tier === tier);
+      const inTier = this.entries.filter((e) => e.tier === tier && e.key !== BUDGET_KEY);
       if (inTier.length === 0) {
         continue;
       }
       const folded = tier === TIER_ADVANCED && !this.showAdvanced;
-      const heading = h("div", { class: "af-config-tier" }, h("span", { class: "af-config-tier-name" }, name.charAt(0).toUpperCase() + name.slice(1)));
+      const heading = tierHeading(name.charAt(0).toUpperCase() + name.slice(1));
       if (tier === TIER_ADVANCED) {
         const toggle = h(
           "button",
@@ -8027,6 +8187,7 @@ var ConfigPane = class {
         sections.push(this.renderRow(e));
       }
     }
+    sections.push(...this.renderBudget());
     const content = sections.length > 0 ? sections : [
       h(
         "p",
@@ -8040,10 +8201,17 @@ var ConfigPane = class {
       renderAccountsSection(this.accounts, this.actions.accounts, this.registration)
     );
   }
+  /** budget_limit and, when the daemon reports it, each Claude account's plan
+   *  use against it. */
+  renderBudget() {
+    const entry = this.entries.find((e) => e.key === BUDGET_KEY);
+    if (!entry && !this.budget) return [];
+    return [tierHeading("Budget"), renderBudgetSection(this.budget, entry ? this.renderRow(entry) : null, Date.now())];
+  }
   /** Theme and the saved token live in this browser's localStorage, not in
    *  config.toml, so neither goes through `save`. */
   renderBrowser() {
-    const heading = h("div", { class: "af-config-tier" }, h("span", { class: "af-config-tier-name" }, "This browser"));
+    const heading = tierHeading("This browser");
     const select = h("select", { class: "af-input af-config-input af-theme-select" });
     select.setAttribute("aria-label", "Theme");
     for (const choice of THEME_CHOICES) {
@@ -12428,26 +12596,6 @@ var InstallAffordance = class {
     });
   }
 };
-
-// src/time.ts
-function formatDuration(ms) {
-  const age = Math.max(0, ms);
-  const minute = 6e4, hour = 60 * minute, day = 24 * hour;
-  if (age < minute) return "<1m";
-  if (age < hour) return `${Math.floor(age / minute)}m`;
-  if (age < day) return `${Math.floor(age / hour)}h`;
-  return `${Math.floor(age / day)}d`;
-}
-function formatTime(value, now = /* @__PURE__ */ new Date()) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Unknown time";
-  const delta = date.getTime() - now.getTime();
-  if (Math.abs(delta) < 24 * 60 * 6e4) {
-    const duration = formatDuration(Math.abs(delta));
-    return delta >= 0 ? `in ${duration}` : `${duration} ago`;
-  }
-  return date.toLocaleString(void 0, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-}
 
 // src/status.ts
 var OPERATOR_KIND_LABELS = {
@@ -17347,7 +17495,7 @@ var AppShell = class {
       this.lastTasksProject = state.selectedProject;
       this.tasksPane.update(state.tasks, state.selectedProject, state.tasksError);
     }
-    this.configPane.update(state.config, state.configPath, state.configStatus, state.accounts, state.themeChoice);
+    this.configPane.update(state.config, state.configPath, state.configStatus, state.accounts, state.themeChoice, state.budget);
     const sessionsChanged = this.lastSessions !== state.sessions;
     const selectionChanged = this.lastSelectedId !== state.selectedId;
     const projectChanged = this.lastSelectedProject !== state.selectedProject;
@@ -18698,12 +18846,6 @@ function captureTabDeleteTarget(target) {
 }
 
 // src/proposal_api.ts
-function isRecord(v) {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-function str(v) {
-  return typeof v === "string" ? v : "";
-}
 var PUSH_STATES = ["idle", "countdown", "waiting_agent", "held", "sent"];
 function parsePushStatus(d) {
   if (!isRecord(d) || typeof d.state !== "string" || !PUSH_STATES.includes(d.state)) {
@@ -18748,6 +18890,7 @@ var store = new Store({
   configPath: "",
   configStatus: null,
   accounts: emptyAccountsState(),
+  budget: null,
   selectedProject: null,
   authRequired: true,
   // Start in the connecting state: mount() immediately probes /v1/auth-info, and
@@ -19085,6 +19228,7 @@ function switchView(view) {
   if (view === "config") {
     refreshConfig();
     refreshAccounts();
+    refreshBudget();
   }
 }
 function setStatusFilter(kind, on) {
@@ -19851,6 +19995,17 @@ var accountsRefetcher = createFencedRefetcher({
 function refreshAccounts() {
   accountsRefetcher.refresh();
 }
+var budgetRefetcher = createFencedRefetcher({
+  readToken: () => token,
+  fetch: getBudget,
+  commit: (budget) => store.set({ budget }),
+  onError: (err) => {
+    if (err instanceof ApiError && err.status === 404) store.set({ budget: null });
+  }
+});
+function refreshBudget() {
+  budgetRefetcher.refresh();
+}
 function setAccountStatus(agent, name, message, error) {
   store.set({ accounts: { ...store.get().accounts, status: { agent, name, message, error } } });
 }
@@ -19917,6 +20072,7 @@ function applyConfigValueNow(key, value, tok) {
   return setConfigValue(key, value, tok).then((resp) => {
     if (requestGeneration !== connectionGeneration || token !== tok) {
       refreshConfig();
+      refreshBudget();
       return;
     }
     store.set({
@@ -19929,6 +20085,7 @@ function applyConfigValueNow(key, value, tok) {
       }
     });
     refreshConfig();
+    refreshBudget();
   }).catch((err) => {
     if (requestGeneration !== connectionGeneration || token !== tok) return;
     store.set({ configStatus: { key, value: "", notice: "", error: errorText(err) } });
@@ -19941,6 +20098,13 @@ window.setInterval(() => {
     refreshTasks();
   }
 }, TASK_HEALTH_POLL_MS);
+var BUDGET_POLL_MS = 6e4;
+window.setInterval(() => {
+  const state = store.get();
+  if (state.phase === "app" && state.view === "config") {
+    refreshBudget();
+  }
+}, BUDGET_POLL_MS);
 var tasksRefetcher = createFencedRefetcher({
   readToken: () => token,
   fetch: listTasks,
@@ -20361,6 +20525,7 @@ function stopStream() {
   projectsRefetcher.invalidate();
   configRefetcher.invalidate();
   accountsRefetcher.invalidate();
+  budgetRefetcher.invalidate();
   root?.removeAttribute("data-af-resync-settled");
   if (resyncTimer !== null) {
     window.clearTimeout(resyncTimer);

@@ -10,7 +10,8 @@
 // to SetConfigValue, which the daemon hands to the same validated, file-locked,
 // atomic writer `af config set` uses. A key added to config_types.go appears
 // here with no edit to this file — that is the point, and
-// config.test.ts pins it.
+// config.test.ts pins it. budget_limit is the one exception to the tiers: it is
+// shown in the Budget section, with the plan use it limits.
 //
 // Two things it must never do:
 //
@@ -33,6 +34,8 @@ import {
   emptyAccountsState,
   renderAccountsSection,
 } from "./accounts.js";
+import type { Budget } from "./budget.js";
+import { renderBudgetSection } from "./budget_view.js";
 import { h } from "./dom.js";
 import type { ConfigEntry, ConfigSetResponse } from "./types.js";
 import { rebuildKeepingScroll } from "./scrollkeep.js";
@@ -99,6 +102,13 @@ function tiersInOrder(entries: ConfigEntry[]): { tier: number; name: string }[] 
 /** The advanced tier's rank. Tier 3 is "correct by default and rarely touched",
  *  so it folds — the five keys that matter must not be buried under twenty. */
 const TIER_ADVANCED = 3;
+
+/** Shown in the Budget section, with the plan use it limits, not in its tier. */
+const BUDGET_KEY = "budget_limit";
+
+function tierHeading(name: string): HTMLElement {
+  return h("div", { class: "af-config-tier" }, h("span", { class: "af-config-tier-name" }, name));
+}
 
 /** The kind of control a key gets. */
 export type ControlKind = "checkbox" | "select" | "text";
@@ -272,6 +282,7 @@ export class ConfigPane {
    *  config: see accounts.ts. */
   private accounts: AccountsState = emptyAccountsState();
   private theme: ThemeChoice = "system";
+  private budget: Budget | null = null;
   private showAdvanced = false;
   /** The key whose field is open, if any. Only one row edits at a time: a config
    *  write is per-key (like `af config set`), so a multi-row "save all" would
@@ -292,6 +303,7 @@ export class ConfigPane {
   private lastStatus: ConfigStatus | null = null;
   private lastAccounts: AccountsState | null = null;
   private lastTheme: ThemeChoice | null = null;
+  private lastBudget: Budget | null = null;
 
   constructor(private readonly actions: ConfigActions) {
     this.el = h("section", { class: "af-config" });
@@ -306,9 +318,10 @@ export class ConfigPane {
     status: ConfigStatus | null,
     accounts: AccountsState,
     theme: ThemeChoice = this.theme,
+    budget: Budget | null = this.budget,
   ): void {
     if (this.lastEntries === entries && this.lastStatus === status && this.lastAccounts === accounts
-      && this.lastTheme === theme) {
+      && this.lastTheme === theme && this.lastBudget === budget) {
       return;
     }
     // Captured before `lastStatus` is overwritten below: it is the EDGE that
@@ -325,6 +338,8 @@ export class ConfigPane {
     this.lastAccounts = accounts;
     this.lastTheme = theme;
     this.theme = theme;
+    this.lastBudget = budget;
+    this.budget = budget;
     // Retired web appearance keys from older daemons are never editable here.
     this.entries = entries.filter((entry) => entry.key !== "theme" && !entry.key.startsWith("theme."));
     this.path = path;
@@ -479,12 +494,12 @@ export class ConfigPane {
 
     const sections: HTMLElement[] = [];
     for (const { tier, name } of tiersInOrder(this.entries)) {
-      const inTier = this.entries.filter((e) => e.tier === tier);
+      const inTier = this.entries.filter((e) => e.tier === tier && e.key !== BUDGET_KEY);
       if (inTier.length === 0) {
         continue;
       }
       const folded = tier === TIER_ADVANCED && !this.showAdvanced;
-      const heading = h("div", { class: "af-config-tier" }, h("span", { class: "af-config-tier-name" }, name.charAt(0).toUpperCase() + name.slice(1)));
+      const heading = tierHeading(name.charAt(0).toUpperCase() + name.slice(1));
 
       if (tier === TIER_ADVANCED) {
         const toggle = h(
@@ -508,6 +523,8 @@ export class ConfigPane {
       }
     }
 
+    sections.push(...this.renderBudget());
+
     const content =
       sections.length > 0
         ? sections
@@ -527,10 +544,18 @@ export class ConfigPane {
     );
   }
 
+  /** budget_limit and, when the daemon reports it, each Claude account's plan
+   *  use against it. */
+  private renderBudget(): HTMLElement[] {
+    const entry = this.entries.find((e) => e.key === BUDGET_KEY);
+    if (!entry && !this.budget) return [];
+    return [tierHeading("Budget"), renderBudgetSection(this.budget, entry ? this.renderRow(entry) : null, Date.now())];
+  }
+
   /** Theme and the saved token live in this browser's localStorage, not in
    *  config.toml, so neither goes through `save`. */
   private renderBrowser(): HTMLElement[] {
-    const heading = h("div", { class: "af-config-tier" }, h("span", { class: "af-config-tier-name" }, "This browser"));
+    const heading = tierHeading("This browser");
     const select = h("select", { class: "af-input af-config-input af-theme-select" });
     select.setAttribute("aria-label", "Theme");
     for (const choice of THEME_CHOICES) {

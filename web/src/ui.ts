@@ -61,6 +61,7 @@ import {
   rowTitle,
 } from "./status.js";
 import type { AccountsState } from "./accounts.js";
+import type { Budget } from "./budget.js";
 import { ConfigPane, type ConfigStatus } from "./config.js";
 import { docsShortcuts } from "./docs_shortcut.js";
 import { isRenameableTab, tabDisplayLabel, tabIcon, tabLabel } from "./tablabel.js";
@@ -254,6 +255,9 @@ export interface AppState {
    *  daemon host, not a manifest key, and merging the two would be the category
    *  error #3385 asks this surface to avoid. */
   accounts: AccountsState;
+  /** budget_limit and each Claude account's plan use (GetBudget), or null when
+   *  the daemon has not answered or has no such route. */
+  budget: Budget | null;
   /** the persisted theme preference (redesign PR1): System follows the OS, Light/Dark
    *  force a mode. The config view's Theme picker sets it; theme.ts stamps data-theme on <html>
    *  and re-themes the live terminals. */
@@ -1403,7 +1407,7 @@ export class AppShell {
     // The config pane mirrors the manifest. Global config is NOT project-scoped —
     // config.toml applies to every repo — so unlike the tasks pane it re-renders on
     // the data alone, with no project in the change check.
-    this.configPane.update(state.config, state.configPath, state.configStatus, state.accounts, state.themeChoice);
+    this.configPane.update(state.config, state.configPath, state.configStatus, state.accounts, state.themeChoice, state.budget);
 
     const sessionsChanged = this.lastSessions !== state.sessions;
     const selectionChanged = this.lastSelectedId !== state.selectedId;

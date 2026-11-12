@@ -26,6 +26,7 @@
 // of wedging the app.
 
 import type { BackendCatalog } from "./backends.js";
+import { type Budget, parseBudget } from "./budget.js";
 import type { ProgramCatalog } from "./programs.js";
 import type {
   OnCompleteOption,
@@ -1178,6 +1179,12 @@ export async function removeTask(task: TaskMutationRef, token: string): Promise<
 export async function getConfig(token: string): Promise<ConfigResponse> {
   const resp = await af<ConfigResponse>("GetConfig", {}, token);
   return { entries: resp?.entries ?? [], path: resp?.path ?? "" };
+}
+
+/** Reads budget_limit and each Claude account's plan use. Throws ApiError on a
+ *  daemon without the route, like any other failure. */
+export async function getBudget(token: string): Promise<Budget> {
+  return parseBudget(await af<unknown>("GetBudget", {}, token));
 }
 
 /** Sets one global config key, exactly as `af config set key value` does: the

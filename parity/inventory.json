@@ -1421,6 +1421,24 @@
       "notes": "A per-task toggle (task.Task/TaskUpdate.BudgetGated) that skips a scheduled cron fire unless Claude plan use is under budget_limit. The CLI sets it via --budget-gated and the web task form via its Budget switch, which a watch trigger replaces with its reason. The TUI task form does not expose it yet."
     },
     {
+      "id": "config.budget",
+      "title": "See Claude plan use against the budget limit",
+      "tui": {
+        "status": "no",
+        "pointer": ""
+      },
+      "web": {
+        "status": "yes",
+        "pointer": "web/src/config.ts renderBudget -> web/src/budget_view.ts renderBudgetSection; web/src/api.ts getBudget (POST /v1/GetBudget) -> daemon/task_budget_gate.go Manager.GetBudget"
+      },
+      "cli": {
+        "status": "no",
+        "pointer": ""
+      },
+      "verdict": "unclear",
+      "notes": "A read of each Claude account's 5-hour and 7-day plan use, the reading's age, and whether budget-gated tasks run now (planusage.BudgetAccounts with the same gate taskBudgetGate uses). The web config view shows it in a Budget section with the budget_limit row. The CLI and TUI can set budget_limit (config.write) but do not show the plan use; whether they should is an owner call. Not filed pending that."
+    },
+    {
       "id": "task.on-complete",
       "title": "Declare what happens to a task run's session when it finishes",
       "tui": {
@@ -1780,6 +1798,7 @@
       "POST /v1/CreateTab": "session.tab.create",
       "POST /v1/DeleteProject": "project.delete",
       "POST /v1/DeliverPrompt": "-",
+      "POST /v1/GetBudget": "config.budget",
       "POST /v1/GetConfig": "config.read",
       "POST /v1/HandoffSession": "session.handoff",
       "POST /v1/KillSession": "session.kill",
@@ -1870,6 +1889,7 @@
     "web_rpcs": {
       "SetAttention": "session.attention",
       "AccountLogin": "session.account-login",
+      "GetBudget": "config.budget",
       "ListAccounts": "session.accounts",
       "RegisterAccount": "session.accounts",
       "AddTask": "task.add",

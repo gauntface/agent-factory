@@ -31,7 +31,7 @@ func TestCheckGate(t *testing.T) {
 			gateIn(&Reading{FiveHour: limit(20, 2*time.Hour), SevenDay: limit(60, 96*time.Hour)}),
 			GateLimit, "Plan at 60% of the week (limit 50%) · resumes Tue 12:00"},
 		{"limit 0", func() GateInput { in := gateIn(ok); in.Limit = 0; return in }(),
-			GateLimit, "Plan limit is 0% · raise it with \"af config set budget_limit 50\""},
+			GateLimit, "Plan limit is 0%"},
 		{"usage limit", func() GateInput {
 			in := gateIn(ok)
 			in.Limited, in.LimitUntil = true, gateNow.Add(3*time.Hour)
@@ -50,5 +50,16 @@ func TestCheckGate(t *testing.T) {
 				t.Fatalf("got %+v, want %s %q", g, c.gate, c.reason)
 			}
 		})
+	}
+}
+
+func TestGateTextJoinsTheHint(t *testing.T) {
+	in := gateIn(nil)
+	in.Limit = 0
+	if got, want := CheckGate(in).Text(), `Plan limit is 0% · raise it with "af config set budget_limit 50"`; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if got := (Gate{Name: GateNoReading, Reason: "No plan usage seen yet"}).Text(); got != "No plan usage seen yet" {
+		t.Fatalf("got %q", got)
 	}
 }
