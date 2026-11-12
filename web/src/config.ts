@@ -33,6 +33,15 @@ import {
   emptyAccountsState,
   renderAccountsSection,
 } from "./accounts.js";
+import {
+  type AccountBudget,
+  type Budget,
+  accountLabel,
+  gateLine,
+  pct,
+  planMeter,
+  usageLines,
+} from "./budget.js";
 import { h } from "./dom.js";
 import type { ConfigEntry, ConfigSetResponse } from "./types.js";
 import { rebuildKeepingScroll } from "./scrollkeep.js";
@@ -99,6 +108,9 @@ function tiersInOrder(entries: ConfigEntry[]): { tier: number; name: string }[] 
 /** The advanced tier's rank. Tier 3 is "correct by default and rarely touched",
  *  so it folds — the five keys that matter must not be buried under twenty. */
 const TIER_ADVANCED = 3;
+
+/** Shown in the Budget section, with the plan use it limits, not in its tier. */
+const BUDGET_KEY = "budget_limit";
 
 /** The kind of control a key gets. */
 export type ControlKind = "checkbox" | "select" | "text";
@@ -272,6 +284,7 @@ export class ConfigPane {
    *  config: see accounts.ts. */
   private accounts: AccountsState = emptyAccountsState();
   private theme: ThemeChoice = "system";
+  private budget: Budget | null = null;
   private showAdvanced = false;
   /** The key whose field is open, if any. Only one row edits at a time: a config
    *  write is per-key (like `af config set`), so a multi-row "save all" would
@@ -292,6 +305,7 @@ export class ConfigPane {
   private lastStatus: ConfigStatus | null = null;
   private lastAccounts: AccountsState | null = null;
   private lastTheme: ThemeChoice | null = null;
+  private lastBudget: Budget | null = null;
 
   constructor(private readonly actions: ConfigActions) {
     this.el = h("section", { class: "af-config" });
@@ -306,9 +320,10 @@ export class ConfigPane {
     status: ConfigStatus | null,
     accounts: AccountsState,
     theme: ThemeChoice = this.theme,
+    budget: Budget | null = this.budget,
   ): void {
     if (this.lastEntries === entries && this.lastStatus === status && this.lastAccounts === accounts
-      && this.lastTheme === theme) {
+      && this.lastTheme === theme && this.lastBudget === budget) {
       return;
     }
     // Captured before `lastStatus` is overwritten below: it is the EDGE that
@@ -325,6 +340,8 @@ export class ConfigPane {
     this.lastAccounts = accounts;
     this.lastTheme = theme;
     this.theme = theme;
+    this.lastBudget = budget;
+    this.budget = budget;
     // Retired web appearance keys from older daemons are never editable here.
     this.entries = entries.filter((entry) => entry.key !== "theme" && !entry.key.startsWith("theme."));
     this.path = path;
@@ -479,7 +496,7 @@ export class ConfigPane {
 
     const sections: HTMLElement[] = [];
     for (const { tier, name } of tiersInOrder(this.entries)) {
-      const inTier = this.entries.filter((e) => e.tier === tier);
+      const inTier = this.entries.filter((e) => e.tier === tier && e.key !== BUDGET_KEY);
       if (inTier.length === 0) {
         continue;
       }
@@ -508,6 +525,8 @@ export class ConfigPane {
       }
     }
 
+    sections.push(...this.renderBudget());
+
     const content =
       sections.length > 0
         ? sections
@@ -525,6 +544,22 @@ export class ConfigPane {
       h("div", { class: "af-config-list" }, ...this.renderBrowser(), ...content),
       renderAccountsSection(this.accounts, this.actions.accounts, this.registration),
     );
+  }
+
+  /** budget_limit and, when the daemon reports it, each Claude account's plan
+   *  use against it. */
+  private renderBudget(): HTMLElement[] {
+    const entry = this.entries.find((e) => e.key === BUDGET_KEY);
+    const budget = this.budget;
+    if (!entry && !budget) return [];
+    const out: HTMLElement[] = [h("div", { class: "af-config-tier" }, h("span", { class: "af-config-tier-name" }, "Budget"))];
+    if (entry) out.push(this.renderRow(entry));
+    if (budget) {
+      const now = Date.now();
+      const named = budget.accounts.length > 1;
+      for (const a of budget.accounts) out.push(renderAccountBudget(a, budget.limit, now, named));
+    }
+    return out;
   }
 
   /** Theme and the saved token live in this browser's localStorage, not in
@@ -700,4 +735,27 @@ export class ConfigPane {
 
     return h("div", { class: "af-config-control" }, input, dirty, save);
   }
+}
+
+function renderAccountBudget(a: AccountBudget, limit: number, now: number, named: boolean): HTMLElement {
+  const el = h("div", { class: "af-budget-account" });
+  el.setAttribute("data-account", a.account);
+  if (named) el.append(h("span", { class: "af-budget-account-name" }, accountLabel(a)));
+  const meter = planMeter(a, limit, now);
+  const plan = h("div", { class: "af-budget-plan" });
+  if (meter) {
+    const fill = h("span", { class: "af-budget-meter-fill" });
+    fill.style.width = `${meter.fill}%`;
+    const bar = h("span", { class: "af-budget-meter", role: "img" }, fill);
+    bar.setAttribute("aria-label", meter.label);
+    plan.append(meter.before, bar, meter.after);
+  } else {
+    plan.append(`Plan limit ${pct(limit)}`);
+  }
+  el.append(
+    plan,
+    h("div", { class: "af-budget-detail" }, ...usageLines(a, limit, now).map((l) => h("div", {}, l))),
+    h("div", { class: a.gate.name === "" ? "af-budget-gate" : "af-budget-gate af-budget-warn" }, gateLine(a)),
+  );
+  return el;
 }

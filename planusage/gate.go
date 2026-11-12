@@ -34,8 +34,8 @@ type GateInput struct {
 // Gate is a closed gate: its name and the reason the UI shows. The zero Gate
 // is open.
 type Gate struct {
-	Name   string
-	Reason string
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
 }
 
 func (g Gate) Open() bool { return g.Name == "" }

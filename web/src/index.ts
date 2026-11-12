@@ -47,6 +47,7 @@ import {
   suggestSessionName,
   listTasks,
   setConfigValue,
+  getBudget,
   listAccounts,
   registerAccount as registerAccountRPC,
   startAccountLogin,
@@ -154,6 +155,7 @@ const store = new Store<AppState>({
   configPath: "",
   configStatus: null,
   accounts: emptyAccountsState(),
+  budget: null,
   selectedProject: null,
   authRequired: true,
   // Start in the connecting state: mount() immediately probes /v1/auth-info, and
@@ -688,6 +690,7 @@ function switchView(view: View): void {
     // section shows them as they are NOW, including an account registered from
     // the CLI or logged in from the TUI since this tab was opened.
     refreshAccounts();
+    refreshBudget();
   }
 }
 
@@ -1945,6 +1948,19 @@ function refreshAccounts(): void {
   accountsRefetcher.refresh();
 }
 
+/** A failure, including a daemon without GetBudget, hides the plan use and
+ *  leaves the budget_limit row. */
+const budgetRefetcher = createFencedRefetcher({
+  readToken: () => token,
+  fetch: getBudget,
+  commit: (budget) => store.set({ budget }),
+  onError: () => store.set({ budget: null }),
+});
+
+function refreshBudget(): void {
+  budgetRefetcher.refresh();
+}
+
 /** Records the outcome of an account action on the row that produced it. */
 function setAccountStatus(agent: string, name: string, message: string, error: boolean): void {
   store.set({ accounts: { ...store.get().accounts, status: { agent, name, message, error } } });
@@ -2075,6 +2091,7 @@ function applyConfigValueNow(key: string, value: string, tok: string): Promise<v
         // holds the new value; an open config view would otherwise display the
         // pre-write state until the user leaves and re-enters.
         refreshConfig();
+        if (key === "budget_limit") refreshBudget();
         return;
       }
       store.set({
@@ -2087,6 +2104,7 @@ function applyConfigValueNow(key: string, value: string, tok: string): Promise<v
         },
       });
       refreshConfig();
+      if (resp.result.key === "budget_limit") refreshBudget();
     })
     .catch((err: unknown) => {
       if (requestGeneration !== connectionGeneration || token !== tok) return;
@@ -2758,6 +2776,7 @@ function stopStream(): void {
   projectsRefetcher.invalidate();
   configRefetcher.invalidate();
   accountsRefetcher.invalidate();
+  budgetRefetcher.invalidate();
   root?.removeAttribute("data-af-resync-settled");
   if (resyncTimer !== null) {
     window.clearTimeout(resyncTimer);

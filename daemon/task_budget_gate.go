@@ -37,13 +37,18 @@ func (m *Manager) taskBudgetGate(t task.Task) planusage.Gate {
 	}
 	account := m.claudeAccountFor(t.ProjectPath)
 	reading, err := planusage.LoadReading(account)
-	if err != nil {
-		return planusage.Gate{Name: planusage.GateNoReading, Reason: "Can't read the plan usage · " + err.Error()}
+	return m.planGate(account, reading, err, cfg.BudgetLimit, time.Now())
+}
+
+// planGate checks a Claude account's plan reading, and its usage limit,
+// against limit.
+func (m *Manager) planGate(account string, reading *planusage.Reading, readErr error, limit int, now time.Time) planusage.Gate {
+	if readErr != nil {
+		return planusage.Gate{Name: planusage.GateNoReading, Reason: "Can't read the plan usage · " + readErr.Error()}
 	}
-	now := time.Now()
 	limited, until, limitErr := m.claudeUsageLimit(account, now)
 	in := planusage.GateInput{
-		Limit: float64(cfg.BudgetLimit), Reading: reading,
+		Limit: float64(limit), Reading: reading,
 		Limited: limited, LimitUntil: until,
 		Now: now, Loc: time.Local,
 	}

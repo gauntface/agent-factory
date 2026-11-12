@@ -6453,6 +6453,98 @@ async function copyText(text) {
   }
 }
 
+// src/budget.ts
+var WINDOW_LABELS = {
+  five_hour: { bar: "5-hour window", detail: "5-hour" },
+  seven_day: { bar: "week", detail: "Weekly" }
+};
+var WINDOWS = ["five_hour", "seven_day"];
+function isRecord(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function str(v) {
+  return typeof v === "string" ? v : "";
+}
+function parseWindow(v) {
+  const w = isRecord(v) ? v : {};
+  return { plan: Number(w.plan) || 0, resets_at: typeof w.resets_at === "string" ? w.resets_at : null };
+}
+function parseAccount(v) {
+  if (!isRecord(v) || typeof v.account !== "string" || v.account === "") return null;
+  const g = isRecord(v.gate) ? v.gate : {};
+  return {
+    account: v.account,
+    default: v.default === true,
+    five_hour: parseWindow(v.five_hour),
+    seven_day: parseWindow(v.seven_day),
+    reading_at: typeof v.reading_at === "string" ? v.reading_at : null,
+    gate: { name: str(g.name), reason: str(g.reason) }
+  };
+}
+function parseBudget(d) {
+  const v = isRecord(d) ? d : {};
+  const accounts = Array.isArray(v.accounts) ? v.accounts.map(parseAccount).filter((a) => a !== null) : [];
+  return { limit: Number(v.limit) || 0, accounts };
+}
+function valid(w, now) {
+  return w.resets_at !== null && Date.parse(w.resets_at) > now;
+}
+function pct(v) {
+  return `${Number(v.toFixed(1))}%`;
+}
+function tighterWindow(a, now) {
+  let best = null;
+  for (const k of WINDOWS) {
+    if (valid(a[k], now) && (best === null || a[k].plan > a[best].plan)) best = k;
+  }
+  return best;
+}
+function resetLabel(at, now) {
+  const d = new Date(at);
+  const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  if (d.getTime() - now < 24 * 36e5) return hm;
+  return `${d.toLocaleDateString("en-US", { weekday: "short" })} ${hm}`;
+}
+function readingAge(at, now) {
+  if (!at) return "no reading yet";
+  const min = Math.floor(Math.max(0, now - Date.parse(at)) / 6e4);
+  if (min < 1) return "read just now";
+  if (min < 60) return `read ${min} min ago`;
+  const hours = Math.floor(min / 60);
+  return hours < 24 ? `read ${hours} h ago` : `read ${Math.floor(hours / 24)} d ago`;
+}
+function usageLines(a, limit, now) {
+  const line = (k) => {
+    const w = a[k];
+    const label = WINDOW_LABELS[k].detail;
+    if (!valid(w, now)) return `${label} \xB7 no reading`;
+    return `${label} \xB7 plan ${pct(w.plan)} of ${pct(limit)} limit \xB7 resets ${resetLabel(w.resets_at, now)}`;
+  };
+  return [line("five_hour"), line("seven_day"), readingAge(a.reading_at, now)];
+}
+function planMeter(a, limit, now) {
+  const k = tighterWindow(a, now);
+  if (k === null) return null;
+  const plan = a[k].plan;
+  return {
+    before: `Plan ${pct(plan)} of ${WINDOW_LABELS[k].bar}`,
+    fill: limit > 0 ? Math.min(100, plan / limit * 100) : 100,
+    label: `${pct(plan)} of a ${pct(limit)} limit`,
+    after: `limit ${pct(limit)}`
+  };
+}
+function webReason(reason) {
+  const out = reason.replace(/,?\s+or\s+[^;,·]*"af [^"]*"[^;,·]*/g, "").replace(/(?:[;,]\s*|\s·\s)?[^;,·]*"af [^"]*"[^;,·]*/g, "").trim();
+  return out || reason;
+}
+function gateLine(a) {
+  if (a.gate.name === "") return "Budget-gated tasks run now";
+  return `Budget-gated tasks skip \xB7 ${webReason(a.gate.reason)}`;
+}
+function accountLabel(a) {
+  return a.default ? `${a.account} \xB7 new sessions use it` : a.account;
+}
+
 // src/api.ts
 var TOKEN_KEY = "af.token";
 function loadToken() {
@@ -6869,6 +6961,9 @@ async function removeTask(task, token2) {
 async function getConfig(token2) {
   const resp = await af("GetConfig", {}, token2);
   return { entries: resp?.entries ?? [], path: resp?.path ?? "" };
+}
+async function getBudget(token2) {
+  return parseBudget(await af("GetBudget", {}, token2));
 }
 async function setConfigValue(key, value, token2) {
   return af("SetConfigValue", { key, value }, token2);
@@ -7795,6 +7890,7 @@ function tiersInOrder(entries) {
   return [...seen.entries()].sort((a, b) => a[0] - b[0]).map(([tier, name]) => ({ tier, name }));
 }
 var TIER_ADVANCED = 3;
+var BUDGET_KEY = "budget_limit";
 function controlKind(e) {
   if (e.type === "bool") {
     return "checkbox";
@@ -7853,6 +7949,7 @@ var ConfigPane = class {
    *  config: see accounts.ts. */
   accounts = emptyAccountsState();
   theme = "system";
+  budget = null;
   showAdvanced = false;
   /** The key whose field is open, if any. Only one row edits at a time: a config
    *  write is per-key (like `af config set`), so a multi-row "save all" would
@@ -7872,10 +7969,11 @@ var ConfigPane = class {
   lastStatus = null;
   lastAccounts = null;
   lastTheme = null;
+  lastBudget = null;
   /** Feeds the pane fresh manifest rows. Re-rendering is skipped when nothing
    *  changed, matching the rest of the shell's patch-in-place model. */
-  update(entries, path, status, accounts, theme = this.theme) {
-    if (this.lastEntries === entries && this.lastStatus === status && this.lastAccounts === accounts && this.lastTheme === theme) {
+  update(entries, path, status, accounts, theme = this.theme, budget = this.budget) {
+    if (this.lastEntries === entries && this.lastStatus === status && this.lastAccounts === accounts && this.lastTheme === theme && this.lastBudget === budget) {
       return;
     }
     const statusIsNew = status !== this.lastStatus;
@@ -7889,6 +7987,8 @@ var ConfigPane = class {
     this.lastAccounts = accounts;
     this.lastTheme = theme;
     this.theme = theme;
+    this.lastBudget = budget;
+    this.budget = budget;
     this.entries = entries.filter((entry) => entry.key !== "theme" && !entry.key.startsWith("theme."));
     this.path = path;
     this.status = status;
@@ -8000,7 +8100,7 @@ var ConfigPane = class {
     head.append(assistantBtn);
     const sections = [];
     for (const { tier, name } of tiersInOrder(this.entries)) {
-      const inTier = this.entries.filter((e) => e.tier === tier);
+      const inTier = this.entries.filter((e) => e.tier === tier && e.key !== BUDGET_KEY);
       if (inTier.length === 0) {
         continue;
       }
@@ -8027,6 +8127,7 @@ var ConfigPane = class {
         sections.push(this.renderRow(e));
       }
     }
+    sections.push(...this.renderBudget());
     const content = sections.length > 0 ? sections : [
       h(
         "p",
@@ -8039,6 +8140,21 @@ var ConfigPane = class {
       h("div", { class: "af-config-list" }, ...this.renderBrowser(), ...content),
       renderAccountsSection(this.accounts, this.actions.accounts, this.registration)
     );
+  }
+  /** budget_limit and, when the daemon reports it, each Claude account's plan
+   *  use against it. */
+  renderBudget() {
+    const entry = this.entries.find((e) => e.key === BUDGET_KEY);
+    const budget = this.budget;
+    if (!entry && !budget) return [];
+    const out = [h("div", { class: "af-config-tier" }, h("span", { class: "af-config-tier-name" }, "Budget"))];
+    if (entry) out.push(this.renderRow(entry));
+    if (budget) {
+      const now = Date.now();
+      const named = budget.accounts.length > 1;
+      for (const a of budget.accounts) out.push(renderAccountBudget(a, budget.limit, now, named));
+    }
+    return out;
   }
   /** Theme and the saved token live in this browser's localStorage, not in
    *  config.toml, so neither goes through `save`. */
@@ -8171,6 +8287,28 @@ var ConfigPane = class {
     return h("div", { class: "af-config-control" }, input, dirty, save);
   }
 };
+function renderAccountBudget(a, limit, now, named) {
+  const el2 = h("div", { class: "af-budget-account" });
+  el2.setAttribute("data-account", a.account);
+  if (named) el2.append(h("span", { class: "af-budget-account-name" }, accountLabel(a)));
+  const meter = planMeter(a, limit, now);
+  const plan = h("div", { class: "af-budget-plan" });
+  if (meter) {
+    const fill = h("span", { class: "af-budget-meter-fill" });
+    fill.style.width = `${meter.fill}%`;
+    const bar = h("span", { class: "af-budget-meter", role: "img" }, fill);
+    bar.setAttribute("aria-label", meter.label);
+    plan.append(meter.before, bar, meter.after);
+  } else {
+    plan.append(`Plan limit ${pct(limit)}`);
+  }
+  el2.append(
+    plan,
+    h("div", { class: "af-budget-detail" }, ...usageLines(a, limit, now).map((l) => h("div", {}, l))),
+    h("div", { class: a.gate.name === "" ? "af-budget-gate" : "af-budget-gate af-budget-warn" }, gateLine(a))
+  );
+  return el2;
+}
 
 // src/account_scope.ts
 var AMBIENT_ACCOUNT = "";
@@ -12929,11 +13067,11 @@ function defaultProject(sessions, tasks, registeredRoots = []) {
   if (summaries.length === 0) {
     return null;
   }
-  const valid = new Set(summaries.map((p) => p.root));
+  const valid2 = new Set(summaries.map((p) => p.root));
   let best = null;
   for (const s of sessions) {
     const root2 = s.worktree?.repo_path;
-    if (!root2 || isArchived(s) || !valid.has(root2)) {
+    if (!root2 || isArchived(s) || !valid2.has(root2)) {
       continue;
     }
     if (!best || (s.created_at ?? "") > (best.created_at ?? "")) {
@@ -12945,7 +13083,7 @@ function defaultProject(sessions, tasks, registeredRoots = []) {
   }
   let bestTask = null;
   for (const t of tasks) {
-    if (!t.project_path || !valid.has(t.project_path)) {
+    if (!t.project_path || !valid2.has(t.project_path)) {
       continue;
     }
     if (!bestTask || (t.created_at ?? "") > (bestTask.created_at ?? "")) {
@@ -12955,11 +13093,11 @@ function defaultProject(sessions, tasks, registeredRoots = []) {
   return bestTask?.project_path ?? summaries[0]?.root ?? null;
 }
 function reconcileProject(sessions, tasks, persisted, current, registeredRoots = []) {
-  const valid = validRoots(sessions, tasks, registeredRoots);
-  if (current && valid.has(current)) {
+  const valid2 = validRoots(sessions, tasks, registeredRoots);
+  if (current && valid2.has(current)) {
     return current;
   }
-  if (persisted && valid.has(persisted)) {
+  if (persisted && valid2.has(persisted)) {
     return persisted;
   }
   return defaultProject(sessions, tasks, registeredRoots);
@@ -17347,7 +17485,7 @@ var AppShell = class {
       this.lastTasksProject = state.selectedProject;
       this.tasksPane.update(state.tasks, state.selectedProject, state.tasksError);
     }
-    this.configPane.update(state.config, state.configPath, state.configStatus, state.accounts, state.themeChoice);
+    this.configPane.update(state.config, state.configPath, state.configStatus, state.accounts, state.themeChoice, state.budget);
     const sessionsChanged = this.lastSessions !== state.sessions;
     const selectionChanged = this.lastSelectedId !== state.selectedId;
     const projectChanged = this.lastSelectedProject !== state.selectedProject;
@@ -18698,21 +18836,21 @@ function captureTabDeleteTarget(target) {
 }
 
 // src/proposal_api.ts
-function isRecord(v) {
+function isRecord2(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
-function str(v) {
+function str2(v) {
   return typeof v === "string" ? v : "";
 }
 var PUSH_STATES = ["idle", "countdown", "waiting_agent", "held", "sent"];
 function parsePushStatus(d) {
-  if (!isRecord(d) || typeof d.state !== "string" || !PUSH_STATES.includes(d.state)) {
+  if (!isRecord2(d) || typeof d.state !== "string" || !PUSH_STATES.includes(d.state)) {
     return null;
   }
   const due = typeof d.due_in_ms === "number" && Number.isFinite(d.due_in_ms) ? Math.max(0, d.due_in_ms) : null;
   return {
-    sessionId: str(d.session_id),
-    slug: str(d.slug),
+    sessionId: str2(d.session_id),
+    slug: str2(d.slug),
     mode: d.mode === "manual" ? "manual" : "auto",
     state: d.state,
     dueInMs: due,
@@ -18720,22 +18858,22 @@ function parsePushStatus(d) {
   };
 }
 function parseProposalPush(ev) {
-  if (!isRecord(ev) || ev.type !== "proposal.push") {
+  if (!isRecord2(ev) || ev.type !== "proposal.push") {
     return null;
   }
   const status = parsePushStatus(ev.data);
   return status && status.sessionId !== "" && status.slug !== "" ? status : null;
 }
 function parseProposalChange(ev) {
-  if (!isRecord(ev) || ev.type !== "proposal.changed" || !isRecord(ev.data)) {
+  if (!isRecord2(ev) || ev.type !== "proposal.changed" || !isRecord2(ev.data)) {
     return null;
   }
   const d = ev.data;
-  const slug = str(d.slug);
+  const slug = str2(d.slug);
   if (slug === "") {
     return null;
   }
-  return { repoId: str(d.repo_id), slug, doc: str(d.doc), commit: str(d.commit), author: str(d.author) };
+  return { repoId: str2(d.repo_id), slug, doc: str2(d.doc), commit: str2(d.commit), author: str2(d.author) };
 }
 
 // src/index.ts
@@ -18748,6 +18886,7 @@ var store = new Store({
   configPath: "",
   configStatus: null,
   accounts: emptyAccountsState(),
+  budget: null,
   selectedProject: null,
   authRequired: true,
   // Start in the connecting state: mount() immediately probes /v1/auth-info, and
@@ -19085,6 +19224,7 @@ function switchView(view) {
   if (view === "config") {
     refreshConfig();
     refreshAccounts();
+    refreshBudget();
   }
 }
 function setStatusFilter(kind, on) {
@@ -19851,6 +19991,15 @@ var accountsRefetcher = createFencedRefetcher({
 function refreshAccounts() {
   accountsRefetcher.refresh();
 }
+var budgetRefetcher = createFencedRefetcher({
+  readToken: () => token,
+  fetch: getBudget,
+  commit: (budget) => store.set({ budget }),
+  onError: () => store.set({ budget: null })
+});
+function refreshBudget() {
+  budgetRefetcher.refresh();
+}
 function setAccountStatus(agent, name, message, error) {
   store.set({ accounts: { ...store.get().accounts, status: { agent, name, message, error } } });
 }
@@ -19917,6 +20066,7 @@ function applyConfigValueNow(key, value, tok) {
   return setConfigValue(key, value, tok).then((resp) => {
     if (requestGeneration !== connectionGeneration || token !== tok) {
       refreshConfig();
+      if (key === "budget_limit") refreshBudget();
       return;
     }
     store.set({
@@ -19929,6 +20079,7 @@ function applyConfigValueNow(key, value, tok) {
       }
     });
     refreshConfig();
+    if (resp.result.key === "budget_limit") refreshBudget();
   }).catch((err) => {
     if (requestGeneration !== connectionGeneration || token !== tok) return;
     store.set({ configStatus: { key, value: "", notice: "", error: errorText(err) } });
@@ -20361,6 +20512,7 @@ function stopStream() {
   projectsRefetcher.invalidate();
   configRefetcher.invalidate();
   accountsRefetcher.invalidate();
+  budgetRefetcher.invalidate();
   root?.removeAttribute("data-af-resync-settled");
   if (resyncTimer !== null) {
     window.clearTimeout(resyncTimer);
