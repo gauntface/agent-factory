@@ -229,6 +229,16 @@ func (s *controlServer) GetConfig(_ GetConfigRequest, resp *GetConfigResponse) e
 	return nil
 }
 
+// GetBudget reports the plan budget. A read, so no mutation admission gate.
+func (s *controlServer) GetBudget(_ GetBudgetRequest, resp *GetBudgetResponse) error {
+	out, err := s.manager.GetBudget()
+	if err != nil {
+		return err
+	}
+	*resp = out
+	return nil
+}
+
 // SetConfigValue writes one config key on the caller's behalf, through
 // config.SetGlobalConfigValue — the identical validated, file-locked, atomic
 // path a daemonless `af config set` uses. The daemon adds nothing: no second

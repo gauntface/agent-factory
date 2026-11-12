@@ -285,6 +285,13 @@ the field and click its **Save** button or press `Enter`; unchanged values leave
 Save disabled. Each write affects one key. The row shows either the saved value,
 an applicable restart notice, or the validation error.
 
+The **Budget** section holds the `budget_limit` row. Below it, each Claude
+account shows its plan use against the limit, with a meter for the window
+closest to the limit, both windows' reset times, and the reading's age. A last
+line says whether budget-gated Claude tasks run now, or why they skip. The
+section refreshes every minute while the view is open. See
+[Run only within the budget](tasks.md#run-only-within-the-budget).
+
 **Configure with assistant** opens a terminal overlay for conversational setup.
 Type your request there and use **×** to close it and return to the settings.
 

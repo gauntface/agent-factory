@@ -1948,13 +1948,15 @@ function refreshAccounts(): void {
   accountsRefetcher.refresh();
 }
 
-/** A failure, including a daemon without GetBudget, hides the plan use and
- *  leaves the budget_limit row. */
+/** A daemon without GetBudget answers 404, which hides the plan use and leaves
+ *  the budget_limit row. Any other failure keeps the last answer. */
 const budgetRefetcher = createFencedRefetcher({
   readToken: () => token,
   fetch: getBudget,
   commit: (budget) => store.set({ budget }),
-  onError: () => store.set({ budget: null }),
+  onError: (err: unknown) => {
+    if (err instanceof ApiError && err.status === 404) store.set({ budget: null });
+  },
 });
 
 function refreshBudget(): void {
@@ -2091,7 +2093,7 @@ function applyConfigValueNow(key: string, value: string, tok: string): Promise<v
         // holds the new value; an open config view would otherwise display the
         // pre-write state until the user leaves and re-enters.
         refreshConfig();
-        if (key === "budget_limit") refreshBudget();
+        refreshBudget();
         return;
       }
       store.set({
@@ -2104,7 +2106,7 @@ function applyConfigValueNow(key: string, value: string, tok: string): Promise<v
         },
       });
       refreshConfig();
-      if (resp.result.key === "budget_limit") refreshBudget();
+      refreshBudget();
     })
     .catch((err: unknown) => {
       if (requestGeneration !== connectionGeneration || token !== tok) return;
@@ -2138,6 +2140,16 @@ window.setInterval(() => {
     refreshTasks();
   }
 }, TASK_HEALTH_POLL_MS);
+
+// Plan use moves with every Claude session, and nothing announces it. Guarded in
+// the tick for the same reason as the tasks poll above.
+const BUDGET_POLL_MS = 60_000;
+window.setInterval(() => {
+  const state = store.get();
+  if (state.phase === "app" && state.view === "config") {
+    refreshBudget();
+  }
+}, BUDGET_POLL_MS);
 
 /** Refetches the authoritative task list and commits it to the store. Failures are
  *  swallowed: the events plane / a later action retries, exactly like the Snapshot

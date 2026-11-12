@@ -4,6 +4,7 @@
 // envelope, each addressed by the session that owns the Docs tab.
 
 import { af, ApiError, errorText } from "./api.js";
+import { isRecord, str } from "./parse.js";
 
 export interface ProposalDocRef {
   /** The doc name: "api". */
@@ -62,14 +63,6 @@ export interface ProposalChange {
 }
 
 export const DOC_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-function str(v: unknown): string {
-  return typeof v === "string" ? v : "";
-}
 
 export function parseProposalInfo(d: unknown): ProposalInfo {
   if (!isRecord(d)) {

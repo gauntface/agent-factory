@@ -14,7 +14,6 @@ import {
   resetLabel,
   tighterWindow,
   usageLines,
-  webReason,
 } from "./budget.js";
 
 // Local time, so the reset labels read the same in any zone.
@@ -73,14 +72,20 @@ test("pct trims trailing zeros", () => {
 });
 
 test("tighterWindow picks the higher valid window, and the 5-hour one on a tie", () => {
-  assert.equal(tighterWindow(account(), now), "five_hour");
-  assert.equal(tighterWindow(account({ seven_day: { plan: 70, resets_at: at(96) } }), now), "seven_day");
-  assert.equal(tighterWindow(account({ seven_day: { plan: 62, resets_at: at(96) } }), now), "five_hour");
-  assert.equal(tighterWindow(account({ five_hour: { plan: 90, resets_at: at(-1) } }), now), "seven_day");
+  assert.equal(tighterWindow(account(), 75, now), "five_hour");
+  assert.equal(tighterWindow(account({ seven_day: { plan: 70, resets_at: at(96) } }), 75, now), "seven_day");
+  assert.equal(tighterWindow(account({ seven_day: { plan: 62, resets_at: at(96) } }), 75, now), "five_hour");
+  assert.equal(tighterWindow(account({ five_hour: { plan: 90, resets_at: at(-1) } }), 75, now), "seven_day");
   assert.equal(
-    tighterWindow(account({ five_hour: { plan: 0, resets_at: null }, seven_day: { plan: 0, resets_at: null } }), now),
+    tighterWindow(account({ five_hour: { plan: 0, resets_at: null }, seven_day: { plan: 0, resets_at: null } }), 75, now),
     null,
   );
+});
+
+test("tighterWindow picks the later reset when both windows are at the limit, as the gate does", () => {
+  const both = account({ five_hour: { plan: 90, resets_at: at(2) }, seven_day: { plan: 60, resets_at: at(96) } });
+  assert.equal(tighterWindow(both, 50, now), "seven_day");
+  assert.equal(tighterWindow(both, 75, now), "five_hour");
 });
 
 test("resetLabel shows a time within a day, else the weekday too", () => {
@@ -91,16 +96,16 @@ test("resetLabel shows a time within a day, else the weekday too", () => {
 test("readingAge", () => {
   assert.equal(readingAge(null, now), "no reading yet");
   assert.equal(readingAge(at(0), now), "read just now");
-  assert.equal(readingAge(at(0, -2), now), "read 2 min ago");
-  assert.equal(readingAge(at(-3), now), "read 3 h ago");
-  assert.equal(readingAge(at(-50), now), "read 2 d ago");
+  assert.equal(readingAge(at(0, -2), now), "read 2m ago");
+  assert.equal(readingAge(at(-3), now), "read 3h ago");
+  assert.equal(readingAge(at(-50), now), "read 2d ago");
 });
 
 test("usageLines shows both windows against the limit and the reading age", () => {
   assert.deepEqual(usageLines(account(), 50, now), [
     "5-hour · plan 62% of 50% limit · resets 14:00",
     "Weekly · plan 30% of 50% limit · resets Tue 12:00",
-    "read 2 min ago",
+    "read 2m ago",
   ]);
   assert.deepEqual(usageLines(account({ seven_day: { plan: 0, resets_at: null }, reading_at: null }), 75, now), [
     "5-hour · plan 62% of 75% limit · resets 14:00",
@@ -113,7 +118,7 @@ test("planMeter fills as a share of the limit, capped at full", () => {
   assert.deepEqual(planMeter(account({ five_hour: { plan: 25, resets_at: at(2) } }), 50, now), {
     before: "Plan 30% of week",
     fill: 60,
-    label: "30% of a 50% limit",
+    ariaLabel: "30% of a 50% limit",
     after: "limit 50%",
   });
   assert.equal(planMeter(account(), 50, now)?.fill, 100);
@@ -121,21 +126,16 @@ test("planMeter fills as a share of the limit, capped at full", () => {
   assert.equal(planMeter(account({ five_hour: { plan: 0, resets_at: null }, seven_day: { plan: 0, resets_at: null } }), 50, now), null);
 });
 
-test("gateLine says whether budget-gated tasks run, without CLI hints", () => {
-  assert.equal(gateLine(account()), "Budget-gated tasks run now");
+test("gateLine says whether budget-gated Claude tasks run", () => {
+  assert.equal(gateLine(account()), "Budget-gated Claude tasks run now");
   assert.equal(
     gateLine(account({ gate: { name: "limit", reason: "Plan at 62% of the 5-hour window (limit 50%) · resumes 14:00" } })),
-    "Budget-gated tasks skip · Plan at 62% of the 5-hour window (limit 50%) · resumes 14:00",
+    "Budget-gated Claude tasks skip · Plan at 62% of the 5-hour window (limit 50%) · resumes 14:00",
   );
-  assert.equal(
-    gateLine(account({ gate: { name: "limit", reason: 'Plan limit is 0% · raise it with "af config set budget_limit 50"' } })),
-    "Budget-gated tasks skip · Plan limit is 0%",
-  );
-  assert.equal(webReason("No plan usage seen yet"), "No plan usage seen yet");
 });
 
-test("accountLabel marks the account new sessions use", () => {
-  assert.equal(accountLabel(account()), "default · new sessions use it");
+test("accountLabel marks the global default account", () => {
+  assert.equal(accountLabel(account()), "default · global default");
   assert.equal(accountLabel(account({ account: "work", default: false })), "work");
 });
 

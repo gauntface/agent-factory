@@ -378,8 +378,7 @@ var httpRoutes = []HTTPRoute{
 		handler:     func(cs *controlServer) http.HandlerFunc { return rpcHandler(cs.AccountLogin) },
 	},
 
-	// Budget. A read of the Claude plan use the budget gate checks, for the web
-	// config view's Budget section.
+	// Budget.
 	{
 		Method:      http.MethodPost,
 		Path:        "/v1/GetBudget",

@@ -39,6 +39,12 @@ func TestSkipOverBudget(t *testing.T) {
 	assert.Contains(t, got.LastRunStatus, "Plan at 60% of the week")
 	assert.NotNil(t, got.LastRunAt)
 
+	gate = planusage.Gate{Name: planusage.GateLimit, Reason: "Plan limit is 0%", Hint: `raise it with "af config set budget_limit 50"`}
+	assert.True(t, s.skipClosedBudgetGate("gated"))
+	got, err = task.GetTask("gated")
+	require.NoError(t, err)
+	assert.Equal(t, TaskStatusSkippedBudgetGate+` · Plan limit is 0% · raise it with "af config set budget_limit 50"`, got.LastRunStatus)
+
 	off := false
 	_, err = task.UpdateTask("gated", task.TaskUpdate{BudgetGated: &off}, task.ProjectExpectation{})
 	require.NoError(t, err)

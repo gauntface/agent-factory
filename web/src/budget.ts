@@ -1,6 +1,9 @@
 // The Claude plan budget the config view's Budget section shows: GetBudget's
 // answer, and the words and meter for each account. No DOM and no I/O.
 
+import { isRecord, str } from "./parse.js";
+import { formatDuration } from "./time.js";
+
 export interface PlanWindow {
   plan: number;
   /** null when there is no valid reading for the window. */
@@ -31,20 +34,12 @@ export interface Budget {
 
 export type WindowKey = "five_hour" | "seven_day";
 
-export const WINDOW_LABELS: Record<WindowKey, { bar: string; detail: string }> = {
+const WINDOW_LABELS: Record<WindowKey, { bar: string; detail: string }> = {
   five_hour: { bar: "5-hour window", detail: "5-hour" },
   seven_day: { bar: "week", detail: "Weekly" },
 };
 
 const WINDOWS: readonly WindowKey[] = ["five_hour", "seven_day"];
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-function str(v: unknown): string {
-  return typeof v === "string" ? v : "";
-}
 
 function parseWindow(v: unknown): PlanWindow {
   const w = isRecord(v) ? v : {};
@@ -64,14 +59,13 @@ function parseAccount(v: unknown): AccountBudget | null {
   };
 }
 
-/** A GetBudget reply. */
 export function parseBudget(d: unknown): Budget {
   const v = isRecord(d) ? d : {};
   const accounts = Array.isArray(v.accounts) ? v.accounts.map(parseAccount).filter((a) => a !== null) : [];
   return { limit: Number(v.limit) || 0, accounts };
 }
 
-export function valid(w: PlanWindow, now: number): boolean {
+function hasLiveReading(w: PlanWindow, now: number): w is PlanWindow & { resets_at: string } {
   return w.resets_at !== null && Date.parse(w.resets_at) > now;
 }
 
@@ -80,17 +74,28 @@ export function pct(v: number): string {
   return `${Number(v.toFixed(1))}%`;
 }
 
-/** The window closest to the limit: the higher plan %; a tie goes to the
- *  5-hour window. null when neither window has a valid reading. */
-export function tighterWindow(a: AccountBudget, now: number): WindowKey | null {
+/** The window the meter shows. When both are at the limit it is the one with
+ *  the later reset, which is the one the gate names; otherwise the higher plan
+ *  %, and a tie goes to the 5-hour window. null when neither window has a valid
+ *  reading. */
+export function tighterWindow(a: AccountBudget, limit: number, now: number): WindowKey | null {
   let best: WindowKey | null = null;
   for (const k of WINDOWS) {
-    if (valid(a[k], now) && (best === null || a[k].plan > a[best].plan)) best = k;
+    const w = a[k];
+    if (!hasLiveReading(w, now)) continue;
+    if (best === null) {
+      best = k;
+      continue;
+    }
+    const b = a[best];
+    const bothOver = w.plan >= limit && b.plan >= limit;
+    if (bothOver ? Date.parse(w.resets_at) > Date.parse(b.resets_at!) : w.plan > b.plan) best = k;
   }
   return best;
 }
 
-/** A reset time: 14:00 within a day, else Mon 09:00, in local time. */
+/** A reset time: 14:00 within a day, else Mon 09:00, in local time.
+ *  Mirrors planusage/gate.go resetLabel. */
 export function resetLabel(at: string, now: number): string {
   const d = new Date(at);
   const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
@@ -100,11 +105,9 @@ export function resetLabel(at: string, now: number): string {
 
 export function readingAge(at: string | null, now: number): string {
   if (!at) return "no reading yet";
-  const min = Math.floor(Math.max(0, now - Date.parse(at)) / 60_000);
-  if (min < 1) return "read just now";
-  if (min < 60) return `read ${min} min ago`;
-  const hours = Math.floor(min / 60);
-  return hours < 24 ? `read ${hours} h ago` : `read ${Math.floor(hours / 24)} d ago`;
+  const age = now - Date.parse(at);
+  if (age < 60_000) return "read just now";
+  return `read ${formatDuration(age)} ago`;
 }
 
 /** Both windows against the limit, then the reading's age. */
@@ -112,49 +115,40 @@ export function usageLines(a: AccountBudget, limit: number, now: number): string
   const line = (k: WindowKey): string => {
     const w = a[k];
     const label = WINDOW_LABELS[k].detail;
-    if (!valid(w, now)) return `${label} · no reading`;
-    return `${label} · plan ${pct(w.plan)} of ${pct(limit)} limit · resets ${resetLabel(w.resets_at!, now)}`;
+    if (!hasLiveReading(w, now)) return `${label} · no reading`;
+    return `${label} · plan ${pct(w.plan)} of ${pct(limit)} limit · resets ${resetLabel(w.resets_at, now)}`;
   };
   return [line("five_hour"), line("seven_day"), readingAge(a.reading_at, now)];
 }
 
-/** The meter for the tighter window: "Plan 62% of 5-hour window", its fill as a
- *  percent of the limit, and "limit 50%". null when there is no valid reading. */
 export interface PlanMeter {
   before: string;
+  /** The plan as a percent of the limit, capped at 100. */
   fill: number;
-  label: string;
+  ariaLabel: string;
   after: string;
 }
 
+/** The meter for the tighter window: "Plan 62% of 5-hour window", the fill, and
+ *  "limit 50%". null when there is no valid reading. */
 export function planMeter(a: AccountBudget, limit: number, now: number): PlanMeter | null {
-  const k = tighterWindow(a, now);
+  const k = tighterWindow(a, limit, now);
   if (k === null) return null;
   const plan = a[k].plan;
   return {
     before: `Plan ${pct(plan)} of ${WINDOW_LABELS[k].bar}`,
     fill: limit > 0 ? Math.min(100, (plan / limit) * 100) : 100,
-    label: `${pct(plan)} of a ${pct(limit)} limit`,
+    ariaLabel: `${pct(plan)} of a ${pct(limit)} limit`,
     after: `limit ${pct(limit)}`,
   };
 }
 
-/** A daemon reason without its CLI hints: the limit is edited on the same
- *  page, so a clause naming an af command is dropped. */
-export function webReason(reason: string): string {
-  const out = reason
-    .replace(/,?\s+or\s+[^;,·]*"af [^"]*"[^;,·]*/g, "")
-    .replace(/(?:[;,]\s*|\s·\s)?[^;,·]*"af [^"]*"[^;,·]*/g, "")
-    .trim();
-  return out || reason;
-}
-
 export function gateLine(a: AccountBudget): string {
-  if (a.gate.name === "") return "Budget-gated tasks run now";
-  return `Budget-gated tasks skip · ${webReason(a.gate.reason)}`;
+  if (a.gate.name === "") return "Budget-gated Claude tasks run now";
+  return `Budget-gated Claude tasks skip · ${a.gate.reason}`;
 }
 
 /** The account's heading; shown only when there is more than one account. */
 export function accountLabel(a: AccountBudget): string {
-  return a.default ? `${a.account} · new sessions use it` : a.account;
+  return a.default ? `${a.account} · global default` : a.account;
 }

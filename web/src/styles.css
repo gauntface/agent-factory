@@ -3261,6 +3261,12 @@ button:disabled,
 }
 
 /* The Budget section: one block per Claude account under the budget_limit row. */
+.af-budget {
+  display: flex;
+  flex-direction: column;
+  gap: var(--af-space-2);
+}
+
 .af-budget-account {
   display: flex;
   flex-direction: column;

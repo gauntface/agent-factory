@@ -10,7 +10,8 @@
 // to SetConfigValue, which the daemon hands to the same validated, file-locked,
 // atomic writer `af config set` uses. A key added to config_types.go appears
 // here with no edit to this file — that is the point, and
-// config.test.ts pins it.
+// config.test.ts pins it. budget_limit is the one exception to the tiers: it is
+// shown in the Budget section, with the plan use it limits.
 //
 // Two things it must never do:
 //
@@ -33,15 +34,8 @@ import {
   emptyAccountsState,
   renderAccountsSection,
 } from "./accounts.js";
-import {
-  type AccountBudget,
-  type Budget,
-  accountLabel,
-  gateLine,
-  pct,
-  planMeter,
-  usageLines,
-} from "./budget.js";
+import type { Budget } from "./budget.js";
+import { renderBudgetSection } from "./budget_view.js";
 import { h } from "./dom.js";
 import type { ConfigEntry, ConfigSetResponse } from "./types.js";
 import { rebuildKeepingScroll } from "./scrollkeep.js";
@@ -111,6 +105,10 @@ const TIER_ADVANCED = 3;
 
 /** Shown in the Budget section, with the plan use it limits, not in its tier. */
 const BUDGET_KEY = "budget_limit";
+
+function tierHeading(name: string): HTMLElement {
+  return h("div", { class: "af-config-tier" }, h("span", { class: "af-config-tier-name" }, name));
+}
 
 /** The kind of control a key gets. */
 export type ControlKind = "checkbox" | "select" | "text";
@@ -501,7 +499,7 @@ export class ConfigPane {
         continue;
       }
       const folded = tier === TIER_ADVANCED && !this.showAdvanced;
-      const heading = h("div", { class: "af-config-tier" }, h("span", { class: "af-config-tier-name" }, name.charAt(0).toUpperCase() + name.slice(1)));
+      const heading = tierHeading(name.charAt(0).toUpperCase() + name.slice(1));
 
       if (tier === TIER_ADVANCED) {
         const toggle = h(
@@ -550,22 +548,14 @@ export class ConfigPane {
    *  use against it. */
   private renderBudget(): HTMLElement[] {
     const entry = this.entries.find((e) => e.key === BUDGET_KEY);
-    const budget = this.budget;
-    if (!entry && !budget) return [];
-    const out: HTMLElement[] = [h("div", { class: "af-config-tier" }, h("span", { class: "af-config-tier-name" }, "Budget"))];
-    if (entry) out.push(this.renderRow(entry));
-    if (budget) {
-      const now = Date.now();
-      const named = budget.accounts.length > 1;
-      for (const a of budget.accounts) out.push(renderAccountBudget(a, budget.limit, now, named));
-    }
-    return out;
+    if (!entry && !this.budget) return [];
+    return [tierHeading("Budget"), renderBudgetSection(this.budget, entry ? this.renderRow(entry) : null, Date.now())];
   }
 
   /** Theme and the saved token live in this browser's localStorage, not in
    *  config.toml, so neither goes through `save`. */
   private renderBrowser(): HTMLElement[] {
-    const heading = h("div", { class: "af-config-tier" }, h("span", { class: "af-config-tier-name" }, "This browser"));
+    const heading = tierHeading("This browser");
     const select = h("select", { class: "af-input af-config-input af-theme-select" });
     select.setAttribute("aria-label", "Theme");
     for (const choice of THEME_CHOICES) {
@@ -735,27 +725,4 @@ export class ConfigPane {
 
     return h("div", { class: "af-config-control" }, input, dirty, save);
   }
-}
-
-function renderAccountBudget(a: AccountBudget, limit: number, now: number, named: boolean): HTMLElement {
-  const el = h("div", { class: "af-budget-account" });
-  el.setAttribute("data-account", a.account);
-  if (named) el.append(h("span", { class: "af-budget-account-name" }, accountLabel(a)));
-  const meter = planMeter(a, limit, now);
-  const plan = h("div", { class: "af-budget-plan" });
-  if (meter) {
-    const fill = h("span", { class: "af-budget-meter-fill" });
-    fill.style.width = `${meter.fill}%`;
-    const bar = h("span", { class: "af-budget-meter", role: "img" }, fill);
-    bar.setAttribute("aria-label", meter.label);
-    plan.append(meter.before, bar, meter.after);
-  } else {
-    plan.append(`Plan limit ${pct(limit)}`);
-  }
-  el.append(
-    plan,
-    h("div", { class: "af-budget-detail" }, ...usageLines(a, limit, now).map((l) => h("div", {}, l))),
-    h("div", { class: a.gate.name === "" ? "af-budget-gate" : "af-budget-gate af-budget-warn" }, gateLine(a)),
-  );
-  return el;
 }

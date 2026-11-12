@@ -31,53 +31,62 @@ type GateInput struct {
 	Loc *time.Location
 }
 
-// Gate is a closed gate: its name and the reason the UI shows. The zero Gate
-// is open.
+// Gate is a closed gate: its name and the reason the UI shows. Hint is the
+// af command that opens it, for CLI text. The zero Gate is open.
 type Gate struct {
 	Name   string `json:"name"`
 	Reason string `json:"reason"`
+	Hint   string `json:"hint,omitempty"`
 }
 
 func (g Gate) Open() bool { return g.Name == "" }
+
+// Text is the reason with the hint, for the CLI and task run status.
+func (g Gate) Text() string {
+	if g.Hint == "" {
+		return g.Reason
+	}
+	return g.Reason + " · " + g.Hint
+}
 
 // CheckGate reports the first closed gate, in the order limit 0, plan window
 // at the limit, usage limit (or unknown), no reading.
 func CheckGate(in GateInput) Gate {
 	if in.Limit <= 0 {
-		return Gate{GateLimit, "Plan limit is 0% · raise it with \"af config set budget_limit 50\""}
+		return Gate{Name: GateLimit, Reason: "Plan limit is 0%", Hint: `raise it with "af config set budget_limit 50"`}
 	}
-	var fiveHour, sevenDay planWindow
+	var fiveHour, sevenDay Window
 	if in.Reading != nil {
 		fiveHour, sevenDay = windowOf(in.Reading.FiveHour, in.Now), windowOf(in.Reading.SevenDay, in.Now)
 	}
 	type labelled struct {
-		w     planWindow
+		w     Window
 		label string
 	}
 	// When both windows are over, report the later reset: that is when the
 	// gate opens.
 	var over *labelled
 	for _, x := range []labelled{{fiveHour, "the 5-hour window"}, {sevenDay, "the week"}} {
-		if x.w.valid() && x.w.plan >= in.Limit && (over == nil || x.w.resetsAt.After(*over.w.resetsAt)) {
+		if x.w.valid() && x.w.Plan >= in.Limit && (over == nil || x.w.ResetsAt.After(*over.w.ResetsAt)) {
 			over = &x
 		}
 	}
 	if over != nil {
-		return Gate{GateLimit, fmt.Sprintf("Plan at %s of %s (limit %s) · resumes %s",
-			percent(over.w.plan), over.label, percent(in.Limit), resetLabel(*over.w.resetsAt, in.Now, in.Loc))}
+		return Gate{Name: GateLimit, Reason: fmt.Sprintf("Plan at %s of %s (limit %s) · resumes %s",
+			percent(over.w.Plan), over.label, percent(in.Limit), resetLabel(*over.w.ResetsAt, in.Now, in.Loc))}
 	}
 	if in.LimitUnknown != "" {
-		return Gate{GateUsageLimit, "Can't tell whether the plan is at its usage limit · " + in.LimitUnknown}
+		return Gate{Name: GateUsageLimit, Reason: "Can't tell whether the plan is at its usage limit · " + in.LimitUnknown}
 	}
 	if in.Limited {
 		reason := "Usage limit"
 		if !in.LimitUntil.IsZero() {
 			reason += " until " + resetLabel(in.LimitUntil, in.Now, in.Loc)
 		}
-		return Gate{GateUsageLimit, reason}
+		return Gate{Name: GateUsageLimit, Reason: reason}
 	}
 	if in.Reading == nil {
-		return Gate{GateNoReading, "No plan usage seen yet · run a Claude session once to take a reading"}
+		return Gate{Name: GateNoReading, Reason: "No plan usage seen yet · run a Claude session once to take a reading"}
 	}
 	return Gate{}
 }

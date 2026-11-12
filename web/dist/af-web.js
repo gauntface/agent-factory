@@ -6453,18 +6453,40 @@ async function copyText(text) {
   }
 }
 
-// src/budget.ts
-var WINDOW_LABELS = {
-  five_hour: { bar: "5-hour window", detail: "5-hour" },
-  seven_day: { bar: "week", detail: "Weekly" }
-};
-var WINDOWS = ["five_hour", "seven_day"];
+// src/parse.ts
 function isRecord(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 function str(v) {
   return typeof v === "string" ? v : "";
 }
+
+// src/time.ts
+function formatDuration(ms) {
+  const age = Math.max(0, ms);
+  const minute = 6e4, hour = 60 * minute, day = 24 * hour;
+  if (age < minute) return "<1m";
+  if (age < hour) return `${Math.floor(age / minute)}m`;
+  if (age < day) return `${Math.floor(age / hour)}h`;
+  return `${Math.floor(age / day)}d`;
+}
+function formatTime(value, now = /* @__PURE__ */ new Date()) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown time";
+  const delta = date.getTime() - now.getTime();
+  if (Math.abs(delta) < 24 * 60 * 6e4) {
+    const duration = formatDuration(Math.abs(delta));
+    return delta >= 0 ? `in ${duration}` : `${duration} ago`;
+  }
+  return date.toLocaleString(void 0, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+// src/budget.ts
+var WINDOW_LABELS = {
+  five_hour: { bar: "5-hour window", detail: "5-hour" },
+  seven_day: { bar: "week", detail: "Weekly" }
+};
+var WINDOWS = ["five_hour", "seven_day"];
 function parseWindow(v) {
   const w = isRecord(v) ? v : {};
   return { plan: Number(w.plan) || 0, resets_at: typeof w.resets_at === "string" ? w.resets_at : null };
@@ -6486,16 +6508,24 @@ function parseBudget(d) {
   const accounts = Array.isArray(v.accounts) ? v.accounts.map(parseAccount).filter((a) => a !== null) : [];
   return { limit: Number(v.limit) || 0, accounts };
 }
-function valid(w, now) {
+function hasLiveReading(w, now) {
   return w.resets_at !== null && Date.parse(w.resets_at) > now;
 }
 function pct(v) {
   return `${Number(v.toFixed(1))}%`;
 }
-function tighterWindow(a, now) {
+function tighterWindow(a, limit, now) {
   let best = null;
   for (const k of WINDOWS) {
-    if (valid(a[k], now) && (best === null || a[k].plan > a[best].plan)) best = k;
+    const w = a[k];
+    if (!hasLiveReading(w, now)) continue;
+    if (best === null) {
+      best = k;
+      continue;
+    }
+    const b = a[best];
+    const bothOver = w.plan >= limit && b.plan >= limit;
+    if (bothOver ? Date.parse(w.resets_at) > Date.parse(b.resets_at) : w.plan > b.plan) best = k;
   }
   return best;
 }
@@ -6507,42 +6537,36 @@ function resetLabel(at, now) {
 }
 function readingAge(at, now) {
   if (!at) return "no reading yet";
-  const min = Math.floor(Math.max(0, now - Date.parse(at)) / 6e4);
-  if (min < 1) return "read just now";
-  if (min < 60) return `read ${min} min ago`;
-  const hours = Math.floor(min / 60);
-  return hours < 24 ? `read ${hours} h ago` : `read ${Math.floor(hours / 24)} d ago`;
+  const age = now - Date.parse(at);
+  if (age < 6e4) return "read just now";
+  return `read ${formatDuration(age)} ago`;
 }
 function usageLines(a, limit, now) {
   const line = (k) => {
     const w = a[k];
     const label = WINDOW_LABELS[k].detail;
-    if (!valid(w, now)) return `${label} \xB7 no reading`;
+    if (!hasLiveReading(w, now)) return `${label} \xB7 no reading`;
     return `${label} \xB7 plan ${pct(w.plan)} of ${pct(limit)} limit \xB7 resets ${resetLabel(w.resets_at, now)}`;
   };
   return [line("five_hour"), line("seven_day"), readingAge(a.reading_at, now)];
 }
 function planMeter(a, limit, now) {
-  const k = tighterWindow(a, now);
+  const k = tighterWindow(a, limit, now);
   if (k === null) return null;
   const plan = a[k].plan;
   return {
     before: `Plan ${pct(plan)} of ${WINDOW_LABELS[k].bar}`,
     fill: limit > 0 ? Math.min(100, plan / limit * 100) : 100,
-    label: `${pct(plan)} of a ${pct(limit)} limit`,
+    ariaLabel: `${pct(plan)} of a ${pct(limit)} limit`,
     after: `limit ${pct(limit)}`
   };
 }
-function webReason(reason) {
-  const out = reason.replace(/,?\s+or\s+[^;,·]*"af [^"]*"[^;,·]*/g, "").replace(/(?:[;,]\s*|\s·\s)?[^;,·]*"af [^"]*"[^;,·]*/g, "").trim();
-  return out || reason;
-}
 function gateLine(a) {
-  if (a.gate.name === "") return "Budget-gated tasks run now";
-  return `Budget-gated tasks skip \xB7 ${webReason(a.gate.reason)}`;
+  if (a.gate.name === "") return "Budget-gated Claude tasks run now";
+  return `Budget-gated Claude tasks skip \xB7 ${a.gate.reason}`;
 }
 function accountLabel(a) {
-  return a.default ? `${a.account} \xB7 new sessions use it` : a.account;
+  return a.default ? `${a.account} \xB7 global default` : a.account;
 }
 
 // src/api.ts
@@ -7852,6 +7876,39 @@ function appendStatus(row, status, agent, name) {
   row.append(h("div", { class: "af-accounts-echo" }, status.message));
 }
 
+// src/budget_view.ts
+function renderBudgetSection(budget, limitRow, now) {
+  const section = h("div", { class: "af-budget" });
+  if (limitRow) section.append(limitRow);
+  if (budget) {
+    const named = budget.accounts.length > 1;
+    for (const a of budget.accounts) section.append(renderAccountBudget(a, budget.limit, now, named));
+  }
+  return section;
+}
+function renderAccountBudget(a, limit, now, named) {
+  const el2 = h("div", { class: "af-budget-account" });
+  el2.setAttribute("data-account", a.account);
+  if (named) el2.append(h("span", { class: "af-budget-account-name" }, accountLabel(a)));
+  const meter = planMeter(a, limit, now);
+  const plan = h("div", { class: "af-budget-plan" });
+  if (meter) {
+    const fill = h("span", { class: "af-budget-meter-fill" });
+    fill.style.width = `${meter.fill}%`;
+    const bar = h("span", { class: "af-budget-meter", role: "img" }, fill);
+    bar.setAttribute("aria-label", meter.ariaLabel);
+    plan.append(meter.before, bar, meter.after);
+  } else {
+    plan.append(`Plan limit ${pct(limit)}`);
+  }
+  el2.append(
+    plan,
+    h("div", { class: "af-budget-detail" }, ...usageLines(a, limit, now).map((l) => h("div", {}, l))),
+    h("div", { class: a.gate.name === "" ? "af-budget-gate" : "af-budget-gate af-budget-warn" }, gateLine(a))
+  );
+  return el2;
+}
+
 // src/scrollkeep.ts
 function listToken(parts) {
   return parts.map((p) => p ?? "none").join("\0");
@@ -7891,6 +7948,9 @@ function tiersInOrder(entries) {
 }
 var TIER_ADVANCED = 3;
 var BUDGET_KEY = "budget_limit";
+function tierHeading(name) {
+  return h("div", { class: "af-config-tier" }, h("span", { class: "af-config-tier-name" }, name));
+}
 function controlKind(e) {
   if (e.type === "bool") {
     return "checkbox";
@@ -8105,7 +8165,7 @@ var ConfigPane = class {
         continue;
       }
       const folded = tier === TIER_ADVANCED && !this.showAdvanced;
-      const heading = h("div", { class: "af-config-tier" }, h("span", { class: "af-config-tier-name" }, name.charAt(0).toUpperCase() + name.slice(1)));
+      const heading = tierHeading(name.charAt(0).toUpperCase() + name.slice(1));
       if (tier === TIER_ADVANCED) {
         const toggle = h(
           "button",
@@ -8145,21 +8205,13 @@ var ConfigPane = class {
    *  use against it. */
   renderBudget() {
     const entry = this.entries.find((e) => e.key === BUDGET_KEY);
-    const budget = this.budget;
-    if (!entry && !budget) return [];
-    const out = [h("div", { class: "af-config-tier" }, h("span", { class: "af-config-tier-name" }, "Budget"))];
-    if (entry) out.push(this.renderRow(entry));
-    if (budget) {
-      const now = Date.now();
-      const named = budget.accounts.length > 1;
-      for (const a of budget.accounts) out.push(renderAccountBudget(a, budget.limit, now, named));
-    }
-    return out;
+    if (!entry && !this.budget) return [];
+    return [tierHeading("Budget"), renderBudgetSection(this.budget, entry ? this.renderRow(entry) : null, Date.now())];
   }
   /** Theme and the saved token live in this browser's localStorage, not in
    *  config.toml, so neither goes through `save`. */
   renderBrowser() {
-    const heading = h("div", { class: "af-config-tier" }, h("span", { class: "af-config-tier-name" }, "This browser"));
+    const heading = tierHeading("This browser");
     const select = h("select", { class: "af-input af-config-input af-theme-select" });
     select.setAttribute("aria-label", "Theme");
     for (const choice of THEME_CHOICES) {
@@ -8287,28 +8339,6 @@ var ConfigPane = class {
     return h("div", { class: "af-config-control" }, input, dirty, save);
   }
 };
-function renderAccountBudget(a, limit, now, named) {
-  const el2 = h("div", { class: "af-budget-account" });
-  el2.setAttribute("data-account", a.account);
-  if (named) el2.append(h("span", { class: "af-budget-account-name" }, accountLabel(a)));
-  const meter = planMeter(a, limit, now);
-  const plan = h("div", { class: "af-budget-plan" });
-  if (meter) {
-    const fill = h("span", { class: "af-budget-meter-fill" });
-    fill.style.width = `${meter.fill}%`;
-    const bar = h("span", { class: "af-budget-meter", role: "img" }, fill);
-    bar.setAttribute("aria-label", meter.label);
-    plan.append(meter.before, bar, meter.after);
-  } else {
-    plan.append(`Plan limit ${pct(limit)}`);
-  }
-  el2.append(
-    plan,
-    h("div", { class: "af-budget-detail" }, ...usageLines(a, limit, now).map((l) => h("div", {}, l))),
-    h("div", { class: a.gate.name === "" ? "af-budget-gate" : "af-budget-gate af-budget-warn" }, gateLine(a))
-  );
-  return el2;
-}
 
 // src/account_scope.ts
 var AMBIENT_ACCOUNT = "";
@@ -12567,26 +12597,6 @@ var InstallAffordance = class {
   }
 };
 
-// src/time.ts
-function formatDuration(ms) {
-  const age = Math.max(0, ms);
-  const minute = 6e4, hour = 60 * minute, day = 24 * hour;
-  if (age < minute) return "<1m";
-  if (age < hour) return `${Math.floor(age / minute)}m`;
-  if (age < day) return `${Math.floor(age / hour)}h`;
-  return `${Math.floor(age / day)}d`;
-}
-function formatTime(value, now = /* @__PURE__ */ new Date()) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Unknown time";
-  const delta = date.getTime() - now.getTime();
-  if (Math.abs(delta) < 24 * 60 * 6e4) {
-    const duration = formatDuration(Math.abs(delta));
-    return delta >= 0 ? `in ${duration}` : `${duration} ago`;
-  }
-  return date.toLocaleString(void 0, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-}
-
 // src/status.ts
 var OPERATOR_KIND_LABELS = {
   attention: "Needs attention",
@@ -13067,11 +13077,11 @@ function defaultProject(sessions, tasks, registeredRoots = []) {
   if (summaries.length === 0) {
     return null;
   }
-  const valid2 = new Set(summaries.map((p) => p.root));
+  const valid = new Set(summaries.map((p) => p.root));
   let best = null;
   for (const s of sessions) {
     const root2 = s.worktree?.repo_path;
-    if (!root2 || isArchived(s) || !valid2.has(root2)) {
+    if (!root2 || isArchived(s) || !valid.has(root2)) {
       continue;
     }
     if (!best || (s.created_at ?? "") > (best.created_at ?? "")) {
@@ -13083,7 +13093,7 @@ function defaultProject(sessions, tasks, registeredRoots = []) {
   }
   let bestTask = null;
   for (const t of tasks) {
-    if (!t.project_path || !valid2.has(t.project_path)) {
+    if (!t.project_path || !valid.has(t.project_path)) {
       continue;
     }
     if (!bestTask || (t.created_at ?? "") > (bestTask.created_at ?? "")) {
@@ -13093,11 +13103,11 @@ function defaultProject(sessions, tasks, registeredRoots = []) {
   return bestTask?.project_path ?? summaries[0]?.root ?? null;
 }
 function reconcileProject(sessions, tasks, persisted, current, registeredRoots = []) {
-  const valid2 = validRoots(sessions, tasks, registeredRoots);
-  if (current && valid2.has(current)) {
+  const valid = validRoots(sessions, tasks, registeredRoots);
+  if (current && valid.has(current)) {
     return current;
   }
-  if (persisted && valid2.has(persisted)) {
+  if (persisted && valid.has(persisted)) {
     return persisted;
   }
   return defaultProject(sessions, tasks, registeredRoots);
@@ -18836,21 +18846,15 @@ function captureTabDeleteTarget(target) {
 }
 
 // src/proposal_api.ts
-function isRecord2(v) {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-function str2(v) {
-  return typeof v === "string" ? v : "";
-}
 var PUSH_STATES = ["idle", "countdown", "waiting_agent", "held", "sent"];
 function parsePushStatus(d) {
-  if (!isRecord2(d) || typeof d.state !== "string" || !PUSH_STATES.includes(d.state)) {
+  if (!isRecord(d) || typeof d.state !== "string" || !PUSH_STATES.includes(d.state)) {
     return null;
   }
   const due = typeof d.due_in_ms === "number" && Number.isFinite(d.due_in_ms) ? Math.max(0, d.due_in_ms) : null;
   return {
-    sessionId: str2(d.session_id),
-    slug: str2(d.slug),
+    sessionId: str(d.session_id),
+    slug: str(d.slug),
     mode: d.mode === "manual" ? "manual" : "auto",
     state: d.state,
     dueInMs: due,
@@ -18858,22 +18862,22 @@ function parsePushStatus(d) {
   };
 }
 function parseProposalPush(ev) {
-  if (!isRecord2(ev) || ev.type !== "proposal.push") {
+  if (!isRecord(ev) || ev.type !== "proposal.push") {
     return null;
   }
   const status = parsePushStatus(ev.data);
   return status && status.sessionId !== "" && status.slug !== "" ? status : null;
 }
 function parseProposalChange(ev) {
-  if (!isRecord2(ev) || ev.type !== "proposal.changed" || !isRecord2(ev.data)) {
+  if (!isRecord(ev) || ev.type !== "proposal.changed" || !isRecord(ev.data)) {
     return null;
   }
   const d = ev.data;
-  const slug = str2(d.slug);
+  const slug = str(d.slug);
   if (slug === "") {
     return null;
   }
-  return { repoId: str2(d.repo_id), slug, doc: str2(d.doc), commit: str2(d.commit), author: str2(d.author) };
+  return { repoId: str(d.repo_id), slug, doc: str(d.doc), commit: str(d.commit), author: str(d.author) };
 }
 
 // src/index.ts
@@ -19995,7 +19999,9 @@ var budgetRefetcher = createFencedRefetcher({
   readToken: () => token,
   fetch: getBudget,
   commit: (budget) => store.set({ budget }),
-  onError: () => store.set({ budget: null })
+  onError: (err) => {
+    if (err instanceof ApiError && err.status === 404) store.set({ budget: null });
+  }
 });
 function refreshBudget() {
   budgetRefetcher.refresh();
@@ -20066,7 +20072,7 @@ function applyConfigValueNow(key, value, tok) {
   return setConfigValue(key, value, tok).then((resp) => {
     if (requestGeneration !== connectionGeneration || token !== tok) {
       refreshConfig();
-      if (key === "budget_limit") refreshBudget();
+      refreshBudget();
       return;
     }
     store.set({
@@ -20079,7 +20085,7 @@ function applyConfigValueNow(key, value, tok) {
       }
     });
     refreshConfig();
-    if (resp.result.key === "budget_limit") refreshBudget();
+    refreshBudget();
   }).catch((err) => {
     if (requestGeneration !== connectionGeneration || token !== tok) return;
     store.set({ configStatus: { key, value: "", notice: "", error: errorText(err) } });
@@ -20092,6 +20098,13 @@ window.setInterval(() => {
     refreshTasks();
   }
 }, TASK_HEALTH_POLL_MS);
+var BUDGET_POLL_MS = 6e4;
+window.setInterval(() => {
+  const state = store.get();
+  if (state.phase === "app" && state.view === "config") {
+    refreshBudget();
+  }
+}, BUDGET_POLL_MS);
 var tasksRefetcher = createFencedRefetcher({
   readToken: () => token,
   fetch: listTasks,

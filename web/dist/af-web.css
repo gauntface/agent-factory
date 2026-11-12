@@ -2525,6 +2525,11 @@ button:disabled,
   border-radius: var(--af-radius-control);
   padding: var(--af-space-1) var(--af-space-2);
 }
+.af-budget {
+  display: flex;
+  flex-direction: column;
+  gap: var(--af-space-2);
+}
 .af-budget-account {
   display: flex;
   flex-direction: column;

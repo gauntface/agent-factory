@@ -1429,14 +1429,14 @@
       },
       "web": {
         "status": "yes",
-        "pointer": "web/src/config.ts renderBudget/renderAccountBudget -> web/src/api.ts getBudget (POST /v1/GetBudget) -> daemon/control_budget.go Manager.GetBudget"
+        "pointer": "web/src/config.ts renderBudget -> web/src/budget_view.ts renderBudgetSection; web/src/api.ts getBudget (POST /v1/GetBudget) -> daemon/task_budget_gate.go Manager.GetBudget"
       },
       "cli": {
         "status": "no",
         "pointer": ""
       },
       "verdict": "unclear",
-      "notes": "A read of each Claude account's 5-hour and 7-day plan use, the reading's age, and whether budget-gated tasks run now (planusage.BudgetAccounts with the same gate taskBudgetGate uses). The web config view shows it in a Budget section beside the budget_limit row. The CLI and TUI can set budget_limit (config.write) but do not show the plan use; whether they should is an owner call. Not filed pending that."
+      "notes": "A read of each Claude account's 5-hour and 7-day plan use, the reading's age, and whether budget-gated tasks run now (planusage.BudgetAccounts with the same gate taskBudgetGate uses). The web config view shows it in a Budget section with the budget_limit row. The CLI and TUI can set budget_limit (config.write) but do not show the plan use; whether they should is an owner call. Not filed pending that."
     },
     {
       "id": "task.on-complete",

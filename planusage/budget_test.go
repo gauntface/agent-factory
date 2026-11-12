@@ -3,30 +3,10 @@ package planusage
 import (
 	"encoding/json"
 	"errors"
-	"path/filepath"
 	"slices"
 	"testing"
 	"time"
 )
-
-func TestReadingAccounts(t *testing.T) {
-	dir := filepath.Join(home(t), DirName)
-	if got, err := ReadingAccounts(); err != nil || got != nil {
-		t.Fatalf("no plan dir: got %v, %v", got, err)
-	}
-	write(t, filepath.Join(dir, "default.json"), "{}")
-	write(t, filepath.Join(dir, "work.json"), "{}")
-	write(t, filepath.Join(dir, "notes.txt"), "x")
-	write(t, filepath.Join(dir, "bad name.json"), "{}")
-	write(t, filepath.Join(dir, "sub.json", "x"), "{}")
-	got, err := ReadingAccounts()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 2 || got[0] != "default" || got[1] != "work" {
-		t.Fatalf("got %v, want [default work]", got)
-	}
-}
 
 func TestBudgetAccounts(t *testing.T) {
 	readAt := gateNow.Add(-2 * time.Minute)
@@ -44,7 +24,7 @@ func TestBudgetAccounts(t *testing.T) {
 	gate := func(a string, r *Reading, err error) Gate {
 		if err != nil {
 			gotErr = err
-			return Gate{GateNoReading, err.Error()}
+			return Gate{Name: GateNoReading, Reason: err.Error()}
 		}
 		return CheckGate(GateInput{Limit: 50, Reading: r, Now: gateNow, Loc: time.UTC})
 	}
